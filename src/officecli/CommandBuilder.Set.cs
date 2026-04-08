@@ -115,6 +115,17 @@ static partial class CommandBuilder
             using var handler = DocumentHandlerFactory.Open(file.FullName, editable: true);
             var unsupported = handler.Set(path, properties);
 
+            // Scope the unsupported-prop fuzzy-suggestion pool by handler type
+            // so e.g. Excel pivot errors don't suggest PPTX-only keys like
+            // 'rotation' for an unknown 'location' prop (R2-4).
+            string? suggestionScope = handler switch
+            {
+                OfficeCli.Handlers.ExcelHandler => "excel",
+                OfficeCli.Handlers.WordHandler => "word",
+                OfficeCli.Handlers.PowerPointHandler => "pptx",
+                _ => null,
+            };
+
             // Auto-correct: attempt to fix unsupported properties with Levenshtein distance == 1
             var autoCorrected = new List<(string Original, string Corrected, string Value)>();
             var stillUnsupported = new List<string>();
@@ -123,7 +134,7 @@ static partial class CommandBuilder
                 var rawKey = u.Contains(' ') ? u[..u.IndexOf(' ')] : u;
                 if (properties.TryGetValue(rawKey, out var val))
                 {
-                    var (suggestion, dist, isUnique) = SuggestPropertyWithDistance(rawKey);
+                    var (suggestion, dist, isUnique) = SuggestPropertyWithDistance(rawKey, suggestionScope);
                     if (suggestion != null && dist == 1 && isUnique)
                     {
                         // Auto-correct: re-apply with corrected key
@@ -189,7 +200,7 @@ static partial class CommandBuilder
                 }
                 foreach (var p in stillUnsupported)
                 {
-                    var suggestion = SuggestProperty(p);
+                    var suggestion = SuggestPropertyScoped(p, suggestionScope);
                     allWarnings.Add(new OfficeCli.Core.CliWarning
                     {
                         Message = suggestion != null ? $"Unsupported property: {p} (did you mean: {suggestion}?)" : $"Unsupported property: {p}",
@@ -234,7 +245,7 @@ static partial class CommandBuilder
                 if (setOverflowPlain != null)
                     Console.Error.WriteLine($"  WARNING: {setOverflowPlain}");
                 if (stillUnsupported.Count > 0)
-                    Console.Error.WriteLine(FormatUnsupported(stillUnsupported));
+                    Console.Error.WriteLine(FormatUnsupported(stillUnsupported, suggestionScope));
             }
             NotifyWatch(handler, file.FullName, path);
 
@@ -255,7 +266,7 @@ static partial class CommandBuilder
                     {
                         extraStillUnsupported = true;
                         if (!json)
-                            Console.Error.WriteLine($"  {extraPath}: {FormatUnsupported(extraResult)}");
+                            Console.Error.WriteLine($"  {extraPath}: {FormatUnsupported(extraResult, suggestionScope)}");
                     }
                     NotifyWatch(handler, file.FullName, extraPath);
                 }

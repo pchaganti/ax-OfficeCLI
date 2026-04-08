@@ -291,7 +291,16 @@ static partial class CommandBuilder
                     parts.Add(msg);
                 }
                 if (unsupported.Count > 0)
-                    parts.Add(FormatUnsupported(unsupported));
+                {
+                    string? batchScope = handler switch
+                    {
+                        OfficeCli.Handlers.ExcelHandler => "excel",
+                        OfficeCli.Handlers.WordHandler => "word",
+                        OfficeCli.Handlers.PowerPointHandler => "pptx",
+                        _ => null,
+                    };
+                    parts.Add(FormatUnsupported(unsupported, batchScope));
+                }
                 return string.Join("\n", parts);
             }
             case "add":
@@ -630,16 +639,38 @@ static partial class CommandBuilder
         return result;
     }
 
-    internal static string FormatUnsupported(IEnumerable<string> unsupported)
+    internal static string FormatUnsupported(IEnumerable<string> unsupported, string? scope = null)
     {
         var parts = new List<string>();
         foreach (var prop in unsupported)
         {
-            var suggestion = SuggestProperty(prop);
+            var suggestion = SuggestPropertyScoped(prop, scope);
             parts.Add(suggestion != null ? $"{prop} (did you mean: {suggestion}?)" : prop);
         }
         return $"UNSUPPORTED props: {string.Join(", ", parts)}. Use 'officecli help <format>-set' to see available properties, or use raw-set for direct XML manipulation.";
     }
+
+    /// <summary>
+    /// Property keys that belong to PPTX shape/text semantics and should not
+    /// be offered as suggestions when the caller is operating on an Excel
+    /// document (R2-4). Keep the list conservative — only keys whose presence
+    /// in an Excel error message would be clearly misleading.
+    /// </summary>
+    internal static readonly HashSet<string> PptxOnlyProps = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "rotation", "opacity", "glow", "shadow",
+        "firstSliceAngle", "holeSize", "bubbleScale", "explosion",
+        "view3d", "varyColors",
+    };
+
+    /// <summary>
+    /// Property keys exclusive to Word document-level concerns that should
+    /// not bleed into Excel suggestions.
+    /// </summary>
+    internal static readonly HashSet<string> WordOnlyProps = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "pageWidth", "pageHeight", "orientation",
+    };
 
     internal static readonly string[] KnownProps = new[]
     {
@@ -686,9 +717,21 @@ static partial class CommandBuilder
     }
 
     /// <summary>
+    /// Scoped variant: filters the suggestion pool against a target document
+    /// format ("excel", "word", "pptx", or null for unscoped) to avoid
+    /// cross-format leakage such as suggesting PPTX 'rotation' for an
+    /// Excel pivot property (R2-4).
+    /// </summary>
+    internal static string? SuggestPropertyScoped(string input, string? scope)
+    {
+        var (best, _, _) = SuggestPropertyWithDistance(input, scope);
+        return best;
+    }
+
+    /// <summary>
     /// Returns (bestMatch, distance, isUnique) where isUnique means no other candidate shares the same distance.
     /// </summary>
-    internal static (string? Best, int Distance, bool IsUnique) SuggestPropertyWithDistance(string input)
+    internal static (string? Best, int Distance, bool IsUnique) SuggestPropertyWithDistance(string input, string? scope = null)
     {
         // Strip help text suffix if present (e.g. "key (valid props: ...)")
         var rawInput = input.Contains(' ') ? input[..input.IndexOf(' ')] : input;
@@ -697,8 +740,24 @@ static partial class CommandBuilder
         int bestDist = int.MaxValue;
         int bestCount = 0; // how many props share the best distance
 
+        HashSet<string>? exclude = null;
+        switch (scope?.ToLowerInvariant())
+        {
+            case "excel":
+                exclude = new HashSet<string>(PptxOnlyProps, StringComparer.OrdinalIgnoreCase);
+                foreach (var w in WordOnlyProps) exclude.Add(w);
+                break;
+            case "word":
+                exclude = PptxOnlyProps;
+                break;
+            case "pptx":
+                exclude = WordOnlyProps;
+                break;
+        }
+
         foreach (var prop in KnownProps)
         {
+            if (exclude != null && exclude.Contains(prop)) continue;
             var dist = LevenshteinDistance(lower, prop.ToLowerInvariant());
             if (dist > 0 && dist <= Math.Max(2, rawInput.Length / 3))
             {
