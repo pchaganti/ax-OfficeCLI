@@ -651,7 +651,16 @@ internal static class PivotTableHelper
             // these, Excel falls back to a layout that's not fully wired through and
             // refuses to render the data area.
             Outline = true,
-            OutlineData = true
+            OutlineData = true,
+            // Caption attributes — when present, Excel uses these strings instead
+            // of its locale-default "Row Labels" / "Column Labels" / "Grand Total".
+            // Without these the rendered cells we wrote into sheetData ("地区",
+            // "产品", "总计") get visually overlaid by Excel's English defaults
+            // because the pivot's caption layer takes precedence over cell content
+            // when the corresponding caption attribute is empty/missing.
+            RowHeaderCaption = rowFieldIndices.Count > 0 ? headers[rowFieldIndices[0]] : "Rows",
+            ColumnHeaderCaption = colFieldIndices.Count > 0 ? headers[colFieldIndices[0]] : "Columns",
+            GrandTotalCaption = "总计"
         };
 
         // Use typed property setters to ensure correct schema order
