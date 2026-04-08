@@ -1,6 +1,7 @@
 // Copyright 2025 OfficeCli (officecli.ai)
 // SPDX-License-Identifier: Apache-2.0
 
+using System.Runtime.Versioning;
 using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Wordprocessing;
 using OfficeCli.Core;
@@ -289,7 +290,7 @@ public partial class WordHandler
             anchor.PrependChild(newWrap);
     }
 
-    private static DocumentNode CreateOleNode(EmbeddedObject oleObj, Run run, string path)
+    private DocumentNode CreateOleNode(EmbeddedObject oleObj, Run run, string path)
     {
         var node = new DocumentNode
         {
@@ -320,7 +321,80 @@ public partial class WordHandler
                 ParseVmlStyle(style, node);
         }
 
+        // Extract preview image from v:imagedata (Windows only — requires GDI+)
+        var (previewPath, previewContentType) = OperatingSystem.IsWindowsVersionAtLeast(6, 1)
+            ? ExtractOlePreviewImage(oleObj, path)
+            : (null, null);
+        if (previewPath != null)
+        {
+            node.Format["previewImage"] = previewPath;
+            if (previewContentType != null)
+                node.Format["previewContentType"] = previewContentType;
+        }
+
         return node;
+    }
+
+    /// <summary>
+    /// Extract the OLE preview image (EMF/WMF) from v:imagedata, convert to PNG,
+    /// and save to temp directory. Returns (pngPath, originalContentType) or (null, null).
+    /// </summary>
+    [SupportedOSPlatform("windows6.1")]
+    private (string? path, string? contentType) ExtractOlePreviewImage(EmbeddedObject oleObj, string nodePath)
+    {
+        var mainPart = _doc.MainDocumentPart;
+        if (mainPart == null) return (null, null);
+
+        // Find v:imagedata element and its r:id
+        var shape = oleObj.Descendants().FirstOrDefault(e => e.LocalName == "shape");
+        if (shape == null) return (null, null);
+
+        var imageData = shape.Descendants().FirstOrDefault(e => e.LocalName == "imagedata");
+        if (imageData == null) return (null, null);
+
+        var rId = imageData.GetAttributes().FirstOrDefault(a => a.LocalName == "id").Value;
+        if (string.IsNullOrEmpty(rId)) return (null, null);
+
+        try
+        {
+            var imgPart = mainPart.GetPartById(rId);
+            using var stream = imgPart.GetStream();
+            using var ms = new MemoryStream();
+            stream.CopyTo(ms);
+            ms.Position = 0;
+
+            var contentType = imgPart.ContentType ?? "";
+            var isMetafile = contentType.Contains("emf") || contentType.Contains("wmf")
+                          || contentType.Contains("metafile");
+
+            // Build a stable file name from the node path
+            var safeId = nodePath.Replace("/", "_").Replace("[", "").Replace("]", "").TrimStart('_');
+            var pngPath = Path.Combine(Path.GetTempPath(), $"officecli_ole_{safeId}.png");
+
+            if (isMetafile)
+            {
+                // Convert EMF/WMF to PNG using System.Drawing (Windows GDI+)
+                using var img = System.Drawing.Image.FromStream(ms);
+                img.Save(pngPath, System.Drawing.Imaging.ImageFormat.Png);
+            }
+            else if (contentType.Contains("png"))
+            {
+                using var fs = new FileStream(pngPath, FileMode.Create);
+                ms.CopyTo(fs);
+            }
+            else
+            {
+                // JPEG or other raster — convert to PNG for consistency
+                using var img = System.Drawing.Image.FromStream(ms);
+                img.Save(pngPath, System.Drawing.Imaging.ImageFormat.Png);
+            }
+
+            return (pngPath, contentType);
+        }
+        catch
+        {
+            return (null, null);
+        }
     }
 
     private static void ParseVmlStyle(string style, DocumentNode node)
