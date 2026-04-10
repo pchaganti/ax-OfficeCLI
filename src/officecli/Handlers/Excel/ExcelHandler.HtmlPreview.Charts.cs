@@ -346,16 +346,22 @@ public partial class ExcelHandler
                 double val = 0;
                 if (cell != null)
                 {
-                    var raw = cell.CellValue?.Text;
-                    if (!string.IsNullOrEmpty(raw) && double.TryParse(raw,
-                        System.Globalization.NumberStyles.Any,
-                        System.Globalization.CultureInfo.InvariantCulture, out var v))
-                    {
-                        val = v;
-                    }
-                    else if (cell.CellFormula?.Text != null)
+                    // If the cell has a formula, always evaluate — cached values may be stale
+                    // (e.g. generator tools often write formulas with cachedValue=0 and expect
+                    // Excel to recompute on open). Matches GetFormattedCellValue's policy.
+                    if (cell.CellFormula?.Text != null)
                     {
                         val = evaluator.TryEvaluate(cell.CellFormula.Text) ?? 0;
+                    }
+                    else
+                    {
+                        var raw = cell.CellValue?.Text;
+                        if (!string.IsNullOrEmpty(raw) && double.TryParse(raw,
+                            System.Globalization.NumberStyles.Any,
+                            System.Globalization.CultureInfo.InvariantCulture, out var v))
+                        {
+                            val = v;
+                        }
                     }
                 }
                 results.Add(val);
