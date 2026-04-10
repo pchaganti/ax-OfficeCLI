@@ -107,7 +107,7 @@ For every morph transition, plan the slide pair BEFORE writing any code. Use a t
 
 **FIRST: Install `officecli` if needed**
 
-Follow the installation check in `reference/officecli-pptx-min.md` section 0.
+Follow the install section in `reference/officecli-pptx-min.md` section 0.
 
 **IMPORTANT: Use morph-helpers for reliable workflow**
 

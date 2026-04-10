@@ -9,7 +9,7 @@ description: "Use this skill any time a .docx file is involved -- as input, outp
 
 ## BEFORE YOU START (CRITICAL)
 
-**Install `officecli` if needed:**
+**If `officecli` is not installed:**
 
 `macOS / Linux`
 
@@ -27,11 +27,7 @@ if (-not (Get-Command officecli -ErrorAction SilentlyContinue)) {
 }
 ```
 
-**Then verify installation:**
-
-```text
-officecli --version
-```
+Verify: `officecli --version`
 
 If `officecli` is still not found after first install, open a new terminal and run the verify command again.
 
