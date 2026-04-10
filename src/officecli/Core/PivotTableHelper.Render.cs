@@ -2062,10 +2062,11 @@ internal static partial class PivotTableHelper
 
         // Data + grand total rows.
         int firstDataRowIdx = anchorRow + headerRows;
+        int blankRowOffset = 0; // extra rows inserted for insertBlankRow
         for (int rp = 0; rp < rowPositions.Count; rp++)
         {
             var (rowNode, rIsLeaf, rIsSubtotal) = rowPositions[rp];
-            int rowIdx = firstDataRowIdx + rp;
+            int rowIdx = firstDataRowIdx + rp + blankRowOffset;
             var row = new Row { RowIndex = (uint)rowIdx };
             if (ActiveLayoutMode == "compact")
             {
@@ -2150,12 +2151,21 @@ internal static partial class PivotTableHelper
                         ComputeCell(rowNode, grandRowNode, d), valueStyleIds[d]));
             }
             sheetData.AppendChild(row);
+
+            // insertBlankRow: insert an empty row after each outer group's
+            // last entry (subtotal in tabular, subtotal in compact/outline).
+            if (ActiveInsertBlankRow && rIsSubtotal && rowNode.Depth == 1)
+            {
+                blankRowOffset++;
+                var blankRow = new Row { RowIndex = (uint)(rowIdx + 1) };
+                sheetData.AppendChild(blankRow);
+            }
         }
 
         // Final grand total row.
         if (emitColGrand)
         {
-            int grandRowIdx = firstDataRowIdx + rowPositions.Count;
+            int grandRowIdx = firstDataRowIdx + rowPositions.Count + blankRowOffset;
             var grandRow = new Row { RowIndex = (uint)grandRowIdx };
             grandRow.AppendChild(MakeStringCell(anchorColIdx, grandRowIdx, totalLabel));
             var grandRowNodeFinal = new AxisNode(string.Empty, 0, Array.Empty<string>());

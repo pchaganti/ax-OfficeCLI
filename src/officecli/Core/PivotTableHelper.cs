@@ -135,6 +135,12 @@ internal static partial class PivotTableHelper
             ["repeatitemlabels"]  = "repeatlabels",
             ["repeatalllabels"]   = "repeatlabels",
             ["filldownlabels"]    = "repeatlabels",
+            // blankRows aliases
+            ["insertblankrow"]    = "blankrows",
+            ["insertblankrows"]   = "blankrows",
+            ["blankrow"]          = "blankrows",
+            ["blankline"]         = "blankrows",
+            ["blanklines"]        = "blankrows",
         };
 
     /// <summary>
@@ -193,7 +199,7 @@ internal static partial class PivotTableHelper
             "source", "src", "name", "position", "pos", "style",
             "rows", "cols", "filters", "values",
             "aggregate", "showdataas", "topn",
-            "sort", "layout", "repeatlabels",
+            "sort", "layout", "repeatlabels", "blankrows",
             "grandtotals", "rowgrandtotals", "colgrandtotals",
             "subtotals", "defaultsubtotal",
             // <pivotTableStyleInfo> bool toggles (see ApplyPivotStyleInfoProps).
@@ -584,6 +590,29 @@ internal static partial class PivotTableHelper
         public void Dispose() { _repeatItemLabels = _prev; }
     }
 
+    // CONSISTENCY(thread-static-pivot-opts): insertBlankRow — "Insert Blank
+    // Line After Each Item" in Excel's Report Layout menu. When true, an
+    // empty row is inserted after each outer group (after subtotal in tabular,
+    // after last leaf in compact/outline). OOXML: insertBlankRow on pivotField.
+    [ThreadStatic] private static bool? _insertBlankRow;
+
+    private static bool ActiveInsertBlankRow => _insertBlankRow ?? false;
+
+    private static IDisposable PushInsertBlankRow(Dictionary<string, string> properties)
+    {
+        var prev = _insertBlankRow;
+        if (properties.TryGetValue("blankrows", out var val) && !string.IsNullOrWhiteSpace(val))
+            _insertBlankRow = ParseHelpers.IsTruthy(val);
+        return new InsertBlankRowScope(prev);
+    }
+
+    private sealed class InsertBlankRowScope : IDisposable
+    {
+        private readonly bool? _prev;
+        public InsertBlankRowScope(bool? prev) { _prev = prev; }
+        public void Dispose() { _insertBlankRow = _prev; }
+    }
+
     /// <summary>
     /// Apply axis ordering (ascending/descending) to an OrderBy clause using
     /// the currently-active sort mode. All axis sort sites use this helper.
@@ -753,6 +782,8 @@ internal static partial class PivotTableHelper
         using var _layoutScope = PushLayoutMode(properties);
         // CONSISTENCY(thread-static-pivot-opts): same pattern for repeatItemLabels.
         using var _repeatScope = PushRepeatItemLabels(properties);
+        // CONSISTENCY(thread-static-pivot-opts): same pattern for insertBlankRow.
+        using var _blankRowScope = PushInsertBlankRow(properties);
 
         // 1. Read source data to build cache
         var (headers, columnData, columnStyleIds) = ReadSourceData(sourceSheet, sourceRef);
@@ -1393,8 +1424,18 @@ internal static partial class PivotTableHelper
         if (!ActiveRowGrandTotals) totalCols = 0;
         int grandRowHeight = ActiveColGrandTotals ? 1 : 0;
 
+        // insertBlankRow: one blank row after each outer group's subtotal/last leaf.
+        int blankRowCount = 0;
+        if (ActiveInsertBlankRow && rowFieldIndices.Count >= 2)
+        {
+            int outerGroups = rowFieldIndices[0] < columnData.Count
+                ? columnData[rowFieldIndices[0]].Where(v => !string.IsNullOrEmpty(v)).Distinct().Count()
+                : 0;
+            blankRowCount = outerGroups;
+        }
+
         int width = rowLabelCols + valueCols + totalCols;
-        int height = headerRows + dataRowCount + grandRowHeight;
+        int height = headerRows + dataRowCount + blankRowCount + grandRowHeight;
 
         var (anchorCol, anchorRow) = ParseCellRef(position);
         var anchorColIdx = ColToIndex(anchorCol);

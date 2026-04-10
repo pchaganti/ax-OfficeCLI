@@ -147,6 +147,16 @@ internal static partial class PivotTableHelper
             node.Format["layout"] = layout;
         }
 
+        // insertBlankRow readback — check outermost row axis field
+        if (pivotFields != null)
+        {
+            var rowAxisFields = pivotFields.Elements<PivotField>()
+                .Where(pf => pf.Axis?.Value == PivotTableAxisValues.AxisRow)
+                .ToList();
+            if (rowAxisFields.Count > 0 && rowAxisFields[0].InsertBlankRow?.Value == true)
+                node.Format["blankRows"] = "true";
+        }
+
         // repeatItemLabels (fillDownLabelsDefault in x14:pivotTableDefinition)
         {
             bool repeatLabels = false;

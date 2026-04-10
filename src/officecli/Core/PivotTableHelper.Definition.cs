@@ -286,6 +286,10 @@ internal static partial class PivotTableHelper
             {
                 pf.DataField = true;
             }
+            // insertBlankRow: Excel sets this on ALL pivotFields (not just
+            // axis fields) when "Insert Blank Line After Each Item" is enabled.
+            if (ActiveInsertBlankRow)
+                pf.InsertBlankRow = true;
 
             _ = isNumeric; // kept for readability; consumed only by data fields above
 
@@ -791,6 +795,18 @@ internal static partial class PivotTableHelper
                 else
                     subtotalEntry.AppendChild(new MemberPropertyIndex { Val = outerPivIdx });
                 container.AppendChild(subtotalEntry);
+                count++;
+            }
+
+            // insertBlankRow: emit <i t="blank"> after each group
+            if (ActiveInsertBlankRow)
+            {
+                var blankEntry = new RowItem { ItemType = ItemValues.Blank };
+                if (outerPivIdx == 0)
+                    blankEntry.AppendChild(new MemberPropertyIndex());
+                else
+                    blankEntry.AppendChild(new MemberPropertyIndex { Val = outerPivIdx });
+                container.AppendChild(blankEntry);
                 count++;
             }
         }

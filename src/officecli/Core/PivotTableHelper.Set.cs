@@ -30,6 +30,8 @@ internal static partial class PivotTableHelper
         using var _layoutScope = PushLayoutMode(properties);
         // CONSISTENCY(thread-static-pivot-opts): same pattern for repeatItemLabels.
         using var _repeatScope = PushRepeatItemLabels(properties);
+        // CONSISTENCY(thread-static-pivot-opts): same pattern for insertBlankRow.
+        using var _blankRowScope = PushInsertBlankRow(properties);
 
         var unsupported = new List<string>();
         var pivotDef = pivotPart.PivotTableDefinition;
@@ -286,6 +288,31 @@ internal static partial class PivotTableHelper
                         extLst = pivotDef.GetFirstChild<PivotTableDefinitionExtensionList>()
                             ?? pivotDef.AppendChild(new PivotTableDefinitionExtensionList());
                         extLst.AppendChild(ext);
+                    }
+                    // Trigger re-render
+                    if (!fieldAreaProps.ContainsKey("rows") && !fieldAreaProps.ContainsKey("cols")
+                        && !fieldAreaProps.ContainsKey("values") && !fieldAreaProps.ContainsKey("filters")
+                        && !fieldAreaProps.ContainsKey("__sort_only__"))
+                    {
+                        fieldAreaProps["__sort_only__"] = "";
+                    }
+                    break;
+                }
+                case "blankrows":
+                {
+                    bool enable = ParseHelpers.IsTruthy(value);
+                    // Set insertBlankRow on the outermost row field
+                    if (pivotDef.PivotFields != null && pivotDef.RowFields != null)
+                    {
+                        var rowFields = pivotDef.RowFields.Elements<Field>().ToList();
+                        if (rowFields.Count >= 2)
+                        {
+                            var firstIdx = (int)(rowFields[0].Index?.Value ?? 0);
+                            var pf = pivotDef.PivotFields.Elements<PivotField>()
+                                .ElementAtOrDefault(firstIdx);
+                            if (pf != null)
+                                pf.InsertBlankRow = enable ? true : null;
+                        }
                     }
                     // Trigger re-render
                     if (!fieldAreaProps.ContainsKey("rows") && !fieldAreaProps.ContainsKey("cols")
