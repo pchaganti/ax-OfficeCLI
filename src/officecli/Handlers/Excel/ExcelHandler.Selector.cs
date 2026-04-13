@@ -28,6 +28,16 @@ public partial class ExcelHandler
         string? typeEquals = null;
         string? typeNotEquals = null;
 
+        // Reject path-style selectors (e.g. "/Sheet1/cell", "cell /Sheet1")
+        if (selector.Contains('/'))
+            throw new OfficeCli.Core.CliException(
+                $"Invalid selector: '{selector}'. Use '!' to filter by sheet, not '/'.")
+            {
+                Code = "invalid_selector",
+                Suggestion = "Sheet1!cell, Sheet1!A1:D10, Sheet1!cell[type=Number]",
+                Help = "officecli xlsx query"
+            };
+
         // Check for sheet prefix: Sheet1!cell[...]
         // Only treat '!' as sheet separator if NOT part of '!=' operator
         var exclMatch = Regex.Match(selector, @"^(.+?)!(?!=)");
