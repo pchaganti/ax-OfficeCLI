@@ -1668,7 +1668,43 @@ public partial class ExcelHandler
                 var shpWorksheet = FindWorksheet(shpSheetName)
                     ?? throw new ArgumentException($"Sheet not found: {shpSheetName}");
 
-                var (sx, sy, sw, sh) = ParseAnchorBounds(properties, "1", "1", "5", "3");
+                // CONSISTENCY(ole-width-units): accept `anchor=B2:F7` as a cell
+                // range (same grammar as OLE's anchor=), alongside the legacy
+                // x/y/width/height (column/row units) form. When both are
+                // supplied, warn and let anchor= win — it defines the full
+                // rectangle, so width/height are ambiguous.
+                int sx, sy, sw, sh;
+                if (properties.TryGetValue("anchor", out var shpAnchorStr) && !string.IsNullOrWhiteSpace(shpAnchorStr))
+                {
+                    if (properties.ContainsKey("width") || properties.ContainsKey("height")
+                        || properties.ContainsKey("x") || properties.ContainsKey("y"))
+                        Console.Error.WriteLine(
+                            "Warning: 'x'/'y'/'width'/'height' are ignored when 'anchor' is provided (anchor defines the full rectangle).");
+                    var shpAnchorMatch = Regex.Match(shpAnchorStr, @"^([A-Z]+)(\d+)(?::([A-Z]+)(\d+))?$", RegexOptions.IgnoreCase);
+                    if (!shpAnchorMatch.Success)
+                        throw new ArgumentException($"Invalid anchor: '{shpAnchorStr}'. Expected e.g. 'B2' or 'B2:F7'.");
+                    // CONSISTENCY(xdr-coords): XDR ColumnId/RowId are 0-based;
+                    // ColumnNameToIndex returns 1-based, so subtract 1 here.
+                    sx = ColumnNameToIndex(shpAnchorMatch.Groups[1].Value) - 1;
+                    sy = int.Parse(shpAnchorMatch.Groups[2].Value) - 1;
+                    int sxTo, syTo;
+                    if (shpAnchorMatch.Groups[3].Success)
+                    {
+                        sxTo = ColumnNameToIndex(shpAnchorMatch.Groups[3].Value) - 1;
+                        syTo = int.Parse(shpAnchorMatch.Groups[4].Value) - 1;
+                    }
+                    else
+                    {
+                        sxTo = sx + 4;
+                        syTo = sy + 2;
+                    }
+                    sw = sxTo - sx;
+                    sh = syTo - sy;
+                }
+                else
+                {
+                    (sx, sy, sw, sh) = ParseAnchorBounds(properties, "1", "1", "5", "3");
+                }
                 var shpText = properties.GetValueOrDefault("text", "") ?? "";
                 var shpName = properties.GetValueOrDefault("name", "");
 
