@@ -930,7 +930,14 @@ public partial class PowerPointHandler
         // ResolveIdPath — clicks inside walk up via closest('[data-path]') and select
         // the group container.
         var dataPathAttr = string.IsNullOrEmpty(dataPath) ? "" : $" data-path=\"{HtmlEncode(dataPath)}\"";
-        sb.AppendLine($"    <div class=\"group\"{dataPathAttr} style=\"left:{Units.EmuToPt(x)}pt;top:{Units.EmuToPt(y)}pt;width:{Units.EmuToPt(cx)}pt;height:{Units.EmuToPt(cy)}pt\">");
+        // CONSISTENCY(group-rotation): match single-shape rotation idiom from RenderShape
+        // (transform:rotate(Ndeg)). OOXML group rotation rotates children as a composite
+        // around the group's bounding-box center; CSS default transform-origin (50% 50%)
+        // matches this.
+        var grpTransform = "";
+        if (grpXfrm?.Rotation != null && grpXfrm.Rotation.Value != 0)
+            grpTransform = $";transform:rotate({grpXfrm.Rotation.Value / 60000.0:0.##}deg)";
+        sb.AppendLine($"    <div class=\"group\"{dataPathAttr} style=\"left:{Units.EmuToPt(x)}pt;top:{Units.EmuToPt(y)}pt;width:{Units.EmuToPt(cx)}pt;height:{Units.EmuToPt(cy)}pt{grpTransform}\">");
 
         foreach (var child in grp.ChildElements)
         {
@@ -1014,7 +1021,11 @@ public partial class PowerPointHandler
         var offX = childOff?.X?.Value ?? 0;
         var offY = childOff?.Y?.Value ?? 0;
 
-        sb.AppendLine($"    <div class=\"group\" style=\"left:{Units.EmuToPt(x)}pt;top:{Units.EmuToPt(y)}pt;width:{Units.EmuToPt(cx)}pt;height:{Units.EmuToPt(cy)}pt\">");
+        // CONSISTENCY(group-rotation): same idiom as RenderGroup
+        var grpTransform = "";
+        if (grpXfrm?.Rotation != null && grpXfrm.Rotation.Value != 0)
+            grpTransform = $";transform:rotate({grpXfrm.Rotation.Value / 60000.0:0.##}deg)";
+        sb.AppendLine($"    <div class=\"group\" style=\"left:{Units.EmuToPt(x)}pt;top:{Units.EmuToPt(y)}pt;width:{Units.EmuToPt(cx)}pt;height:{Units.EmuToPt(cy)}pt{grpTransform}\">");
 
         foreach (var child in grp.ChildElements)
         {
