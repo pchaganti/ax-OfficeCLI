@@ -573,6 +573,15 @@ public partial class WordHandler
                         eqCols.RemoveAllChildren<Column>();
                         break;
                     }
+                    case "columnspace" or "columns.space":
+                    {
+                        // Standalone column-spacing update — preserves existing
+                        // column count/widths. Pairs with the canonical 'columnSpace'
+                        // key returned by Get/Query (WordHandler.Query.cs:491).
+                        var spaceCols = EnsureColumns(sectPr);
+                        spaceCols.Space = ParseTwips(value).ToString();
+                        break;
+                    }
                     case "colwidths":
                     {
                         // Custom column widths: "3000,720,2000,720,3000"
