@@ -1004,9 +1004,21 @@ public partial class WordHandler
                 RunProperties? rp = paraRp as RunProperties ?? null;
                 ParagraphMarkRunProperties? markRp = paraRp as ParagraphMarkRunProperties ?? null;
 
-                // Helper lambdas to read from whichever source is available
-                var pFont = (rp?.RunFonts ?? markRp?.GetFirstChild<RunFonts>())?.Ascii?.Value;
-                if (pFont != null && !node.Format.ContainsKey("font")) node.Format["font"] = pFont;
+                // CONSISTENCY(canonical-keys): mirror style Get (WordHandler.Query.cs:546-553) —
+                // emit per-script font slots, no flat "font" alias. R6 BUG-1: previously only
+                // emitted Ascii under "font" key, dropping eastAsia/hAnsi/cs slots.
+                var pRunFonts = rp?.RunFonts ?? markRp?.GetFirstChild<RunFonts>();
+                if (pRunFonts != null)
+                {
+                    if (pRunFonts.Ascii?.Value != null && !node.Format.ContainsKey("font.ascii"))
+                        node.Format["font.ascii"] = pRunFonts.Ascii.Value;
+                    if (pRunFonts.EastAsia?.Value != null && !node.Format.ContainsKey("font.eastAsia"))
+                        node.Format["font.eastAsia"] = pRunFonts.EastAsia.Value;
+                    if (pRunFonts.HighAnsi?.Value != null && !node.Format.ContainsKey("font.hAnsi"))
+                        node.Format["font.hAnsi"] = pRunFonts.HighAnsi.Value;
+                    if (pRunFonts.ComplexScript?.Value != null && !node.Format.ContainsKey("font.cs"))
+                        node.Format["font.cs"] = pRunFonts.ComplexScript.Value;
+                }
 
                 var fsVal = rp?.FontSize?.Val?.Value ?? markRp?.GetFirstChild<FontSize>()?.Val?.Value;
                 if (fsVal != null && !node.Format.ContainsKey("size"))
@@ -1056,8 +1068,17 @@ public partial class WordHandler
         {
             node.Type = "run";
             node.Text = GetRunText(run);
-            var font = GetRunFont(run);
-            if (font != null) node.Format["font"] = font;
+            // CONSISTENCY(canonical-keys): mirror style Get (WordHandler.Query.cs:546-553) —
+            // emit per-script font slots, no flat "font" alias. R6 BUG-1: previously
+            // collapsed all 4 slots into a single "font" via GetRunFont (Ascii first).
+            var rFonts = run.RunProperties?.RunFonts;
+            if (rFonts != null)
+            {
+                if (rFonts.Ascii?.Value != null) node.Format["font.ascii"] = rFonts.Ascii.Value;
+                if (rFonts.EastAsia?.Value != null) node.Format["font.eastAsia"] = rFonts.EastAsia.Value;
+                if (rFonts.HighAnsi?.Value != null) node.Format["font.hAnsi"] = rFonts.HighAnsi.Value;
+                if (rFonts.ComplexScript?.Value != null) node.Format["font.cs"] = rFonts.ComplexScript.Value;
+            }
             var size = GetRunFontSize(run);
             if (size != null) node.Format["size"] = size;
             if (run.RunProperties?.Bold != null) node.Format["bold"] = true;

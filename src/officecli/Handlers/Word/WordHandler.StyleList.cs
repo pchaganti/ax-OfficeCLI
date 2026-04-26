@@ -229,8 +229,10 @@ public partial class WordHandler
             node.Format["effective.size"] = $"{sz:0.##}pt";
         }
 
-        // font.name
-        if (!node.Format.ContainsKey("font"))
+        // font.name — CONSISTENCY(canonical-keys): check per-script slot keys, not legacy "font".
+        if (!node.Format.ContainsKey("font.ascii") && !node.Format.ContainsKey("font.eastAsia")
+            && !node.Format.ContainsKey("font.hAnsi") && !node.Format.ContainsKey("font.cs")
+            && !node.Format.ContainsKey("font"))
         {
             var font = effective.RunFonts?.Ascii?.Value ?? effective.RunFonts?.HighAnsi?.Value
                 ?? effective.RunFonts?.EastAsia?.Value;
@@ -276,7 +278,10 @@ public partial class WordHandler
             node.Format["effective.size"] = $"{sz:0.##}pt";
         }
 
-        if (!node.Format.ContainsKey("font"))
+        // CONSISTENCY(canonical-keys): check per-script slot keys, not legacy "font".
+        if (!node.Format.ContainsKey("font.ascii") && !node.Format.ContainsKey("font.eastAsia")
+            && !node.Format.ContainsKey("font.hAnsi") && !node.Format.ContainsKey("font.cs")
+            && !node.Format.ContainsKey("font"))
         {
             var font = effective.RunFonts?.Ascii?.Value ?? effective.RunFonts?.HighAnsi?.Value
                 ?? effective.RunFonts?.EastAsia?.Value;
