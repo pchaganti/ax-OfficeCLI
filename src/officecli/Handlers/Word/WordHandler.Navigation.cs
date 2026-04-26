@@ -880,13 +880,15 @@ public partial class WordHandler
                 if (pProps.Indentation != null)
                 {
                     var ind = pProps.Indentation;
-                    if (ind.FirstLine?.Value != null) node.Format["firstLineIndent"] = ind.FirstLine.Value;
-                    if (ind.Hanging?.Value != null) node.Format["hangingIndent"] = ind.Hanging.Value;
+                    // CONSISTENCY(unit-qualified-spacing): indents return "Xpt" via SpacingConverter,
+                    // matching spaceBefore/spaceAfter (Canonical DocumentNode.Format Rules).
+                    if (ind.FirstLine?.Value != null) node.Format["firstLineIndent"] = SpacingConverter.FormatWordSpacing(ind.FirstLine.Value);
+                    if (ind.Hanging?.Value != null) node.Format["hangingIndent"] = SpacingConverter.FormatWordSpacing(ind.Hanging.Value);
                     // CONSISTENCY(ind-start-end): modern Word writes <w:ind w:start>/<w:end> instead of left/right.
                     var leftTwips = ind.Left?.Value ?? ind.Start?.Value;
-                    if (leftTwips != null) node.Format["leftIndent"] = leftTwips;
+                    if (leftTwips != null) node.Format["leftIndent"] = SpacingConverter.FormatWordSpacing(leftTwips);
                     var rightTwips = ind.Right?.Value ?? ind.End?.Value;
-                    if (rightTwips != null) node.Format["rightIndent"] = rightTwips;
+                    if (rightTwips != null) node.Format["rightIndent"] = SpacingConverter.FormatWordSpacing(rightTwips);
                     // CONSISTENCY(ind-chars): chars-unit indents (Chinese typography) — backfilled from style Get edc8f884.
                     if (ind.FirstLineChars?.Value != null) node.Format["firstLineChars"] = ind.FirstLineChars.Value;
                     if (ind.HangingChars?.Value != null) node.Format["hangingChars"] = ind.HangingChars.Value;

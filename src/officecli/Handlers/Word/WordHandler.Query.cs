@@ -585,12 +585,13 @@ public partial class WordHandler
                 {
                     var ind = pPr.Indentation;
                     // Left/Right and Start/End are OOXML aliases; modern Word writes Start/End.
-                    if (ind.FirstLine?.Value != null) styleNode.Format["firstLineIndent"] = ind.FirstLine.Value;
-                    if (ind.Hanging?.Value != null) styleNode.Format["hangingIndent"] = ind.Hanging.Value;
+                    // CONSISTENCY(unit-qualified-spacing): unit-qualified output via SpacingConverter.
+                    if (ind.FirstLine?.Value != null) styleNode.Format["firstLineIndent"] = SpacingConverter.FormatWordSpacing(ind.FirstLine.Value);
+                    if (ind.Hanging?.Value != null) styleNode.Format["hangingIndent"] = SpacingConverter.FormatWordSpacing(ind.Hanging.Value);
                     var leftTwips = ind.Left?.Value ?? ind.Start?.Value;
-                    if (leftTwips != null) styleNode.Format["leftIndent"] = leftTwips;
+                    if (leftTwips != null) styleNode.Format["leftIndent"] = SpacingConverter.FormatWordSpacing(leftTwips);
                     var rightTwips = ind.Right?.Value ?? ind.End?.Value;
-                    if (rightTwips != null) styleNode.Format["rightIndent"] = rightTwips;
+                    if (rightTwips != null) styleNode.Format["rightIndent"] = SpacingConverter.FormatWordSpacing(rightTwips);
                     // CONSISTENCY(ind-chars): *Chars variants not yet exposed by paragraph Get.
                     if (ind.FirstLineChars?.Value != null) styleNode.Format["firstLineChars"] = ind.FirstLineChars.Value;
                     if (ind.HangingChars?.Value != null) styleNode.Format["hangingChars"] = ind.HangingChars.Value;
