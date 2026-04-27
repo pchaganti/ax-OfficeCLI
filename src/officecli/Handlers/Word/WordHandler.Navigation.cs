@@ -459,6 +459,39 @@ public partial class WordHandler
             }
         }
 
+        // BUG-R36-B5: top-level /sdt[N] alias. The schema documents both
+        // /sdt[N] and /body/p[N]/sdt[M], but only the body-anchored form
+        // resolved. Resolve /sdt[N] positionally over body-level SdtBlock
+        // elements (document order), mirroring the /bookmark[N] alias above.
+        if (first.Name.ToLowerInvariant() == "sdt" && segments.Count == 1
+            && first.Index.HasValue)
+        {
+            var body = _doc.MainDocumentPart?.Document?.Body;
+            if (body != null)
+            {
+                var sdts = body.Descendants<SdtBlock>().Cast<OpenXmlElement>()
+                    .Concat(body.Descendants<SdtRun>().Cast<OpenXmlElement>())
+                    .ToList();
+                var n = first.Index.Value;
+                if (n >= 1 && n <= sdts.Count) return sdts[n - 1];
+            }
+        }
+        if (first.Name.ToLowerInvariant() == "sdt" && segments.Count == 1
+            && first.StringIndex != null
+            && first.StringIndex.StartsWith("@sdtId=", StringComparison.OrdinalIgnoreCase))
+        {
+            var body = _doc.MainDocumentPart?.Document?.Body;
+            if (body != null
+                && int.TryParse(first.StringIndex["@sdtId=".Length..], out var targetId))
+            {
+                return body.Descendants<SdtBlock>().Cast<OpenXmlElement>()
+                    .Concat(body.Descendants<SdtRun>().Cast<OpenXmlElement>())
+                    .FirstOrDefault(s =>
+                        (s as SdtBlock)?.SdtProperties?.GetFirstChild<SdtId>()?.Val?.Value == targetId
+                        || (s as SdtRun)?.SdtProperties?.GetFirstChild<SdtId>()?.Val?.Value == targetId);
+            }
+        }
+
         // Top-level /section[N] anchor routing. `add --type section` returns
         // "/section[N]" as the new element's identity; resolving it to the
         // carrier paragraph (the one whose pPr holds the Nth sectPr) lets
