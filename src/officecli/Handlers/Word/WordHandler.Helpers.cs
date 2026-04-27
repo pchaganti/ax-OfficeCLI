@@ -1335,7 +1335,24 @@ public partial class WordHandler
             if (element is Paragraph p)
                 paragraphs.Add(p);
             else if (element != null)
-                paragraphs.AddRange(element.Descendants<Paragraph>());
+            {
+                // BUG-BT-1: when path resolves to an inline element (e.g. a Run
+                // under /body/p[N]/r[K], or a Hyperlink), Descendants<Paragraph>()
+                // is empty — the find would silently match nothing. Walk up to
+                // the containing paragraph instead so /run paths still work,
+                // and also harvest any paragraphs nested inside (e.g. tables).
+                var nestedParas = element.Descendants<Paragraph>().ToList();
+                if (nestedParas.Count > 0)
+                {
+                    paragraphs.AddRange(nestedParas);
+                }
+                else
+                {
+                    var ancestorPara = element.Ancestors<Paragraph>().FirstOrDefault();
+                    if (ancestorPara != null)
+                        paragraphs.Add(ancestorPara);
+                }
+            }
         }
         else
         {
