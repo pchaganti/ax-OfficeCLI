@@ -178,6 +178,11 @@ public partial class ExcelHandler
 
         var cmtRef = properties.GetValueOrDefault("ref") ?? cmtRefFromPath
             ?? throw new ArgumentException("Property 'ref' is required for comment");
+        // Validate cell reference up-front; ParseCellReference rejects bad
+        // syntax, out-of-range rows (>1048576), and out-of-range columns (>XFD)
+        // with a clear ArgumentException — matches the validation surface
+        // already enforced for cells/ranges elsewhere.
+        ParseCellReference(cmtRef);
         var cmtText = properties.GetValueOrDefault("text", "");
         var cmtAuthor = properties.GetValueOrDefault("author", "Author");
 
