@@ -696,6 +696,17 @@ public class ResidentServer : IDisposable
         var items = System.Text.Json.JsonSerializer.Deserialize<List<BatchItem>>(
             batchJson, BatchJsonContext.Default.ListBatchItem) ?? new();
 
+        // BUG-R40-B11: parity with the non-resident path —
+        // CommandBuilder.Batch.cs already rejects null entries, but
+        // resident invocations bypass that check (the batchJson is
+        // forwarded raw), so re-validate here.
+        for (int ni = 0; ni < items.Count; ni++)
+        {
+            if (items[ni] == null)
+                throw new ArgumentException(
+                    $"batch item[{ni}] is null. Each entry must be a JSON object (e.g. {{\"command\":\"get\",\"path\":\"/\"}}).");
+        }
+
         var results = new List<BatchResult>();
         for (int bi = 0; bi < items.Count; bi++)
         {
