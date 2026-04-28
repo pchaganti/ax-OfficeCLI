@@ -662,7 +662,10 @@ public partial class WordHandler
             styleCounts[style] = styleCounts.GetValueOrDefault(style) + 1;
 
             var runs = GetAllRuns(para);
-            if (runs.Count == 0 && string.IsNullOrWhiteSpace(GetParagraphText(para)))
+            // CONSISTENCY(empty-para-math): equation paragraphs use m:oMathPara/m:oMath
+            // and have no plain runs/text — they must NOT count as empty.
+            if (runs.Count == 0 && string.IsNullOrWhiteSpace(GetParagraphText(para))
+                && FindMathElements(para).Count == 0)
             {
                 emptyParagraphs++;
                 continue;
@@ -745,7 +748,9 @@ public partial class WordHandler
             styleCounts[style] = styleCounts.GetValueOrDefault(style) + 1;
 
             var runs = GetAllRuns(para);
-            if (runs.Count == 0 && string.IsNullOrWhiteSpace(GetParagraphText(para)))
+            // CONSISTENCY(empty-para-math): see ViewAsStats — equation paragraphs aren't empty.
+            if (runs.Count == 0 && string.IsNullOrWhiteSpace(GetParagraphText(para))
+                && FindMathElements(para).Count == 0)
             {
                 emptyParagraphs++;
                 continue;
@@ -1117,7 +1122,9 @@ public partial class WordHandler
             var runs = GetAllRuns(para);
 
             // Empty paragraph
-            if (runs.Count == 0 && string.IsNullOrWhiteSpace(GetParagraphText(para)))
+            // CONSISTENCY(empty-para-math): equation paragraphs aren't empty.
+            if (runs.Count == 0 && string.IsNullOrWhiteSpace(GetParagraphText(para))
+                && FindMathElements(para).Count == 0)
             {
                 issues.Add(new DocumentIssue
                 {
