@@ -113,7 +113,16 @@ public partial class ExcelHandler
             return SetSheetLevel(worksheet, sheetName, properties);
         }
 
+        // BUG-R41-F2: reject cell reference segments that contain control characters
+        // (e.g. \n, \r, \t). In .NET, Regex `$` matches before a trailing \n, so
+        // without this check "A1\n" would pass ParseCellReference and create a ghost
+        // cell with CellReference="A1\n" — an address that never resolves to A1.
+        // Reject up-front so the caller gets a clear error instead of silent corruption.
         var cellRef = segments[1];
+        if (cellRef.Any(c => c < ' ' && c != '\t' || c == '\x7f'))
+            throw new ArgumentException(
+                $"Cell reference '{cellRef.Replace("\n", "\\n").Replace("\r", "\\r")}' contains invalid control characters. " +
+                $"Expected a clean cell address like 'A1' or 'B2'.");
 
         // Handle /SheetName/validation[N]
         var validationSetMatch = Regex.Match(cellRef, @"^validation\[(\d+)\]$", RegexOptions.IgnoreCase);

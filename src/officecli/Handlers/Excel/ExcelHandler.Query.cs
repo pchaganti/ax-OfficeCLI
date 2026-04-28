@@ -296,7 +296,14 @@ public partial class ExcelHandler
             return sheetNode;
         }
 
+        // BUG-R41-F2: reject cell reference segments that contain control characters
+        // (e.g. \n, \r, \t). Without this check, "A1\n" passes the cell-ref regex
+        // (Regex `$` matches before trailing \n in .NET) and resolves to a ghost cell.
         var cellRef = segments[1];
+        if (cellRef.Any(c => c < ' ' && c != '\t' || c == '\x7f'))
+            throw new ArgumentException(
+                $"Cell reference '{cellRef.Replace("\n", "\\n").Replace("\r", "\\r")}' contains invalid control characters. " +
+                $"Expected a clean cell address like 'A1' or 'B2'.");
 
         // Page break path: /Sheet1/rowbreak[N] or /Sheet1/colbreak[N]
         var rbMatch = Regex.Match(cellRef, @"^rowbreak\[(\d+)\]$", RegexOptions.IgnoreCase);
