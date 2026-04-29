@@ -172,10 +172,17 @@ public partial class ExcelHandler
             if (sheetView?.ShowRowColHeaders != null && !sheetView.ShowRowColHeaders.Value)
                 sheetNode.Format["headings"] = false;
 
-            // Include tab color
+            // Include tab color. Excel does not render tab transparency, so
+            // strip any alpha component before formatting — `Add tabColor=80FF0000`
+            // round-trips as `#FF0000`, mirroring how Excel stores 6-digit RGB
+            // when the user picks a tab color in the UI.
             var tabColor = ws.GetFirstChild<SheetProperties>()?.GetFirstChild<TabColor>();
             if (tabColor?.Rgb?.HasValue == true)
-                sheetNode.Format["tabColor"] = ParseHelpers.FormatHexColor(tabColor.Rgb.Value!);
+            {
+                var rgb = tabColor.Rgb.Value!;
+                if (rgb.Length == 8) rgb = rgb[2..];
+                sheetNode.Format["tabColor"] = ParseHelpers.FormatHexColor(rgb);
+            }
             else if (tabColor?.Theme?.HasValue == true)
             {
                 // CONSISTENCY(scheme-color): echo back the symbolic name

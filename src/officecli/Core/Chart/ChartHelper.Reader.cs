@@ -74,21 +74,14 @@ internal static partial class ChartHelper
             var dlPos = dataLabels.GetFirstChild<C.DataLabelPosition>()?.Val;
             if (dlPos?.HasValue == true)
             {
-                // Normalize OOXML's mix of short codes (ctr, t, b, l, r, outEnd) and long
-                // forms (inBase, inEnd, bestFit) to a consistent friendly vocabulary on
-                // readback. Set continues to accept both forms — see B12 alias map.
-                node.Format["labelPos"] = dlPos.InnerText switch
-                {
-                    "ctr" => "center",
-                    "t" => "top",
-                    "b" => "bottom",
-                    "l" => "left",
-                    "r" => "right",
-                    "outEnd" => "outsideEnd",
-                    "inEnd" => "insideEnd",
-                    "inBase" => "insideBase",
-                    _ => dlPos.InnerText
-                };
+                // Return the schema-legal value verbatim (ctr, t, b, l, r,
+                // outEnd, inEnd, inBase, bestFit). Stacked bar/column groupings
+                // restrict dLblPos to {ctr, inBase, inEnd}; surfacing the raw
+                // value lets callers verify exactly what was written and lines
+                // up with our canonical-value rule (Get returns truth, Set
+                // accepts friendly aliases). Friendly forms like "insideEnd"
+                // remain accepted on the Set side via the alias map.
+                node.Format["labelPos"] = dlPos.InnerText;
             }
         }
 

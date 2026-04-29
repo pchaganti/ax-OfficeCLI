@@ -32,15 +32,39 @@ public partial class ExcelHandler
         // the auto-generated SheetN default is always safe.
         if (properties.ContainsKey("name"))
             ValidateSheetName(name);
-        if (sheets.Elements<Sheet>().Any(s => string.Equals(s.Name, name, StringComparison.OrdinalIgnoreCase)))
+        var caseMatch = sheets.Elements<Sheet>()
+            .FirstOrDefault(s => string.Equals(s.Name, name, StringComparison.OrdinalIgnoreCase));
+        if (caseMatch != null)
         {
-            // Always reject — duplicate sheet names produce a workbook Excel
-            // refuses to open, and the previous "idempotent no-op when the
-            // sheet existed at open" branch silently masked the error
-            // (returned success without applying any of the user's
-            // properties such as tabColor / autoFilter / hidden). Mirror the
-            // post-open rejection so behavior is uniform.
-            throw new ArgumentException($"A sheet named '{name}' already exists. Sheet names must be unique.");
+            // Distinguish the BlankDocCreator-shipped placeholder sheet
+            // (untouched, claimable by the first Add) from a real
+            // user-created sheet (collision is a genuine error). The
+            // placeholder is identifiable as: workbook holds exactly one
+            // sheet, that sheet's worksheet has empty SheetData, no
+            // sheetView properties beyond defaults, no tabColor — i.e.
+            // a fresh `Create blank → first Add` flow.
+            var caseExact = string.Equals(caseMatch.Name, name, StringComparison.Ordinal);
+            var isPlaceholder = sheets.Elements<Sheet>().Count() == 1
+                && IsPristineWorksheet(workbookPart, caseMatch);
+            if (!caseExact || !isPlaceholder)
+            {
+                throw new ArgumentException(
+                    $"A sheet named '{caseMatch.Name}' already exists. Sheet names must be unique.");
+            }
+
+            // Placeholder claim: route any supplied autoFilter / tabColor /
+            // hidden through Set so the user's intent applies — the previous
+            // silent no-op branch dropped them, which is what motivated
+            // rejecting duplicates outright.
+            var existingPart = (WorksheetPart)workbookPart.GetPartById(caseMatch.Id!);
+            var sheetMerged = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            if (properties.TryGetValue("autoFilter", out var dupAf)) sheetMerged["autofilter"] = dupAf;
+            if (properties.TryGetValue("tabColor", out var dupTc)) sheetMerged["tabcolor"] = dupTc;
+            if (sheetMerged.Count > 0)
+                SetSheetLevel(existingPart, name, sheetMerged);
+            if (properties.TryGetValue("hidden", out var dupHidden) && ParseHelpers.IsTruthy(dupHidden))
+                caseMatch.State = SheetStateValues.Hidden;
+            return $"/sheet[@name='{name}']";
         }
         var newWorksheetPart = workbookPart.AddNewPart<WorksheetPart>();
         newWorksheetPart.Worksheet = new Worksheet(new SheetData());
@@ -81,6 +105,28 @@ public partial class ExcelHandler
 
         GetWorkbook().Save();
         return $"/{name}";
+    }
+
+    /// <summary>
+    /// Returns true when the worksheet behind <paramref name="sheet"/> looks
+    /// like the BlankDocCreator placeholder: empty SheetData, no tabColor,
+    /// no autoFilter, default visibility. Used by AddSheet to decide whether
+    /// a duplicate-name Add is the legacy "claim the blank's auto-Sheet1"
+    /// pattern (idempotent) or a genuine user collision (throw).
+    /// </summary>
+    private static bool IsPristineWorksheet(WorkbookPart workbookPart, Sheet sheet)
+    {
+        if (sheet.State != null && sheet.State.Value != SheetStateValues.Visible) return false;
+        if (sheet.Id?.Value == null) return false;
+        if (workbookPart.GetPartById(sheet.Id.Value) is not WorksheetPart wsp) return false;
+        var ws = wsp.Worksheet;
+        if (ws == null) return false;
+        var sheetData = ws.GetFirstChild<SheetData>();
+        if (sheetData != null && sheetData.Elements<Row>().Any()) return false;
+        var props = ws.GetFirstChild<SheetProperties>();
+        if (props?.GetFirstChild<TabColor>() != null) return false;
+        if (ws.Descendants<AutoFilter>().Any()) return false;
+        return true;
     }
 
     private string AddRow(string parentPath, string type, InsertPosition? position, Dictionary<string, string> properties)
