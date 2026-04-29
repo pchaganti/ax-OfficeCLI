@@ -1699,7 +1699,23 @@ public partial class WordHandler
         string findValue,
         string? replace,
         Dictionary<string, string> formatProps)
+        => ProcessFind(path, findValue, replace, formatProps, out _);
+
+    /// <summary>
+    /// Overload that surfaces the set of paragraphs whose text actually matched
+    /// the find pattern. Callers that follow up with paragraph-scope mutations
+    /// (e.g. <c>direction</c>) must filter by this set rather than re-resolving
+    /// every paragraph under the path — otherwise <c>find=X --prop direction=rtl</c>
+    /// silently rewrites every paragraph in the document. R8-fuzz-1 / R8-fuzz-2.
+    /// </summary>
+    private int ProcessFind(
+        string path,
+        string findValue,
+        string? replace,
+        Dictionary<string, string> formatProps,
+        out List<Paragraph> matchedParagraphs)
     {
+        matchedParagraphs = new List<Paragraph>();
         var (pattern, isRegex) = ParseFindPattern(findValue);
         if (string.IsNullOrEmpty(pattern) && !isRegex) return 0;
 
@@ -1711,7 +1727,10 @@ public partial class WordHandler
         {
             var count = ProcessFindInParagraph(para, pattern, isRegex, replace, formatProps.Count > 0 ? formatProps : null);
             if (count > 0)
+            {
                 para.TextId = GenerateParaId();
+                matchedParagraphs.Add(para);
+            }
             totalCount += count;
         }
 

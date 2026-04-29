@@ -70,14 +70,16 @@ public partial class WordHandler
                 findText = $"r\"{findText}\"";
 
             var effectivePath = (path is "" or "/") ? "/body" : path;
-            var matchCount = ProcessFind(effectivePath, findText, replace, formatProps.Count > 0 ? formatProps : new Dictionary<string, string>());
+            var matchCount = ProcessFind(effectivePath, findText, replace, formatProps.Count > 0 ? formatProps : new Dictionary<string, string>(), out var matchedParagraphs);
             LastFindMatchCount = matchCount;
 
-            // Apply paragraph-level properties to the matched paragraphs
+            // Apply paragraph-level properties to ONLY the paragraphs whose text
+            // actually matched the find pattern. R8-fuzz-1 / R8-fuzz-2: re-resolving
+            // via ResolveParagraphsForFind here ignores the find filter and
+            // mass-rewrites every paragraph under the path (data corruption).
             if (paraProps.Count > 0)
             {
-                var paragraphs = ResolveParagraphsForFind(effectivePath);
-                foreach (var para in paragraphs)
+                foreach (var para in matchedParagraphs)
                 {
                     var pProps = para.ParagraphProperties ?? para.PrependChild(new ParagraphProperties());
                     foreach (var (key, value) in paraProps)
