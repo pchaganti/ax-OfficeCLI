@@ -266,6 +266,37 @@ public partial class PowerPointHandler : IDocumentHandler
 
         var affected = RawXmlHelper.Execute(rootElement, xpath, action, xml);
         rootElement.Save();
+        // After a /slideMaster[N] raw-set the master's <p:sldLayoutIdLst> is
+        // the source's authoritative layout count. Blank decks ship with a
+        // pre-stamped 5-layout master, so a 1-layout source replays to a
+        // 5-layout deck — dump→batch→dump grows from 8 ops to 12 because
+        // the 4 extra blank layouts survive. Prune SlideLayoutParts whose
+        // rId is no longer in the post-replace sldLayoutIdLst so the
+        // replayed deck mirrors the source's layout set exactly. The grow
+        // path (line ~203) handles the opposite case (source has MORE).
+        if (Regex.IsMatch(partPath, @"^/slideMaster\[\d+\]$") && rootElement is SlideMaster sm)
+        {
+            var mp = sm.SlideMasterPart;
+            if (mp != null)
+            {
+                var declaredRids = new HashSet<string>(
+                    sm.SlideLayoutIdList?.Elements<SlideLayoutId>()
+                        .Select(e => e.RelationshipId?.Value ?? "")
+                        .Where(s => !string.IsNullOrEmpty(s))
+                    ?? Enumerable.Empty<string>(),
+                    StringComparer.Ordinal);
+                foreach (var pair in mp.Parts.ToList())
+                {
+                    if (pair.OpenXmlPart is SlideLayoutPart lp
+                        && !declaredRids.Contains(pair.RelationshipId))
+                    {
+                        // The orphan layout's rels (theme/image links etc.) drop
+                        // with the part; DeletePart cascades.
+                        mp.DeletePart(lp);
+                    }
+                }
+            }
+        }
         // BUG-R43: raw-set may have inserted/removed shape XML directly (incl.
         // cNvPr ids). The cached _usedShapeIds set is now stale, so the next
         // Add() can hand out an id that already exists in the tree, producing
