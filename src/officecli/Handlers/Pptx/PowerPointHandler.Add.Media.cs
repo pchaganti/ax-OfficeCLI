@@ -354,6 +354,16 @@ public partial class PowerPointHandler
                 }
 
                 InsertAtPosition(imgShapeTree, picture, index);
+
+                // CONSISTENCY(zorder-on-add): dump-emit carries zorder=N; without
+                // consuming it here every picture appended at the end of the tree.
+                if (properties.TryGetValue("zorder", out var picZ)
+                    || properties.TryGetValue("z-order", out picZ)
+                    || properties.TryGetValue("order", out picZ))
+                {
+                    ApplyZOrder(imgSlidePart, picture, picZ);
+                }
+
                 GetSlide(imgSlidePart).Save();
 
                 return $"/slide[{imgSlideIdx}]/{BuildElementPathSegment("picture", picture, imgShapeTree.Elements<Picture>().Count())}";
@@ -451,6 +461,10 @@ public partial class PowerPointHandler
                     var chartGfEx = BuildExtendedChartGraphicFrame(chartSlidePart, extChartPart,
                         chartId, chartName, chartX, chartY, chartCx, chartCy);
                     InsertAtPosition(chartShapeTree, chartGfEx, index);
+                    if (properties.TryGetValue("zorder", out var cxZ)
+                        || properties.TryGetValue("z-order", out cxZ)
+                        || properties.TryGetValue("order", out cxZ))
+                        ApplyZOrder(chartSlidePart, chartGfEx, cxZ);
                     GetSlide(chartSlidePart).Save();
 
                     // Count all charts (both regular and extended)
@@ -475,6 +489,10 @@ public partial class PowerPointHandler
                 var chartGf = BuildChartGraphicFrame(chartSlidePart, chartPart, chartId, chartName,
                     chartX, chartY, chartCx, chartCy);
                 InsertAtPosition(chartShapeTree, chartGf, index);
+                if (properties.TryGetValue("zorder", out var stdZ)
+                    || properties.TryGetValue("z-order", out stdZ)
+                    || properties.TryGetValue("order", out stdZ))
+                    ApplyZOrder(chartSlidePart, chartGf, stdZ);
                 GetSlide(chartSlidePart).Save();
 
                 var chartCount = chartShapeTree.Elements<GraphicFrame>()

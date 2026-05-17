@@ -655,6 +655,18 @@ public partial class PowerPointHandler
                     ApplyShapeAnimation(slidePart, newShape, animVal);
                 }
 
+                // Z-order — slide-only. NodeBuilder emits the 1-based position
+                // among content elements; without consuming it here every Add
+                // appended at the end of the shape tree and dump-replay lost
+                // the original stacking order.
+                if (slidePart != null && (
+                    properties.TryGetValue("zorder", out var zVal)
+                    || properties.TryGetValue("z-order", out zVal)
+                    || properties.TryGetValue("order", out zVal)))
+                {
+                    ApplyZOrder(slidePart, newShape, zVal);
+                }
+
                 ownerRoot.Save();
                 return $"{returnPathPrefix}/{BuildElementPathSegment("shape", newShape, shapeTree.Elements<Shape>().Count())}";
     }

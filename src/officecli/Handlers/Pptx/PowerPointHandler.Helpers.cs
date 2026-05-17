@@ -1521,6 +1521,13 @@ public partial class PowerPointHandler
     ///         or an integer for absolute position (1-based, 1 = back, N = front).
     /// </summary>
     private static void ApplyZOrder(DocumentFormat.OpenXml.Packaging.SlidePart slidePart, Shape shape, string value)
+        => ApplyZOrder(slidePart, (OpenXmlElement)shape, value);
+
+    // Generalized overload — picture/chart/table/group/connector all participate
+    // in the slide shape-tree z-order. AddShape/AddPicture/AddChart/AddTable/
+    // AddGroup/AddConnector all reach this so dump-emit `zorder=N` round-trips
+    // for every content element type, not just typed Shape.
+    private static void ApplyZOrder(DocumentFormat.OpenXml.Packaging.SlidePart slidePart, OpenXmlElement shape, string value)
     {
         var shapeTree = shape.Parent as ShapeTree
             ?? throw new InvalidOperationException("Shape is not in a ShapeTree");

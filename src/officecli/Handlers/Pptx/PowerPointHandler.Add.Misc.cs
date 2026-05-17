@@ -220,6 +220,10 @@ public partial class PowerPointHandler
                 connector.ShapeProperties.AppendChild(cxnOutline);
 
                 InsertAtPosition(cxnShapeTree, connector, index);
+                if (properties.TryGetValue("zorder", out var cxnZ)
+                    || properties.TryGetValue("z-order", out cxnZ)
+                    || properties.TryGetValue("order", out cxnZ))
+                    ApplyZOrder(cxnSlidePart, connector, cxnZ);
                 GetSlide(cxnSlidePart).Save();
 
                 return $"/slide[{cxnSlideIdx}]/{BuildElementPathSegment("connector", connector, cxnShapeTree.Elements<ConnectionShape>().Count())}";
@@ -476,6 +480,11 @@ public partial class PowerPointHandler
                     ApplyGroupHyperlink(grpSlidePart, groupShape, grpLinkVal, grpTipVal);
                 }
 
+                if (properties.TryGetValue("zorder", out var grpZ)
+                    || properties.TryGetValue("z-order", out grpZ)
+                    || properties.TryGetValue("order", out grpZ))
+                    ApplyZOrder(grpSlidePart, groupShape, grpZ);
+
                 GetSlide(grpSlidePart).Save();
 
                 var grpCount = grpShapeTree.Elements<GroupShape>().Count();
@@ -672,6 +681,10 @@ public partial class PowerPointHandler
         shape.TextBody = textBody;
 
         InsertAtPosition(phShapeTree, shape, index);
+        if (properties.TryGetValue("zorder", out var phZ)
+            || properties.TryGetValue("z-order", out phZ)
+            || properties.TryGetValue("order", out phZ))
+            ApplyZOrder(phSlidePart, shape, phZ);
         GetSlide(phSlidePart).Save();
 
         var shapeCount = phShapeTree.Elements<Shape>().Count();

@@ -216,6 +216,11 @@ public partial class PowerPointHandler
                 if (tblBorderProps.Count > 0)
                     ApplyTableBorderFanOut(table, tblBorderProps);
 
+                if (properties.TryGetValue("zorder", out var tblZ)
+                    || properties.TryGetValue("z-order", out tblZ)
+                    || properties.TryGetValue("order", out tblZ))
+                    ApplyZOrder(tblSlidePart, graphicFrame, tblZ);
+
                 GetSlide(tblSlidePart).Save();
 
                 var tblCount = tblShapeTree.Elements<GraphicFrame>()
