@@ -94,7 +94,12 @@ public partial class PowerPointHandler
             "cover" => new CoverTransition { Direction = ParseSlideDirStr(direction ?? "left") },
             "pull" or "uncover" => new PullTransition { Direction = ParseSlideDirStr(direction ?? "right") },
             "wheel" => new WheelTransition { Spokes = new UInt32Value(4u) },
-            "zoom" or "box" => new ZoomTransition { Direction = ParseInOutDir(direction ?? "in") },
+            "zoom" => new ZoomTransition { Direction = ParseInOutDir(direction ?? "in") },
+            // <p:box> shares CT_OptionalBlackTransition with <p:zoom> but is a distinct
+            // schema element. OpenXml SDK 3.x models only ZoomTransition, so emit <p:box>
+            // via a raw OpenXmlUnknownElement so set transition=box doesn't silently
+            // collapse to the same <p:zoom> XML.
+            "box" => BuildBoxTransition(direction),
             "split" => BuildSplitTransition(direction),
             "blinds" or "venetian" => new BlindsTransition { Direction = ParseOrientation(direction ?? "horizontal") },
             "checker" or "checkerboard" => new CheckerTransition { Direction = ParseOrientation(direction ?? "horizontal") },
@@ -311,6 +316,18 @@ public partial class PowerPointHandler
             "rd" or "rightdown" or "downright" => TransitionCornerDirectionValues.RightDown,
             _ => throw new ArgumentException($"Invalid corner direction: '{dir}'. Valid values: leftup, rightup, leftdown, rightdown.")
         };
+
+    private static OpenXmlUnknownElement BuildBoxTransition(string? direction)
+    {
+        var pNs = "http://schemas.openxmlformats.org/presentationml/2006/main";
+        var box = new OpenXmlUnknownElement("p", "box", pNs);
+        // dir attribute mirrors ZoomTransition: ST_TransitionInOutDirectionType (in/out).
+        var dir = (direction ?? "in").ToLowerInvariant();
+        if (dir != "in" && dir != "out")
+            throw new ArgumentException($"Invalid box transition direction: '{direction}'. Valid values: in, out.");
+        box.SetAttribute(new OpenXmlAttribute("", "dir", null!, dir));
+        return box;
+    }
 
     private static SplitTransition BuildSplitTransition(string? direction)
     {
@@ -1506,7 +1523,7 @@ public partial class PowerPointHandler
                 "pull"      => "pull",
                 "wheel"     => "wheel",
                 "zoom"      => "zoom",
-                "box"       => "zoom",
+                "box"       => "box",
                 "split"     => "split",
                 "blinds"    => "blinds",
                 "checker"   => "checker",
