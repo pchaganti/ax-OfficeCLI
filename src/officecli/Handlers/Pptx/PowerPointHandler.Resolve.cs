@@ -53,7 +53,24 @@ public partial class PowerPointHandler
         var chartRef = gf.Descendants<DocumentFormat.OpenXml.Drawing.Charts.ChartReference>().FirstOrDefault();
         ChartPart? chartPart = null;
         if (chartRef?.Id?.Value != null)
-            chartPart = (ChartPart)slidePart.GetPartById(chartRef.Id.Value);
+        {
+            // Broken c:chart/@r:id (relationship missing from the slide part —
+            // happens after a hand-edited zip or a partially-imported deck) makes
+            // GetPartById throw the SDK's bare ArgumentOutOfRangeException
+            // ("Specified argument was out of the range of valid values.") with
+            // no rId context. Surface a CliException with a stable code and the
+            // offending rId so callers can route to repair instead of guessing.
+            try
+            {
+                chartPart = (ChartPart)slidePart.GetPartById(chartRef.Id.Value);
+            }
+            catch (ArgumentOutOfRangeException)
+            {
+                throw new CliException(
+                    $"Chart relationship '{chartRef.Id.Value}' on slide {slideIdx} points to a missing part. The chart's r:id has no matching relationship in the slide's rels file.")
+                    { Code = "broken_chart_relationship" };
+            }
+        }
 
         // cx:chart (extended) reference — note: the SDK has TWO classes that
         // both serialize with LocalName "chart":
@@ -76,7 +93,18 @@ public partial class PowerPointHandler
                 var relIdAttr = cxChartRef.GetAttributes()
                     .FirstOrDefault(a => a.LocalName == "id" && a.NamespaceUri == rNs);
                 if (!string.IsNullOrEmpty(relIdAttr.Value))
-                    extChartPart = (ExtendedChartPart)slidePart.GetPartById(relIdAttr.Value);
+                {
+                    try
+                    {
+                        extChartPart = (ExtendedChartPart)slidePart.GetPartById(relIdAttr.Value);
+                    }
+                    catch (ArgumentOutOfRangeException)
+                    {
+                        throw new CliException(
+                            $"Extended chart relationship '{relIdAttr.Value}' on slide {slideIdx} points to a missing part.")
+                            { Code = "broken_chart_relationship" };
+                    }
+                }
             }
         }
 
