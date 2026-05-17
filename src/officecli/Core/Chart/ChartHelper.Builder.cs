@@ -784,11 +784,15 @@ internal static partial class ChartHelper
         {
             var ser = BuildScatterSeries((uint)i, seriesData[i].name,
                 xValues, seriesData[i].values);
-            // For marker-only style, explicitly hide connecting lines
+            // For marker-only style, explicitly hide connecting lines.
+            // CT_ScatterSer schema: idx, order, tx, spPr, marker, dPt*, dLbls?,
+            // trendline*, errBars?, xVal?, yVal?, smooth?, extLst? — spPr must
+            // sit right after tx; appending at end loses it on strict readers.
+            // CONSISTENCY(chart-schema-order): route through the same helper used
+            // by per-series fill/line/effect setters.
             if (hideLines)
             {
-                var spPr = ser.GetFirstChild<C.ChartShapeProperties>() ?? new C.ChartShapeProperties();
-                if (ser.GetFirstChild<C.ChartShapeProperties>() == null) ser.AppendChild(spPr);
+                var spPr = GetOrCreateSeriesShapeProperties(ser);
                 spPr.RemoveAllChildren<Drawing.Outline>();
                 spPr.AppendChild(new Drawing.Outline(new Drawing.NoFill()));
             }
