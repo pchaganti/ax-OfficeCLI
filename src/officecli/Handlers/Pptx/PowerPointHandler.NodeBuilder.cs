@@ -1650,6 +1650,19 @@ public partial class PowerPointHandler
         if (xfrm?.Rotation?.HasValue == true && xfrm.Rotation.Value != 0)
             node.Format["rotation"] = $"{xfrm.Rotation.Value / 60000.0:0.##}";
 
+        // Z-order (1-based position among content elements: 1 = back, N = front).
+        // CONSISTENCY(zorder): shape/picture/group all emit zorder when parent is a
+        // ShapeTree; connector belongs to the same set and was previously omitted —
+        // round-trip of Add(connector, zorder=N) silently dropped the value.
+        if (cxn.Parent is ShapeTree cxnTree)
+        {
+            var contentEls = cxnTree.ChildElements
+                .Where(e => e is Shape or Picture or GraphicFrame or GroupShape or ConnectionShape)
+                .ToList();
+            var cxnZIdx = contentEls.IndexOf(cxn);
+            if (cxnZIdx >= 0) node.Format["zorder"] = cxnZIdx + 1;
+        }
+
         // Connection info (startShape/endShape)
         var cxnDrawProps = cxn.NonVisualConnectionShapeProperties?.NonVisualConnectorShapeDrawingProperties;
         var startCxn = cxnDrawProps?.StartConnection;

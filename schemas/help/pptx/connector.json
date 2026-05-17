@@ -129,6 +129,15 @@
     "startShape": { "type":"number", "add":false, "set":false, "get":true, "description":"shape id of the start connection endpoint.", "readback":"integer shape id", "enforcement":"report" },
     "startIdx":   { "type":"number", "add":false, "set":false, "get":true, "description":"connection point index on start shape (0-based; omitted when 0).", "readback":"integer", "enforcement":"report" },
     "endShape":   { "type":"number", "add":false, "set":false, "get":true, "description":"shape id of the end connection endpoint.", "readback":"integer shape id", "enforcement":"report" },
-    "endIdx":     { "type":"number", "add":false, "set":false, "get":true, "description":"connection point index on end shape (0-based; omitted when 0).", "readback":"integer", "enforcement":"report" }
+    "endIdx":     { "type":"number", "add":false, "set":false, "get":true, "description":"connection point index on end shape (0-based; omitted when 0).", "readback":"integer", "enforcement":"report" },
+    "zorder": {
+      "type": "string",
+      "description": "1-based z-order in slide shape tree. Add accepts 'top'/'bottom'/'forward'/'backward'/integer (same vocabulary as shape/picture/group); Get returns the resolved integer position.",
+      "aliases": ["z-order", "order"],
+      "add": true, "set": false, "get": true,
+      "examples": ["--prop zorder=top", "--prop zorder=2"],
+      "readback": "integer (1-based position among content elements)",
+      "enforcement": "report"
+    }
   }
 }
