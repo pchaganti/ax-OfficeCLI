@@ -273,6 +273,29 @@ public partial class PowerPointHandler
                     rProps.Append(new Drawing.LatinFont { Typeface = pFont });
                     rProps.Append(new Drawing.EastAsianFont { Typeface = pFont });
                 }
+                // CONSISTENCY(font-4-slot): Set fans out font.latin/ea/cs to
+                // the matching OOXML child elements; Add must mirror so the
+                // CJK/complex slots round-trip through dump-replay instead of
+                // silently collapsing to the bare `font` value (or being lost).
+                if (properties.TryGetValue("font.latin", out var pFontLatin))
+                {
+                    rProps.RemoveAllChildren<Drawing.LatinFont>();
+                    rProps.Append(new Drawing.LatinFont { Typeface = pFontLatin });
+                }
+                if (properties.TryGetValue("font.ea", out var pFontEa)
+                    || properties.TryGetValue("font.eastasia", out pFontEa)
+                    || properties.TryGetValue("font.eastasian", out pFontEa))
+                {
+                    rProps.RemoveAllChildren<Drawing.EastAsianFont>();
+                    rProps.Append(new Drawing.EastAsianFont { Typeface = pFontEa });
+                }
+                if (properties.TryGetValue("font.cs", out var pFontCs)
+                    || properties.TryGetValue("font.complexscript", out pFontCs)
+                    || properties.TryGetValue("font.complex", out pFontCs))
+                {
+                    rProps.RemoveAllChildren<Drawing.ComplexScriptFont>();
+                    rProps.Append(new Drawing.ComplexScriptFont { Typeface = pFontCs });
+                }
                 if (properties.TryGetValue("spacing", out var pSpacing) || properties.TryGetValue("charspacing", out pSpacing))
                 {
                     if (!double.TryParse(pSpacing, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var pSpcVal))
@@ -428,6 +451,27 @@ public partial class PowerPointHandler
                 {
                     rProps.Append(new Drawing.LatinFont { Typeface = rFont });
                     rProps.Append(new Drawing.EastAsianFont { Typeface = rFont });
+                }
+                // CONSISTENCY(font-4-slot): mirror AddParagraph and Set for the
+                // per-script font slots (font.latin / font.ea / font.cs).
+                if (properties.TryGetValue("font.latin", out var rFontLatin))
+                {
+                    rProps.RemoveAllChildren<Drawing.LatinFont>();
+                    rProps.Append(new Drawing.LatinFont { Typeface = rFontLatin });
+                }
+                if (properties.TryGetValue("font.ea", out var rFontEa)
+                    || properties.TryGetValue("font.eastasia", out rFontEa)
+                    || properties.TryGetValue("font.eastasian", out rFontEa))
+                {
+                    rProps.RemoveAllChildren<Drawing.EastAsianFont>();
+                    rProps.Append(new Drawing.EastAsianFont { Typeface = rFontEa });
+                }
+                if (properties.TryGetValue("font.cs", out var rFontCs)
+                    || properties.TryGetValue("font.complexscript", out rFontCs)
+                    || properties.TryGetValue("font.complex", out rFontCs))
+                {
+                    rProps.RemoveAllChildren<Drawing.ComplexScriptFont>();
+                    rProps.Append(new Drawing.ComplexScriptFont { Typeface = rFontCs });
                 }
                 if (properties.TryGetValue("spacing", out var rSpacing) || properties.TryGetValue("charspacing", out rSpacing))
                     rProps.Spacing = (int)(ParseHelpers.SafeParseDouble(rSpacing, "charspacing") * 100);
