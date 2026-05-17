@@ -31,6 +31,13 @@ public partial class PowerPointHandler
                 OpenXmlPart ownerPart;
                 OpenXmlPartRootElement ownerRoot;
                 string returnPathPrefix;
+                // CONSISTENCY(group-inner-shape-add): when the parent is a group,
+                // newShape is appended to the GroupShape rather than the slide's
+                // ShapeTree. shapeTree still points at the slide root for helpers
+                // that need slide-wide context (shape-id allocation, query for
+                // morph naming); insertContainer is what InsertAtPosition writes to.
+                OpenXmlCompositeElement? insertContainer = null;
+                string? groupResultPathPrefix = null;
 
                 var masterOrLayout = TryResolveMasterOrLayoutShapeParent(parentPath);
                 if (masterOrLayout is not null)
@@ -43,23 +50,50 @@ public partial class PowerPointHandler
                 }
                 else
                 {
-                    var slideMatch = Regex.Match(parentPath, @"^/slide\[(\d+)\]$");
-                    if (!slideMatch.Success)
-                        throw new ArgumentException(
-                            $"Shapes must be added to a slide, master, or layout: /slide[N], /slidemaster[N], /slidelayout[N], or /slidemaster[N]/slidelayout[L]");
+                    // /slide[N]/group[K] — add the shape inside the group, not at
+                    // slide root. Required by dump-replay: empty groups are emitted
+                    // first, then per-child `add shape parent=/slide/group[K]`.
+                    var groupParentMatch = Regex.Match(parentPath, @"^/slide\[(\d+)\]/group\[(\d+)\]$");
+                    if (groupParentMatch.Success)
+                    {
+                        slideIdx = int.Parse(groupParentMatch.Groups[1].Value);
+                        var grpIdx = int.Parse(groupParentMatch.Groups[2].Value);
+                        slideParts = GetSlideParts().ToList();
+                        if (slideIdx < 1 || slideIdx > slideParts.Count)
+                            throw new ArgumentException($"Slide {slideIdx} not found (total: {slideParts.Count})");
+                        slidePart = slideParts[slideIdx - 1];
+                        var slideG = GetSlide(slidePart);
+                        shapeTree = slideG.CommonSlideData?.ShapeTree
+                            ?? throw new InvalidOperationException("Slide has no shape tree");
+                        var groups = shapeTree.Elements<GroupShape>().ToList();
+                        if (grpIdx < 1 || grpIdx > groups.Count)
+                            throw new ArgumentException($"Group {grpIdx} not found on slide {slideIdx} (total: {groups.Count})");
+                        insertContainer = groups[grpIdx - 1];
+                        ownerPart = slidePart;
+                        ownerRoot = slideG;
+                        returnPathPrefix = $"/slide[{slideIdx}]";
+                        groupResultPathPrefix = $"/slide[{slideIdx}]/group[{grpIdx}]";
+                    }
+                    else
+                    {
+                        var slideMatch = Regex.Match(parentPath, @"^/slide\[(\d+)\]$");
+                        if (!slideMatch.Success)
+                            throw new ArgumentException(
+                                $"Shapes must be added to a slide, master, layout, or group: /slide[N], /slide[N]/group[K], /slidemaster[N], /slidelayout[N], or /slidemaster[N]/slidelayout[L]");
 
-                    slideIdx = int.Parse(slideMatch.Groups[1].Value);
-                    slideParts = GetSlideParts().ToList();
-                    if (slideIdx < 1 || slideIdx > slideParts.Count)
-                        throw new ArgumentException($"Slide {slideIdx} not found (total: {slideParts.Count})");
+                        slideIdx = int.Parse(slideMatch.Groups[1].Value);
+                        slideParts = GetSlideParts().ToList();
+                        if (slideIdx < 1 || slideIdx > slideParts.Count)
+                            throw new ArgumentException($"Slide {slideIdx} not found (total: {slideParts.Count})");
 
-                    slidePart = slideParts[slideIdx - 1];
-                    var slide = GetSlide(slidePart);
-                    shapeTree = slide.CommonSlideData?.ShapeTree
-                        ?? throw new InvalidOperationException("Slide has no shape tree");
-                    ownerPart = slidePart;
-                    ownerRoot = slide;
-                    returnPathPrefix = $"/slide[{slideIdx}]";
+                        slidePart = slideParts[slideIdx - 1];
+                        var slide = GetSlide(slidePart);
+                        shapeTree = slide.CommonSlideData?.ShapeTree
+                            ?? throw new InvalidOperationException("Slide has no shape tree");
+                        ownerPart = slidePart;
+                        ownerRoot = slide;
+                        returnPathPrefix = $"/slide[{slideIdx}]";
+                    }
                 }
 
                 var text = properties.GetValueOrDefault("text", "");
@@ -585,7 +619,16 @@ public partial class PowerPointHandler
                     }
                 }
 
-                InsertAtPosition(shapeTree, newShape, index);
+                if (insertContainer != null)
+                {
+                    // Group container — InsertAtPosition over a GroupShape: the
+                    // existing helper is shape-tree generic so it works here too.
+                    InsertAtPosition(insertContainer, newShape, index);
+                }
+                else
+                {
+                    InsertAtPosition(shapeTree, newShape, index);
+                }
 
                 // Hyperlink on shape — slide-only. ApplyShapeHyperlink uses
                 // SlidePart.AddHyperlinkRelationship; master/layout owner parts
@@ -668,6 +711,14 @@ public partial class PowerPointHandler
                 }
 
                 ownerRoot.Save();
+                if (groupResultPathPrefix != null && insertContainer != null)
+                {
+                    // Positional within the group container: 1-based shape index
+                    // among Shape children of the GroupShape, matching the format
+                    // emitted by Get for /slide/group/shape paths.
+                    var inGroupIdx = insertContainer.Elements<Shape>().Count();
+                    return $"{groupResultPathPrefix}/{BuildElementPathSegment("shape", newShape, inGroupIdx)}";
+                }
                 return $"{returnPathPrefix}/{BuildElementPathSegment("shape", newShape, shapeTree.Elements<Shape>().Count())}";
     }
 
