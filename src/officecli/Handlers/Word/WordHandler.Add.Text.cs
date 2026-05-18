@@ -1651,6 +1651,11 @@ public partial class WordHandler
             "trackchange",
             // BUG-DUMP7-01: consumed up-front to emit <w:sym/> in place of <w:t>.
             "sym",
+            // CONSISTENCY(markRPr-inherit-opt-out): consumed up-front (line ~1587)
+            // to suppress markRPr→rPr type-fill on dump→batch replay. Not a real
+            // OOXML attribute — pure inheritance toggle. Without this entry the
+            // bare-key fallback flags it UNSUPPORTED on every dump-emitted `add r`.
+            "nomarkrprinherit",
         };
         foreach (var (key, value) in properties)
         {
