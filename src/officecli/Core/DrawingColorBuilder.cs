@@ -30,10 +30,23 @@ internal static class DrawingColorBuilder
         // recognition.
         string baseColor = value;
         List<(string Name, int Val)>? transforms = null;
+        // Accept '+' (canonical Get round-trip form) or ':' (alternate form
+        // some authors reach for when the base is a scheme name). ':' is
+        // reserved for gradient prefixes ("radial:", "path:") and pattern
+        // foreground ("pct25:FF0000"), so we only honour it when the prefix
+        // is a recognised scheme color — otherwise it goes to the gradient
+        // / pattern parser as before.
         var plus = value.IndexOf('+');
+        if (plus <= 0)
+        {
+            var colon = value.IndexOf(':');
+            if (colon > 0 && TryParseSchemeColor(value.Substring(0, colon)).HasValue)
+                plus = colon;
+        }
         if (plus > 0)
         {
             baseColor = value.Substring(0, plus);
+            // Re-join remaining tokens whether separator was '+' or ':'.
             transforms = ParseColorTransformSuffix(value.Substring(plus + 1));
         }
 
@@ -79,19 +92,48 @@ internal static class DrawingColorBuilder
             if (token.Contains('-'))
                 throw new ArgumentException(
                     $"Invalid color transform '{token}': negative percentages are not allowed (OOXML ST_PositivePercentage).");
+            // Two accepted forms:
+            //   "lumMod75"        — Get's canonical round-trip form, percent 0..100
+            //   "lumMod=75000"    — raw OOXML ST_PositivePercentage 0..100000
+            //                       (matches the literal a:lumMod@val attribute,
+            //                        what users see in PowerPoint XML / docs)
+            // Both end up encoded as @val="75000" on the OOXML child.
             int i = 0;
-            while (i < token.Length && !char.IsDigit(token[i])) i++;
+            bool eqForm = false;
+            while (i < token.Length && !char.IsDigit(token[i]) && token[i] != '=') i++;
             if (i == 0 || i == token.Length) continue;
             var name = token.Substring(0, i);
             if (!KnownTransforms.Contains(name))
                 throw new ArgumentException(
                     $"Unknown color transform '{name}'. Valid: lumMod, lumOff, shade, tint, satMod, satOff, hueMod, hueOff, alpha.");
-            if (!int.TryParse(token.Substring(i), out var pct))
+            string numText;
+            if (token[i] == '=')
+            {
+                eqForm = true;
+                numText = token.Substring(i + 1);
+            }
+            else
+            {
+                numText = token.Substring(i);
+            }
+            if (!int.TryParse(numText, out var raw))
                 throw new ArgumentException(
-                    $"Invalid color transform '{token}': percentage must be a non-negative integer 0-100.");
-            if (pct < 0 || pct > 100)
-                throw new ArgumentException(
-                    $"Invalid color transform '{token}': percentage {pct} out of range 0-100.");
+                    $"Invalid color transform '{token}': value must be a non-negative integer.");
+            int pct;
+            if (eqForm)
+            {
+                if (raw < 0 || raw > 100000)
+                    throw new ArgumentException(
+                        $"Invalid color transform '{token}': raw value {raw} out of range 0-100000 (OOXML ST_PositivePercentage).");
+                pct = raw / 1000;
+            }
+            else
+            {
+                if (raw < 0 || raw > 100)
+                    throw new ArgumentException(
+                        $"Invalid color transform '{token}': percentage {raw} out of range 0-100.");
+                pct = raw;
+            }
             // Canonicalize: lumMod → lumMod (lowercase first letter? OOXML uses
             // camelCase: lumMod, lumOff, satMod, satOff, hueMod, hueOff,
             // shade, tint). KnownTransforms matches case-insensitively; we
