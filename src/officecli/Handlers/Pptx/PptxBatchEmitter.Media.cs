@@ -12,11 +12,13 @@ public static partial class PptxBatchEmitter
     // sidecar file, always emit `src="data:<contentType>;base64,<bytes>"`.
     // A 50MB picture produces a 70MB batch JSON; accepted by design.
     private static void EmitPicture(PowerPointHandler ppt, DocumentNode picNode,
-                                    string parentSlidePath, List<BatchItem> items,
+                                    string parentSlidePath, string replayPath,
+                                    List<BatchItem> items,
                                     SlideEmitContext ctx)
     {
         var fullPic = ppt.Get(picNode.Path);
         var props = FilterEmittableProps(fullPic.Format);
+        DeferSlideJumpLink(props, replayPath, ctx);
 
         var binary = ppt.GetImageBinary(picNode.Path);
         if (binary.HasValue)

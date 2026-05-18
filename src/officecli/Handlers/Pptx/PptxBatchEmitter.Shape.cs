@@ -14,6 +14,52 @@ public static partial class PptxBatchEmitter
     // <a:p> elements), so the collapse heuristic is per-paragraph, not
     // per-shape.
 
+    // Forward slide-jump form emitted by NodeBuilder ("slide[3]"). Internal
+    // PowerPoint actions (firstslide/lastslide/nextslide/previousslide/endshow)
+    // don't depend on a relationship and replay fine at shape-add time.
+    private static readonly System.Text.RegularExpressions.Regex SlideJumpLink =
+        new(@"^slide\[\d+\]$", System.Text.RegularExpressions.RegexOptions.IgnoreCase
+                              | System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    // Strip-only variant for nested bags (paragraph/run) — the shape-level
+    // emit owns the deferred slide-jump set; nested bags must not re-emit it.
+    private static void DummyCtxStripSlideJump(Dictionary<string, string> props)
+    {
+        if (props.TryGetValue("link", out var v) && SlideJumpLink.IsMatch(v ?? ""))
+            props.Remove("link");
+    }
+
+    // Pull a `link=slide[N]` prop out of the bag and queue a deferred `set`
+    // BatchItem so the link write runs after every slide has been added.
+    // External URLs and named actions stay in the prop bag for the normal
+    // shape-add path. `enqueue=false` is used for nested para/run prop bags
+    // where the shape-level emit already handles the deferred set — we just
+    // need to drop the prop so the nested `set` doesn't fail.
+    private static void DeferSlideJumpLink(Dictionary<string, string> props, string replayPath,
+                                           SlideEmitContext ctx, bool enqueue = true)
+    {
+        if (!props.TryGetValue("link", out var linkVal) || string.IsNullOrEmpty(linkVal)) return;
+        if (!SlideJumpLink.IsMatch(linkVal)) return;
+        props.Remove("link");
+        if (!enqueue) return;
+        var deferredProps = new Dictionary<string, string>(System.StringComparer.OrdinalIgnoreCase)
+        {
+            ["link"] = linkVal,
+        };
+        if (props.TryGetValue("tooltip", out var tt) && !string.IsNullOrEmpty(tt))
+        {
+            // Tooltip is meaningful only with a link; carry it along.
+            deferredProps["tooltip"] = tt;
+            props.Remove("tooltip");
+        }
+        ctx.DeferredLinks.Add(new BatchItem
+        {
+            Command = "set",
+            Path = replayPath,
+            Props = deferredProps,
+        });
+    }
+
     private static void EmitShape(PowerPointHandler ppt, DocumentNode shapeNode, string parentSlidePath,
                                   string replayPath, List<BatchItem> items, SlideEmitContext ctx)
     {
@@ -22,6 +68,7 @@ public static partial class PptxBatchEmitter
         // their text / char-prop bag.
         var fullShape = ppt.Get(shapeNode.Path, depth: 3);
         var shapeProps = FilterEmittableProps(fullShape.Format);
+        DeferSlideJumpLink(shapeProps, replayPath, ctx);
 
         // NodeBuilder emits `geometry=rect` for every shape with the implicit
         // <a:prstGeom prst="rect"/> body — including plain text boxes. Replay
@@ -77,6 +124,7 @@ public static partial class PptxBatchEmitter
     {
         var full = ppt.Get(phNode.Path, depth: 3);
         var props = FilterEmittableProps(full.Format);
+        DeferSlideJumpLink(props, replayPath, ctx);
 
         items.Add(new BatchItem
         {
@@ -109,6 +157,7 @@ public static partial class PptxBatchEmitter
     {
         var full = ppt.Get(grpNode.Path);
         var props = FilterEmittableProps(full.Format);
+        DeferSlideJumpLink(props, replayPath, ctx);
 
         items.Add(new BatchItem
         {
@@ -191,6 +240,11 @@ public static partial class PptxBatchEmitter
                                       int paraIdx, List<BatchItem> items, bool firstParagraph)
     {
         var props = FilterEmittableProps(paraNode.Format);
+        // CONSISTENCY(slide-jump-defer): the shape-level emit already deferred
+        // the canonical `set link=slide[N]`; strip slide-jump links from any
+        // bubbled-through para/run bag so the inline set doesn't fire too
+        // early and trip "Slide jump target out of range".
+        DummyCtxStripSlideJump(props);
         var runs = (paraNode.Children ?? new List<DocumentNode>())
             .Where(c => c.Type == "run" || c.Type == "r").ToList();
 
@@ -203,6 +257,7 @@ public static partial class PptxBatchEmitter
         if (collapseSingleRun)
         {
             var runProps = FilterEmittableProps(runs[0].Format);
+            DummyCtxStripSlideJump(runProps);
             foreach (var (k, v) in runProps)
             {
                 if (!props.ContainsKey(k)) props[k] = v;
@@ -287,6 +342,7 @@ public static partial class PptxBatchEmitter
     private static void EmitFirstRunAsSet(DocumentNode runNode, string paraParent, List<BatchItem> items)
     {
         var props = FilterEmittableProps(runNode.Format);
+        DummyCtxStripSlideJump(props);
         bool hasText = !string.IsNullOrEmpty(runNode.Text);
         if (!hasText && props.Count > 0
             && props.Keys.All(k => RunDefaultOnlyKeys.Contains(k)))
@@ -317,6 +373,7 @@ public static partial class PptxBatchEmitter
     private static void EmitRun(DocumentNode runNode, string paraParent, List<BatchItem> items)
     {
         var props = FilterEmittableProps(runNode.Format);
+        DummyCtxStripSlideJump(props);
         bool hasText = !string.IsNullOrEmpty(runNode.Text);
 
         // Drop runs that carry no text and only default attributes AddRun

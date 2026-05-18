@@ -25,7 +25,16 @@ public static partial class PptxBatchEmitter
     /// lands in PR2).
     /// </summary>
     internal sealed record SlideEmitContext(
-        List<UnsupportedWarning> Unsupported);
+        List<UnsupportedWarning> Unsupported)
+    {
+        // Forward slide-jump links (e.g. shape[1] on slide[1] linking to
+        // slide[3]) must replay AFTER every slide is added — otherwise the
+        // `link=slide[N]` prop on shape Add resolves against a deck where
+        // the target slide does not yet exist and ResolveHyperlinkTarget
+        // throws "Slide jump target out of range". Defer those props into
+        // a second set-pass appended at the end of EmitPptx.
+        public List<BatchItem> DeferredLinks { get; } = new();
+    }
 
     /// <summary>
     /// Captured at emit time when a slide carries content we cannot round-trip
@@ -125,6 +134,11 @@ public static partial class PptxBatchEmitter
                 items.Add(new BatchItem { Command = "add", Parent = "/", Type = "slide" });
             }
         }
+
+        // Flush deferred slide-jump link sets — every target slide now exists,
+        // so `ResolveHyperlinkTarget` can map slide[N] to the relationship.
+        if (ctx.DeferredLinks.Count > 0)
+            items.AddRange(ctx.DeferredLinks);
 
         return (items, ctx.Unsupported);
     }
@@ -280,7 +294,7 @@ public static partial class PptxBatchEmitter
                     break;
                 case "picture":
                     ord["picture"] = ord.GetValueOrDefault("picture", 0) + 1;
-                    EmitPicture(ppt, child, slidePath, items, ctx);
+                    EmitPicture(ppt, child, slidePath, $"{slidePath}/picture[{ord["picture"]}]", items, ctx);
                     break;
                 case "chart":
                     ord["chart"] = ord.GetValueOrDefault("chart", 0) + 1;
