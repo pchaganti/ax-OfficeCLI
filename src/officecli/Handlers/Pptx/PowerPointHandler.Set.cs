@@ -77,15 +77,15 @@ public partial class PowerPointHandler
                         var sldSz = presentation.GetFirstChild<SlideSize>()
                             ?? presentation.AppendChild(new SlideSize());
                         var cxVal = Core.EmuConverter.ParseEmuAsInt(value);
-                        // Zero/near-zero slide dimensions produce schema-invalid
-                        // OOXML — ECMA-376 sets MinInclusive=914400 (1 inch) on
-                        // sldSz/@cx and @cy. Negative is already rejected by
-                        // ParseEmuAsInt; 0 was silently accepted and yielded a
-                        // file that fails `validate` and crashes PowerPoint at
-                        // open. Match the ParseEmuAsInt error shape.
-                        if (cxVal <= 0)
+                        // ECMA-376 ST_SlideSizeCoordinate: MinInclusive=914400
+                        // (1 inch), MaxInclusive=51206400 (56 inches). Out-of-
+                        // range values produce a schema-invalid file that
+                        // PowerPoint either silently clamps or refuses to open;
+                        // surface the constraint up front. Negative is already
+                        // rejected by ParseEmuAsInt.
+                        if (cxVal < 914400 || cxVal > 51206400)
                             throw new ArgumentException(
-                                $"Invalid '{key}' value: '{value}'. Slide width must be greater than 0 (at least 914400 EMU / 1 inch per OOXML schema).");
+                                $"Invalid '{key}' value: '{value}'. Slide width must be between 914400 and 51206400 EMU (1in–56in / 2.54cm–142.24cm) per OOXML ST_SlideSizeCoordinate.");
                         sldSz.Cx = cxVal;
                         sldSz.Type = SlideSizeValues.Custom;
                         break;
@@ -93,9 +93,9 @@ public partial class PowerPointHandler
                         var sldSz2 = presentation.GetFirstChild<SlideSize>()
                             ?? presentation.AppendChild(new SlideSize());
                         var cyVal = Core.EmuConverter.ParseEmuAsInt(value);
-                        if (cyVal <= 0)
+                        if (cyVal < 914400 || cyVal > 51206400)
                             throw new ArgumentException(
-                                $"Invalid '{key}' value: '{value}'. Slide height must be greater than 0 (at least 914400 EMU / 1 inch per OOXML schema).");
+                                $"Invalid '{key}' value: '{value}'. Slide height must be between 914400 and 51206400 EMU (1in–56in / 2.54cm–142.24cm) per OOXML ST_SlideSizeCoordinate.");
                         sldSz2.Cy = cyVal;
                         sldSz2.Type = SlideSizeValues.Custom;
                         break;
