@@ -1650,25 +1650,30 @@ public partial class PowerPointHandler
     private static bool TryApplyPositionSize(string key, string value, Drawing.Offset offset, Drawing.Extents extents)
     {
         var emu = ParseEmu(value);
+        // Unified bounds check for every EMU-valued geometry field.
+        // ECMA-376 a:off uses ST_Coordinate (signed long) and a:ext uses
+        // ST_PositiveCoordinate, but PowerPoint's drawing pipeline truncates
+        // everything past INT32_MAX EMU (~5688 km worth of slide) — a larger
+        // value silently corrupts the layout instead of round-tripping. Error
+        // messages start with "Invalid" so OutputFormatter routes the
+        // ArgumentException to invalid_value, not internal_error.
+        if (emu > int.MaxValue)
+            throw new ArgumentException($"Invalid {key} '{value}': exceeds the maximum supported shape coordinate (INT32_MAX EMU).");
         switch (key)
         {
-            case "x": offset.X = emu; return true;
-            case "y": offset.Y = emu; return true;
+            case "x":
+                if (emu < int.MinValue)
+                    throw new ArgumentException($"Invalid x '{value}': below the minimum supported shape coordinate (INT32_MIN EMU).");
+                offset.X = emu; return true;
+            case "y":
+                if (emu < int.MinValue)
+                    throw new ArgumentException($"Invalid y '{value}': below the minimum supported shape coordinate (INT32_MIN EMU).");
+                offset.Y = emu; return true;
             case "width":
-                // Error messages start with "Invalid" so OutputFormatter's
-                // ArgumentException → envelope code mapping routes them to
-                // invalid_value instead of the internal_error catch-all.
                 if (emu < 0) throw new ArgumentException($"Invalid width '{value}': negative values are not allowed.");
-                // ECMA-376 a:ext/@cx is ST_PositiveCoordinate (xsd:long, max
-                // 27273042316900), but PowerPoint's drawing pipeline rejects
-                // anything past INT32_MAX EMU (~5688 km worth of slide). A
-                // larger value silently corrupts the layout instead of round-
-                // tripping. Reject up front.
-                if (emu > int.MaxValue) throw new ArgumentException($"Invalid width '{value}': exceeds the maximum supported shape coordinate (INT32_MAX EMU).");
                 extents.Cx = emu; return true;
             case "height":
                 if (emu < 0) throw new ArgumentException($"Invalid height '{value}': negative values are not allowed.");
-                if (emu > int.MaxValue) throw new ArgumentException($"Invalid height '{value}': exceeds the maximum supported shape coordinate (INT32_MAX EMU).");
                 extents.Cy = emu; return true;
             default: return false;
         }

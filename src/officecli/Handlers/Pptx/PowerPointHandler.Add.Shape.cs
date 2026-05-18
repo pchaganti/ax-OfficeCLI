@@ -415,21 +415,34 @@ public partial class PowerPointHandler
                 {
                     long xEmu = 0, yEmu = 0;
                     long cxEmu = 3600000, cyEmu = 1800000; // default: 10cm x 5cm (avoid full-slide overlap when width unspecified)
-                    if (properties.TryGetValue("x", out var xStr) || properties.TryGetValue("left", out xStr)) xEmu = ParseEmu(xStr);
-                    if (properties.TryGetValue("y", out var yStr) || properties.TryGetValue("top", out yStr)) yEmu = ParseEmu(yStr);
+                    // Unified bounds check: PowerPoint truncates EMU coordinates
+                    // past INT32_MAX (cx/cy schema-typed as int32 in practice).
+                    // Error prefix "Invalid" so OutputFormatter routes the
+                    // ArgumentException to invalid_value, mirroring Set's path.
+                    static long ParseEmuBounded(string raw, string field, bool allowNegative)
+                    {
+                        var v = ParseEmu(raw);
+                        if (!allowNegative && v < 0)
+                            throw new ArgumentException($"Invalid {field} '{raw}': negative values are not allowed.");
+                        if (v > int.MaxValue)
+                            throw new ArgumentException($"Invalid {field} '{raw}': exceeds the maximum supported shape coordinate (INT32_MAX EMU).");
+                        if (allowNegative && v < int.MinValue)
+                            throw new ArgumentException($"Invalid {field} '{raw}': below the minimum supported shape coordinate (INT32_MIN EMU).");
+                        return v;
+                    }
+                    if (properties.TryGetValue("x", out var xStr) || properties.TryGetValue("left", out xStr)) xEmu = ParseEmuBounded(xStr, "x", allowNegative: true);
+                    if (properties.TryGetValue("y", out var yStr) || properties.TryGetValue("top", out yStr)) yEmu = ParseEmuBounded(yStr, "y", allowNegative: true);
                     if (properties.TryGetValue("width", out var wStr) || properties.TryGetValue("w", out wStr))
                     {
-                        cxEmu = ParseEmu(wStr);
-                        if (cxEmu < 0) throw new ArgumentException($"Negative width is not allowed: '{wStr}'.");
                         // Zero is legitimate (PowerPoint hides 0×0 shapes — used for invisible
                         // decorative lines). Dump-replay must round-trip zero-sized shapes that
                         // were authored that way; the prior strict reject broke real-world
                         // round-trips.
+                        cxEmu = ParseEmuBounded(wStr, "width", allowNegative: false);
                     }
                     if (properties.TryGetValue("height", out var hStr) || properties.TryGetValue("h", out hStr))
                     {
-                        cyEmu = ParseEmu(hStr);
-                        if (cyEmu < 0) throw new ArgumentException($"Negative height is not allowed: '{hStr}'.");
+                        cyEmu = ParseEmuBounded(hStr, "height", allowNegative: false);
                     }
 
                     var xfrm = new Drawing.Transform2D
