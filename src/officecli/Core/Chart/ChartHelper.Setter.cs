@@ -336,11 +336,12 @@ internal static partial class ChartHelper
                             : isStacked
                                 ? C.DataLabelPositionValues.InsideEnd
                                 : C.DataLabelPositionValues.Right,
-                        _ => isPie
-                            ? C.DataLabelPositionValues.BestFit
-                            : isStacked
-                                ? C.DataLabelPositionValues.InsideEnd
-                                : C.DataLabelPositionValues.OutsideEnd
+                        // Schema enum: {ctr, inBase, inEnd, outEnd, t, b, l, r, bestFit}
+                        // plus the long-form aliases handled above. Anything else
+                        // is a typo or fuzz garbage — reject up front rather than
+                        // silently map to BestFit/OutsideEnd and bury the bug.
+                        _ => throw new ArgumentException(
+                            $"Invalid labelPos '{value}': expected one of ctr, inBase, inEnd, outEnd, t, b, l, r, bestFit.")
                     };
                     var existingLabels = plotArea2.Descendants<C.DataLabels>().ToList();
                     if (existingLabels.Count == 0)
