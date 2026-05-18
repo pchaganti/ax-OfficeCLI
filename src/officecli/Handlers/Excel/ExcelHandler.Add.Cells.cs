@@ -393,6 +393,7 @@ public partial class ExcelHandler
             if (value.StartsWith('=') && value.Length > 1)
             {
                 RejectCrossWorkbookFormula(value);
+                ValidateFormulaCellRefs(value);
                 cell.CellFormula = new CellFormula(Core.PivotTableHelper.SanitizeXmlText(Core.ModernFunctionQualifier.Qualify(Core.ModernFunctionQualifier.AutoQuoteSheetRefs(value.TrimStart('=')))));
                 cell.CellValue = null;
             }
@@ -429,6 +430,7 @@ public partial class ExcelHandler
             if (fTrim.StartsWith("{") && fTrim.EndsWith("}"))
                 throw new ArgumentException("Literal braces '{...}' around a formula create an Excel-rejected file. Use --prop arrayformula=... (without braces) to declare a CSE array formula.");
             RejectCrossWorkbookFormula(fTrim);
+            ValidateFormulaCellRefs(fTrim);
             cell.CellFormula = new CellFormula(Core.PivotTableHelper.SanitizeXmlText(Core.ModernFunctionQualifier.Qualify(Core.ModernFunctionQualifier.AutoQuoteSheetRefs(fTrim))));
             cell.CellValue = null;
         }
@@ -530,6 +532,7 @@ public partial class ExcelHandler
         if (properties.TryGetValue("arrayformula", out var arrFormula))
         {
             RejectCrossWorkbookFormula(arrFormula);
+            ValidateFormulaCellRefs(arrFormula);
             // BUG-R36-B1: if ref was a range (A1:C3), use the full range as
             // arrRef so the array formula spills correctly; otherwise default
             // to the single cellRef.
