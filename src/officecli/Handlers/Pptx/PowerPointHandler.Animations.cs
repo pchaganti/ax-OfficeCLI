@@ -250,8 +250,13 @@ public partial class PowerPointHandler
             var dir = direction?.ToLowerInvariant();
             if (dir is "out")
             {
+                // PowerPoint's Effect Options for direction-sensitive p15 presets
+                // (peelOff, airplane, origami, wind, fallOver, drape, ...) toggle
+                // ONLY invX between Left/Right. Setting invY="1" alongside makes
+                // PowerPoint silently reject the whole <p15:prstTrans> element
+                // (verified via Mac PowerPoint round-trip — its own Peel Off-Right
+                // writes `invX="1"` with no invY). Stay close to that form.
                 elem.SetAttribute(new OpenXmlAttribute("", "invX", null!, "1"));
-                elem.SetAttribute(new OpenXmlAttribute("", "invY", null!, "1"));
             }
             else if (dir is not (null or "in"))
             {
@@ -296,7 +301,20 @@ public partial class PowerPointHandler
             "flip" => new DocumentFormat.OpenXml.Office2010.PowerPoint.FlipTransition { Direction = ParseLeftRightDir(direction ?? "left") },
             "ripple" => new DocumentFormat.OpenXml.Office2010.PowerPoint.RippleTransition(),
             "glitter" => new DocumentFormat.OpenXml.Office2010.PowerPoint.GlitterTransition { Direction = ParseSlideDir(direction ?? "left") },
-            "prism" => new DocumentFormat.OpenXml.Office2010.PowerPoint.PrismTransition(),
+            // <p14:prism>: same element, three behaviors differentiated by
+            // isContent / isInverted bool attrs (verified via Mac PowerPoint UI
+            // round-trip). PowerPoint's gallery surfaces them as three distinct
+            // tiles even though the underlying element is identical:
+            //   bare prism (no attrs)               → "Cube"  in Exciting group
+            //   isContent="1"                       → "Rotate" in Dynamic Content
+            //   isContent="1" isInverted="1"        → "Orbit"  in Dynamic Content
+            // 'prism' is kept as the legacy CLI spelling; 'cube' is the modern
+            // UI alias for the same XML.
+            "prism" or "cube" => new DocumentFormat.OpenXml.Office2010.PowerPoint.PrismTransition(),
+            "rotate" => new DocumentFormat.OpenXml.Office2010.PowerPoint.PrismTransition { IsContent = true },
+            "orbit" => new DocumentFormat.OpenXml.Office2010.PowerPoint.PrismTransition { IsContent = true, IsInverted = true },
+            // Clock UI tile = single-spoke wheel.
+            "clock" => new WheelTransition { Spokes = new UInt32Value(1u) },
             "doors" => new DocumentFormat.OpenXml.Office2010.PowerPoint.DoorsTransition { Direction = ParseOrientation(direction ?? "horizontal") },
             "window" => new DocumentFormat.OpenXml.Office2010.PowerPoint.WindowTransition { Direction = ParseOrientation(direction ?? "horizontal") },
             "shred" => new DocumentFormat.OpenXml.Office2010.PowerPoint.ShredTransition { Direction = ParseInOutDir(direction ?? "in") },
@@ -308,7 +326,7 @@ public partial class PowerPointHandler
             "pan" => new DocumentFormat.OpenXml.Office2010.PowerPoint.PanTransition { Direction = ParseSlideDir(direction ?? "left") },
             "reveal" => new DocumentFormat.OpenXml.Office2010.PowerPoint.RevealTransition { Direction = ParseLeftRightDir(direction ?? "left") },
             "morph" => null, // handled specially below
-            _ => throw new ArgumentException($"Invalid transition type: '{typeName}'. Valid values: fade, cut, dissolve, circle, diamond, newsflash, plus, random, wedge, wipe, push, cover, pull, wheel, zoom, split, blinds, checker, comb, bars, strips, flash, honeycomb, vortex, switch, flip, ripple, glitter, prism, doors, window, shred, ferris, flythrough, warp, gallery, conveyor, pan, reveal, morph, box, fallOver, drape, curtains, wind, prestige, fracture, crush, peelOff, pageCurlDouble, pageCurlSingle, airplane, origami, none.")
+            _ => throw new ArgumentException($"Invalid transition type: '{typeName}'. Valid values: fade, cut, dissolve, circle, diamond, newsflash, plus, random, wedge, wipe, push, cover, pull, wheel, zoom, split, blinds, checker, comb, bars, strips, flash, honeycomb, vortex, switch, flip, ripple, glitter, prism, cube, rotate, orbit, clock, doors, window, shred, ferris, flythrough, warp, gallery, conveyor, pan, reveal, morph, box, fallOver, drape, curtains, wind, prestige, fracture, crush, peelOff, pageCurlDouble, pageCurlSingle, airplane, origami, none.")
         };
 
         // Morph transition: requires mc:AlternateContent wrapper with p159 namespace
@@ -1834,10 +1852,11 @@ public partial class PowerPointHandler
                     // input but Get's canonical form matches the spec spelling.
                     var prst = prstMatch.Groups[1].Value;
                     var invX = System.Text.RegularExpressions.Regex.IsMatch(p15Attrs, @"invX=""(1|true)""");
-                    var invY = System.Text.RegularExpressions.Regex.IsMatch(p15Attrs, @"invY=""(1|true)""");
-                    // Both invs set = the -out variant. Default (no invs) reads
-                    // as bare token (== -in implicit).
-                    var canonical = invX && invY ? $"{prst}-out" : prst;
+                    // -out = invX flipped (the Left/Right direction toggle for
+                    // direction-sensitive p15 presets). invY exists in the
+                    // schema but PowerPoint's Effect Options never writes it
+                    // alongside invX, so we don't either.
+                    var canonical = invX ? $"{prst}-out" : prst;
                     node.Format["transition"] = canonical;
 
                     var transInMc = System.Text.RegularExpressions.Regex.Match(
@@ -1858,16 +1877,33 @@ public partial class PowerPointHandler
             {
                 var typeName = p14Match.Groups[1].Value.ToLowerInvariant();
                 var p14Attrs = p14Match.Groups[2].Value;
-                var dirMatch = System.Text.RegularExpressions.Regex.Match(p14Attrs, @"dir=""(\w+)""");
-                if (dirMatch.Success && !IsDefaultP14Direction(typeName, dirMatch.Groups[1].Value.ToLowerInvariant()))
+
+                // p14:prism is reused for three UI tiles: bare = Cube,
+                // isContent=1 = Rotate, isContent=1 isInverted=1 = Orbit.
+                // Surface each on readback as its UI-name token so set
+                // transition=rotate/orbit round-trips.
+                if (typeName == "prism")
                 {
-                    var rawDir = dirMatch.Groups[1].Value.ToLowerInvariant();
-                    // Expand single-letter slide-direction abbreviations so pan-u
-                    // reads back as pan-up and reveal-r as reveal-right. The raw
-                    // OOXML attribute uses single letters; the canonical readback
-                    // surface speaks full words (matches Get's contract for
-                    // wipe/push/cover via MapSlideDirection).
-                    typeName = $"{typeName}-{ExpandDirectionAbbreviation(rawDir) ?? rawDir}";
+                    var isC = System.Text.RegularExpressions.Regex.IsMatch(p14Attrs, @"isContent=""(1|true)""");
+                    var isI = System.Text.RegularExpressions.Regex.IsMatch(p14Attrs, @"isInverted=""(1|true)""");
+                    if (isC && isI) typeName = "orbit";
+                    else if (isC) typeName = "rotate";
+                    // bare prism stays as "prism" (canonical) — `cube` is an
+                    // input alias only, doesn't replace the readback.
+                }
+                else
+                {
+                    var dirMatch = System.Text.RegularExpressions.Regex.Match(p14Attrs, @"dir=""(\w+)""");
+                    if (dirMatch.Success && !IsDefaultP14Direction(typeName, dirMatch.Groups[1].Value.ToLowerInvariant()))
+                    {
+                        var rawDir = dirMatch.Groups[1].Value.ToLowerInvariant();
+                        // Expand single-letter slide-direction abbreviations so pan-u
+                        // reads back as pan-up and reveal-r as reveal-right. The raw
+                        // OOXML attribute uses single letters; the canonical readback
+                        // surface speaks full words (matches Get's contract for
+                        // wipe/push/cover via MapSlideDirection).
+                        typeName = $"{typeName}-{ExpandDirectionAbbreviation(rawDir) ?? rawDir}";
+                    }
                 }
                 node.Format["transition"] = typeName;
 

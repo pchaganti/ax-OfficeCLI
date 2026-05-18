@@ -53,11 +53,12 @@ officecli set deck.pptx /slide[N] --prop transition=pageCurlDouble-out
 officecli set deck.pptx /slide[N] --prop transition=wind-out
 ```
 
-- Default (no suffix) = `-in` (no invX/invY attributes written).
-- `-out` sets `invX="1" invY="1"` — flips the transition's directional
-  axis. Visually affects the direction-sensitive presets in the table
-  above; symmetric presets (curtains, fracture, crush, prestige) parse
-  the suffix but render unchanged.
+- Default (no suffix) = `-in` (no inv attributes written).
+- `-out` sets `invX="1"` — flips the Left/Right direction toggle (verified
+  by Mac PowerPoint round-trip: its Effect Options writes the same single
+  attribute). Visually affects the direction-sensitive presets above;
+  symmetric presets (curtains, fracture, crush, prestige) parse the
+  suffix but render unchanged.
 - Any other direction is rejected:
   ```
   Error: Transition 'fallOver' only accepts -in or -out (got '-up').
@@ -78,8 +79,21 @@ officecli set deck.pptx /slide[N] --prop transition=wind-out
 </mc:AlternateContent>
 ```
 
+## UI tiles backed by other elements
+
+A few PowerPoint UI tiles that look like they belong in this gallery
+are actually stored elsewhere — no special handling needed, just write
+the right CLI token:
+
+| PowerPoint UI tile | CLI token | OOXML |
+|---|---|---|
+| Cube (Exciting) | `prism` or `cube` | `<p14:prism/>` |
+| Rotate (Dynamic Content) | `rotate` | `<p14:prism isContent="1"/>` |
+| Orbit (Dynamic Content) | `orbit` | `<p14:prism isContent="1" isInverted="1"/>` |
+| Clock (Exciting) | `wheel-1` or `clock` | `<p:wheel spokes="1"/>` |
+
 ## See also
 
 - [transitions-shapes.md](transitions-shapes.md) — Box (also a `p15:prstTrans` element) lives there alongside circle/diamond/zoom.
-- [transitions-dynamic.md](transitions-dynamic.md) — the older 2010 "Exciting" gallery (`p14:` namespace transitions: vortex / switch / flip / ferris / ...).
+- [transitions-dynamic.md](transitions-dynamic.md) — the older 2010 "Exciting" gallery (`p14:` namespace transitions: vortex / switch / flip / ferris / ... / prism / rotate / orbit).
 - [transitions-morph.md](transitions-morph.md) — Morph (2016+), a separate `p159:` namespace element.

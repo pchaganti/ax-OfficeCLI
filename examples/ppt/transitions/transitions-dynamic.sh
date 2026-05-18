@@ -45,12 +45,20 @@ for t in shred flythrough warp; do
     add_demo_slide "$t-out" "$t-out" "4F7C3A"
 done
 
-# SlideDir family — 4 cardinal
-for t in vortex glitter pan prism; do
+# SlideDir family — 4 cardinal (prism is direction-less; see PrismFamily below)
+for t in vortex glitter pan; do
     for d in up right; do
         add_demo_slide "$t-$d" "$t-$d" "8A5A2B"
     done
 done
+
+# Prism family — same <p14:prism> element, 3 UI tiles via isContent/isInverted:
+#   prism / cube (alias)               → "Cube"   (Exciting)
+#   rotate (isContent=1)               → "Rotate" (Dynamic Content)
+#   orbit  (isContent=1 isInverted=1)  → "Orbit"  (Dynamic Content)
+add_demo_slide "prism"  "prism (== Cube in UI)" "6E3B23"
+add_demo_slide "rotate" "rotate"                "6E3B23"
+add_demo_slide "orbit"  "orbit"                 "6E3B23"
 
 # Horizontal/vertical orientation
 for t in doors window; do
