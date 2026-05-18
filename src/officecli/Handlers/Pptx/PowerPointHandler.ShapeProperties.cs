@@ -1266,6 +1266,12 @@ public partial class PowerPointHandler
                             // (handler-doesn't-implement). Invalid values silently
                             // accepted would corrupt the document and fail strict
                             // OOXML validation downstream.
+                            // CONSISTENCY(bcp47-error): mirror the docx lang error
+                            // shape so agents see one message across handlers
+                            // (WordHandler.Helpers.cs ~1671).
+                            if (key is "lang" or "altLang")
+                                throw new ArgumentException(
+                                    $"Invalid BCP-47 language tag for {key}: '{value}'. Expected a tag like 'en-US', 'ja-JP', or 'ar-SA' (RFC 5646: <= {OfficeCli.Core.Bcp47LanguageTag.MaxLength} chars, primary subtag 2-3 letters, then hyphen-separated subtags).");
                             throw new ArgumentException(
                                 $"Invalid value for OOXML rPr/{key}: '{value}'.");
                         }
