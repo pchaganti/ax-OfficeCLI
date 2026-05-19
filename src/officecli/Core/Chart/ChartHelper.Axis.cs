@@ -477,6 +477,40 @@ internal static partial class ChartHelper
                     break;
                 }
 
+                case "majorunit":
+                case "minorunit":
+                {
+                    // Schema: majorUnit / minorUnit only valid on value/value2.
+                    // Without this direct-apply branch the role-scoped Set on
+                    // role=value2 falls through to the chart-level case which
+                    // always grabs the primary ValueAxis, so the secondary
+                    // axis silently retained its old tick interval.
+                    if (normalizedRole is not ("value" or "value2"))
+                    {
+                        directlyHandled.Add(key);
+                        break;
+                    }
+                    if (targetAxis is OpenXmlCompositeElement axMu)
+                    {
+                        var unit = ParseHelpers.SafeParseDouble(value, lower);
+                        if (!(unit > 0))
+                            throw new ArgumentException(
+                                $"Invalid {lower} '{value}': must be a positive number (OOXML ST_AxisUnit > 0).");
+                        if (lower == "majorunit")
+                        {
+                            axMu.RemoveAllChildren<C.MajorUnit>();
+                            InsertValAxChildInOrder(axMu, new C.MajorUnit { Val = unit });
+                        }
+                        else
+                        {
+                            axMu.RemoveAllChildren<C.MinorUnit>();
+                            InsertValAxChildInOrder(axMu, new C.MinorUnit { Val = unit });
+                        }
+                    }
+                    directlyHandled.Add(key);
+                    break;
+                }
+
                 case "majorgridlines":
                 case "minorgridlines":
                 {
