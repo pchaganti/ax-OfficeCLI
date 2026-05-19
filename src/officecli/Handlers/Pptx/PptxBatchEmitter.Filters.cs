@@ -125,6 +125,17 @@ public static partial class PptxBatchEmitter
             result.Remove("transitionSpeed");
         }
 
+        // Same treatment for transitionDuration — ApplyTransition's parser
+        // accepts an integer-ms modifier in the compound form (`fade-500`).
+        // Emitting `transitionDuration=500` standalone fell through to the
+        // generic prop-validator and the slide replay returned exit 2.
+        if (result.TryGetValue("transitionDuration", out var dur) && dur.Length > 0)
+        {
+            if (result.TryGetValue("transition", out var trans) && trans.Length > 0)
+                result["transition"] = $"{trans}-{dur}";
+            result.Remove("transitionDuration");
+        }
+
         // Shape image="true" is a NodeBuilder marker emitted for shapes
         // carrying a blipFill — Add has no shape-fill image importer, so
         // pass-through would fail prop validation. Mirror the
