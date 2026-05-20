@@ -246,7 +246,17 @@ static partial class CommandBuilder
             if (process.HasExited)
             {
                 var stderr = process.StandardError.ReadToEnd();
-                error = $"Resident process exited. {stderr}";
+                // CONSISTENCY(cli-error-first-line): the resident process dumps its
+                // full call stack on a startup crash; surface only the first line
+                // (typically the exception message). The stack is still in the
+                // resident's own log if needed for diagnostics — keeping it out
+                // of the user-facing CLI error avoids burying the actual cause.
+                var firstLine = string.IsNullOrEmpty(stderr)
+                    ? ""
+                    : stderr.Split('\n', 2)[0].TrimEnd('\r').Trim();
+                error = string.IsNullOrEmpty(firstLine)
+                    ? "Resident process exited."
+                    : $"Resident process exited. {firstLine}";
                 process.Dispose();
                 return false;
             }
