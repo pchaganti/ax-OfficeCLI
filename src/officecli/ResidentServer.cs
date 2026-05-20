@@ -117,6 +117,12 @@ public class ResidentServer : IDisposable
     // and surfaced through the __close__ ack.
     private volatile bool _shutdownFileMissing;
 
+    // BUG-INTERVIEW-EDIT-R10-B: separate from _shutdownFileMissing — set when
+    // the dispose call succeeded but the original path no longer exists.
+    // Surfaced as a stderr warning on the close ack; does NOT flip exit code
+    // (rename is a legitimate, non-failure scenario indistinguishable here).
+    private volatile bool _shutdownFileVanishedAfterDispose;
+
     public string PipeName => _pipeName;
 
     // BUG-RESIDENT-EDITABLE-DEFAULT: ctor now defaults to editable=false so
@@ -441,10 +447,20 @@ public class ResidentServer : IDisposable
                 // BUG-BT-R26-2: report shutdown-time data-loss to the
                 // client so the close command exits non-zero instead of
                 // confirming a save that didn't land on disk.
-                var response = _shutdownFileMissing
-                    ? MakeResponse(1, "",
-                        $"save failed during shutdown — data may be lost: {_filePath}")
-                    : MakeResponse(0, "Closing resident.", "");
+                // BUG-INTERVIEW-EDIT-R10-B: also surface the softer
+                // "file vanished" warning (rename-or-deleted, can't tell)
+                // through the close ack stderr without flipping exit code.
+                string response;
+                if (_shutdownFileMissing)
+                    response = MakeResponse(1, "",
+                        $"save failed during shutdown — data may be lost: {_filePath}");
+                else if (_shutdownFileVanishedAfterDispose)
+                    response = MakeResponse(0, "Closing resident.",
+                        $"WARNING: backing file is missing at the original path: {_filePath}. " +
+                        "If you renamed/moved it, your changes were saved to the new location. " +
+                        "If you deleted it, your changes are lost.");
+                else
+                    response = MakeResponse(0, "Closing resident.", "");
                 // ShutdownAsync cancelled the ping token; write on a
                 // fresh CTS so the client still gets the ack.
                 using var writeCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
@@ -577,6 +593,13 @@ public class ResidentServer : IDisposable
             // _lastBatchHadFailure; promote it to a non-zero exit here.
             var isBatch = request.Command.Equals("batch", StringComparison.OrdinalIgnoreCase);
             var batchFailure = isBatch && _lastBatchHadFailure;
+
+            // BUG-INTERVIEW-EDIT-R2: batch text-mode envelope is written by
+            // the client via Console.Write (not WriteLine) to avoid double-
+            // newlining single-command output. Without a trailing '\n' on
+            // batch payloads, the shell prompt collides with the last line.
+            // Re-append exactly one terminator for batch responses.
+            if (isBatch && stdout.Length > 0) stdout += "\n";
             // R7-bt-3: validate must surface a non-zero exit code on schema
             // errors so callers (CI / shell scripts) can detect failure
             // without parsing the report text. ExecuteValidate writes the
@@ -1620,7 +1643,11 @@ public class ResidentServer : IDisposable
 
             var allUnsupported = tracking.UnusedKeys.ToList();
             if (_handler is WordHandler residWh)
+            {
                 allUnsupported.AddRange(residWh.LastAddUnsupportedProps);
+                foreach (var w in residWh.LastAddWarnings)
+                    Console.Error.WriteLine($"  WARNING: {w}");
+            }
 
             if (allUnsupported.Count > 0)
             {
@@ -2001,6 +2028,25 @@ public class ResidentServer : IDisposable
         {
             _shutdownFileMissing = true;
             LogStderr($"ERROR: save failed during shutdown — data may be lost: {_filePath}");
+        }
+        // BUG-INTERVIEW-EDIT-R10-B: even when Dispose succeeds, an unlinked
+        // backing file (rm/Trash, no rename target) means the bytes the SDK
+        // just wrote went to a now-orphaned inode and disappear when the FD
+        // closes. We can't reliably distinguish rename (data safe at new
+        // path) from unlink (data lost) without P/Invoke fstat — so the
+        // warning carefully lists both possibilities rather than claiming
+        // certain data loss. This preserves the false-positive fix above
+        // while still alerting the user when the file vanished from its
+        // original path. Goes to stderr only — no _shutdownFileMissing flag,
+        // so exit code stays 0 and existing rename-then-close flows are
+        // unchanged.
+        else if (!File.Exists(_filePath))
+        {
+            _shutdownFileVanishedAfterDispose = true;
+            LogStderr(
+                $"WARNING: backing file is missing at the original path: {_filePath}. " +
+                "If you renamed/moved it, your changes were saved to the new location. " +
+                "If you deleted it, your changes are lost.");
         }
 
         // 5. NOW cancel ping + idle. Clients observing the ping pipe from

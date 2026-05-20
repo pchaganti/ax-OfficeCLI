@@ -233,11 +233,23 @@ internal static partial class ChartHelper
 
         for (int i = 1; i <= 20; i++)
         {
+            // Read both keys up front so TrackingPropertyDictionary marks each
+            // consumed regardless of which branch supplies the values. Without
+            // this, `series{i}=` combined with `series{i}.name=` fell through
+            // to UNSUPPORTED + silent value drop (interview-edit R4 major).
+            var hasDotName = properties.TryGetValue($"series{i}.name", out var dotName);
+            var hasDotValues = properties.TryGetValue($"series{i}.values", out var dotValues);
+            var hasLegacy = properties.TryGetValue($"series{i}", out var legacyStr);
+
             // Check for dotted syntax first: series1.name, series1.values
-            if (properties.ContainsKey($"series{i}.values") || properties.ContainsKey($"series{i}.name"))
+            if (hasDotName || hasDotValues)
             {
-                var name = properties.GetValueOrDefault($"series{i}.name") ?? $"Series {i}";
-                var valuesStr = properties.GetValueOrDefault($"series{i}.values") ?? "";
+                var name = dotName ?? $"Series {i}";
+                // CONSISTENCY(chart-series-mixed): when dotted .name is given
+                // without dotted .values, fall back to the legacy `series{i}=`
+                // key as the values source rather than silently dropping it.
+                var valuesStr = !string.IsNullOrEmpty(dotValues) ? dotValues
+                              : (hasLegacy ? legacyStr : "");
                 if (!string.IsNullOrEmpty(valuesStr) && !IsRangeReference(valuesStr))
                 {
                     var vals = ParseSeriesValues(valuesStr, name);
@@ -252,7 +264,8 @@ internal static partial class ChartHelper
             }
 
             // Legacy format: series1=Sales:10,20,30
-            if (!properties.TryGetValue($"series{i}", out var seriesStr)) continue;
+            if (!hasLegacy) continue;
+            var seriesStr = legacyStr!;
             var colonIdx = seriesStr.IndexOf(':');
             if (colonIdx < 0)
             {

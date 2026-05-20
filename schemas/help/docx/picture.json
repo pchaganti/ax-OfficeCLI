@@ -12,7 +12,7 @@
   },
   "paths": {
     "positional": [
-      "/body/p[N]/pic[M]"
+      "/body/p[@paraId=X]/r[N]"
     ]
   },
   "note": "Aliases: image, img. 'src' is required (alias 'path'). Image source resolved via ImageSource — accepts file path, URL, data-URI, or raw bytes. SVGs auto-generate a PNG fallback.",

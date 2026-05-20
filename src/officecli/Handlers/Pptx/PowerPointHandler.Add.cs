@@ -73,6 +73,12 @@ public partial class PowerPointHandler
             "col" or "column" => AddColumn(parentPath, index, properties),
             "cell" or "tc" => AddCell(parentPath, index, properties),
             "animation" or "animate" => AddAnimation(parentPath, index, properties),
+            // CONSISTENCY(hyperlink-shape-parent): `add --type hyperlink /slide[N]/shape[M]`
+            // attaches an action hyperlink to an existing shape. ResolveLogicalPath only
+            // covers /slide[N]/{table,placeholder}[X]; shape parents fall to a generic
+            // XML-localName navigator that doesn't know <p:sp>, so the dispatch needs
+            // its own entry. Mirrors AddShape's `link=` branch.
+            "hyperlink" or "hlink" => AddHyperlinkOnShape(parentPath, properties),
             "paragraph" or "para" => AddParagraph(parentPath, index, properties),
             "run" => AddRun(parentPath, index, properties),
             "zoom" or "slidezoom" or "slide-zoom" => AddZoom(parentPath, index, properties),

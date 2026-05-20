@@ -1229,9 +1229,9 @@ public partial class PowerPointHandler
             if (sb.HasValue) node.Format["spaceBefore"] = SpacingConverter.FormatPptSpacing(sb.Value);
             var sa = pProps.GetFirstChild<Drawing.SpaceAfter>()?.GetFirstChild<Drawing.SpacingPoints>()?.Val?.Value;
             if (sa.HasValue) node.Format["spaceAfter"] = SpacingConverter.FormatPptSpacing(sa.Value);
-            if (pProps.Indent?.HasValue == true) node.Format["indent"] = FormatEmu(pProps.Indent.Value);
-            if (pProps.LeftMargin?.HasValue == true) node.Format["marginLeft"] = FormatEmu(pProps.LeftMargin.Value);
-            if (pProps.RightMargin?.HasValue == true) node.Format["marginRight"] = FormatEmu(pProps.RightMargin.Value);
+            if (pProps.Indent?.HasValue == true) node.Format["indent"] = FormatPptIndentPoints(pProps.Indent.Value);
+            if (pProps.LeftMargin?.HasValue == true) node.Format["marginLeft"] = FormatPptIndentPoints(pProps.LeftMargin.Value);
+            if (pProps.RightMargin?.HasValue == true) node.Format["marginRight"] = FormatPptIndentPoints(pProps.RightMargin.Value);
             // Reading direction (Arabic / Hebrew). Only emit when explicitly
             // set so LTR docs don't get a noisy `direction=ltr` everywhere.
             if (pProps.RightToLeft?.HasValue == true)
@@ -1291,9 +1291,9 @@ public partial class PowerPointHandler
                             : "left";
                     }
                     if (paraPProps?.Level?.HasValue == true) paraNode.Format["level"] = paraPProps.Level.Value.ToString(System.Globalization.CultureInfo.InvariantCulture);
-                    if (paraPProps?.Indent?.HasValue == true) paraNode.Format["indent"] = FormatEmu(paraPProps.Indent.Value);
-                    if (paraPProps?.LeftMargin?.HasValue == true) paraNode.Format["marginLeft"] = FormatEmu(paraPProps.LeftMargin.Value);
-                    if (paraPProps?.RightMargin?.HasValue == true) paraNode.Format["marginRight"] = FormatEmu(paraPProps.RightMargin.Value);
+                    if (paraPProps?.Indent?.HasValue == true) paraNode.Format["indent"] = FormatPptIndentPoints(paraPProps.Indent.Value);
+                    if (paraPProps?.LeftMargin?.HasValue == true) paraNode.Format["marginLeft"] = FormatPptIndentPoints(paraPProps.LeftMargin.Value);
+                    if (paraPProps?.RightMargin?.HasValue == true) paraNode.Format["marginRight"] = FormatPptIndentPoints(paraPProps.RightMargin.Value);
                     if (paraPProps?.RightToLeft?.HasValue == true)
                         paraNode.Format["direction"] = paraPProps.RightToLeft.Value ? "rtl" : "ltr";
                     var pLsPct = paraPProps?.GetFirstChild<Drawing.LineSpacing>()?.GetFirstChild<Drawing.SpacingPercent>()?.Val?.Value;

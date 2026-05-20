@@ -25,10 +25,35 @@ public partial class WordHandler
         if (properties.TryGetValue("style", out var style)
             || properties.TryGetValue("styleId", out style)
             || properties.TryGetValue("styleid", out style))
+        {
+            // CONSISTENCY(style-warn): mirror SetParagraph (Set.cs:642) —
+            // warn (advisory, non-fatal) when the style id is not defined
+            // in the styles part; still store the ref (lenient-input).
+            if (!StyleIdExists(style))
+                LastAddWarnings.Add($"style '{style}' not found in styles part — will be referenced as-is");
             pProps.ParagraphStyleId = new ParagraphStyleId { Val = style };
+        }
         else if (properties.TryGetValue("styleName", out var styleName)
             || properties.TryGetValue("stylename", out styleName))
-            pProps.ParagraphStyleId = new ParagraphStyleId { Val = ResolveStyleIdFromName(styleName) ?? styleName };
+        {
+            // Resolve display name through styles part. Fall back to verbatim
+            // only when the value is a plausible styleId (no spaces — OOXML
+            // styleId disallows spaces). Spaced display names that fail to
+            // resolve are skipped + warned rather than stored as invalid id.
+            var resolved = ResolveStyleIdFromName(styleName);
+            if (resolved != null)
+            {
+                pProps.ParagraphStyleId = new ParagraphStyleId { Val = resolved };
+            }
+            else if (!styleName.Contains(' '))
+            {
+                pProps.ParagraphStyleId = new ParagraphStyleId { Val = styleName };
+            }
+            else
+            {
+                LastAddWarnings.Add($"styleName '{styleName}' not found in styles part and contains spaces — skipped (OOXML styleId disallows spaces)");
+            }
+        }
         if (properties.TryGetValue("align", out var alignment) || properties.TryGetValue("alignment", out alignment))
             pProps.Justification = new Justification { Val = ParseJustification(alignment) };
         // Reading direction (Arabic / Hebrew). 'rtl' enables <w:bidi/> AND

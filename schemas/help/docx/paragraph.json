@@ -620,7 +620,7 @@
         "shading"
       ],
       "add": true,
-      "set": false,
+      "set": true,
       "get": false,
       "examples": [
         "--prop shd=FFFF00",

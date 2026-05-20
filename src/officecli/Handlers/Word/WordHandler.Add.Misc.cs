@@ -726,6 +726,15 @@ public partial class WordHandler
                 "styleref" => $"\u00AB{styleRefName}\u00BB",
                 "docproperty" => $"\u00AB{docPropertyName}\u00BB",
                 "if" => properties.GetValueOrDefault("trueText", ""),
+                // DATE/TIME family: seed with DateTime.Now formatted via the
+                // user's `\@` format switch (if any), otherwise Word-like
+                // defaults. The "1" fallback for unrecognized fields is
+                // correct for PAGE / NUMPAGES / SECTION etc. but produced
+                // a meaningless "1" placeholder for date/time before Word
+                // recalculated on open (R11 minor).
+                "date" or "createdate" or "savedate" or "printdate"
+                    => FormatDateForField(dateFmtVal, "M/d/yyyy"),
+                "time" => FormatDateForField(dateFmtVal, "h:mm tt"),
                 _ => "1"
             };
 
@@ -946,6 +955,26 @@ public partial class WordHandler
         "text", "font", "size", "bold", "color",
         "index", "after", "before",
     };
+
+    // Render today's DateTime for the result-run placeholder of a DATE/TIME
+    // field. `userFormat` is the value of --prop format=… (the same string
+    // Word writes after \@ in the field instruction); empty/missing falls
+    // back to a Word-like default. Invalid format strings degrade silently
+    // to the default rather than throwing — the seeded value is cosmetic
+    // (Word recalculates on open), so a malformed format string would only
+    // be visible briefly and shouldn't fail the Add.
+    private static string FormatDateForField(string? userFormat, string defaultFormat)
+    {
+        var fmt = string.IsNullOrWhiteSpace(userFormat) ? defaultFormat : userFormat;
+        try
+        {
+            return DateTime.Now.ToString(fmt, System.Globalization.CultureInfo.InvariantCulture);
+        }
+        catch (FormatException)
+        {
+            return DateTime.Now.ToString(defaultFormat, System.Globalization.CultureInfo.InvariantCulture);
+        }
+    }
 
     private static void WarnInapplicableFieldProps(
         Dictionary<string, string> properties, string effectiveType)

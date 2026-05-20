@@ -171,7 +171,8 @@ public partial class PowerPointHandler
                 case "indent":
                 {
                     var pProps = para.ParagraphProperties ?? (para.ParagraphProperties = new Drawing.ParagraphProperties());
-                    pProps.Indent = (int)ParseEmu(value);
+                    // CONSISTENCY(pptx-bare-as-points): mirror AddParagraph.
+                    pProps.Indent = (int)Math.Round(SpacingConverter.ParsePointsSigned(value) * 12700.0);
                     break;
                 }
                 case "level":
@@ -185,13 +186,14 @@ public partial class PowerPointHandler
                 case "marginleft" or "marl":
                 {
                     var pProps = para.ParagraphProperties ?? (para.ParagraphProperties = new Drawing.ParagraphProperties());
-                    pProps.LeftMargin = (int)ParseEmu(value);
+                    // CONSISTENCY(pptx-bare-as-points): mirror AddParagraph.
+                    pProps.LeftMargin = (int)Math.Round(SpacingConverter.ParsePointsSigned(value) * 12700.0);
                     break;
                 }
                 case "marginright" or "marr":
                 {
                     var pProps = para.ParagraphProperties ?? (para.ParagraphProperties = new Drawing.ParagraphProperties());
-                    pProps.RightMargin = (int)ParseEmu(value);
+                    pProps.RightMargin = (int)Math.Round(SpacingConverter.ParsePointsSigned(value) * 12700.0);
                     break;
                 }
                 case "linespacing" or "line.spacing":

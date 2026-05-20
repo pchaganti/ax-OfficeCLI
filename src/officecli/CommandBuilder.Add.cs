@@ -237,6 +237,21 @@ static partial class CommandBuilder
                     });
                 }
 
+                // Advisory warnings from the Word handler (e.g. unknown styleId
+                // referenced as-is, unresolved styleName with spaces skipped).
+                if (handler is OfficeCli.Handlers.WordHandler addWhWarn
+                    && addWhWarn.LastAddWarnings.Count > 0)
+                {
+                    foreach (var w in addWhWarn.LastAddWarnings)
+                    {
+                        addWarnings.Add(new OfficeCli.Core.CliWarning
+                        {
+                            Message = w,
+                            Code = "advisory",
+                        });
+                    }
+                }
+
                 if (json)
                 {
                     Console.WriteLine(OutputFormatter.WrapEnvelopeText(

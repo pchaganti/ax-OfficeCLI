@@ -85,6 +85,12 @@ static partial class CommandBuilder
                         : $"Resident close reported error (exit {closeResp.ExitCode})";
                     throw new InvalidOperationException(err);
                 }
+                // BUG-INTERVIEW-EDIT-R10-B: resident reports advisory warnings
+                // (e.g. backing file missing at original path) via Stderr with
+                // exit=0. Forward to the client's stderr so the user sees the
+                // warning instead of a silent success.
+                if (closeResp != null && !string.IsNullOrEmpty(closeResp.Stderr))
+                    Console.Error.WriteLine(closeResp.Stderr);
                 var msg = $"Resident closed for {file.Name}";
                 if (json) Console.WriteLine(OutputFormatter.WrapEnvelopeText(msg));
                 else Console.WriteLine(msg);

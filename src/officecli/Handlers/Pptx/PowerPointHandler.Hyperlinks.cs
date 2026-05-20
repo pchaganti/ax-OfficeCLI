@@ -126,6 +126,26 @@ public partial class PowerPointHandler
     }
 
     /// <summary>
+    /// `add --type hyperlink /slide[N]/shape[M]` — attach (or replace) a hyperlink on
+    /// an existing shape. Path resolution lives outside Resolve.cs's table/placeholder
+    /// switch, so this dispatch entry parses /slide[N]/shape[M] directly.
+    /// </summary>
+    private string AddHyperlinkOnShape(string parentPath, Dictionary<string, string> properties)
+    {
+        var m = Regex.Match(parentPath, @"^/slide\[(\d+)\]/shape\[(\d+)\]$");
+        if (!m.Success)
+            throw new ArgumentException(
+                "hyperlink must be added to a shape parent: /slide[N]/shape[M]");
+        if (!properties.TryGetValue("link", out var url) && !properties.TryGetValue("url", out url))
+            throw new ArgumentException(
+                "hyperlink requires --prop link=<url>. Example: --prop link=https://example.com");
+        var tooltip = properties.GetValueOrDefault("tooltip");
+        var (slidePart, shape) = ResolveShape(int.Parse(m.Groups[1].Value), int.Parse(m.Groups[2].Value));
+        ApplyShapeHyperlink(slidePart, shape, url, tooltip);
+        return parentPath;
+    }
+
+    /// <summary>
     /// Apply a hyperlink to a shape. Pass "none" or "" to remove.
     /// Stores on nvSpPr/cNvPr (canonical OOXML shape-level location) and also on every run
     /// (for Office compat: some readers rely on run-level hyperlinks to render the shape as clickable).

@@ -403,9 +403,11 @@ public partial class PowerPointHandler
             var qParaPProps = para.ParagraphProperties;
             if (qParaPProps?.Alignment?.HasValue == true) paraNode.Format["align"] = NormalizeAlignment(qParaPProps.Alignment.InnerText!);
             if (qParaPProps?.Level?.HasValue == true) paraNode.Format["level"] = qParaPProps.Level.Value.ToString(System.Globalization.CultureInfo.InvariantCulture);
-            if (qParaPProps?.Indent?.HasValue == true) paraNode.Format["indent"] = FormatEmu(qParaPProps.Indent.Value);
-            if (qParaPProps?.LeftMargin?.HasValue == true) paraNode.Format["marginLeft"] = FormatEmu(qParaPProps.LeftMargin.Value);
-            if (qParaPProps?.RightMargin?.HasValue == true) paraNode.Format["marginRight"] = FormatEmu(qParaPProps.RightMargin.Value);
+            // CONSISTENCY(pptx-bare-as-points): indent readback is unit-qualified
+            // in points to round-trip with bare-number Add/Set input.
+            if (qParaPProps?.Indent?.HasValue == true) paraNode.Format["indent"] = FormatPptIndentPoints(qParaPProps.Indent.Value);
+            if (qParaPProps?.LeftMargin?.HasValue == true) paraNode.Format["marginLeft"] = FormatPptIndentPoints(qParaPProps.LeftMargin.Value);
+            if (qParaPProps?.RightMargin?.HasValue == true) paraNode.Format["marginRight"] = FormatPptIndentPoints(qParaPProps.RightMargin.Value);
             var qLsPct = qParaPProps?.GetFirstChild<Drawing.LineSpacing>()?.GetFirstChild<Drawing.SpacingPercent>()?.Val?.Value;
             if (qLsPct.HasValue) paraNode.Format["lineSpacing"] = SpacingConverter.FormatPptLineSpacingPercent(qLsPct.Value);
             var qLsPts = qParaPProps?.GetFirstChild<Drawing.LineSpacing>()?.GetFirstChild<Drawing.SpacingPoints>()?.Val?.Value;

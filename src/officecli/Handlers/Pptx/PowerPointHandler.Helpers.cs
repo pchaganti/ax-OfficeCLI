@@ -1135,6 +1135,17 @@ public partial class PowerPointHandler
     private static string FormatLineWidth(long emu) => Core.EmuConverter.FormatLineWidth(emu);
 
     /// <summary>
+    /// Format an EMU value as points for round-trip with bare-number Add/Set input
+    /// on PPTX paragraph indent. 12700 EMU = 1pt; output formatted with up to 2
+    /// decimals (e.g. "1pt", "0.5pt", "-12pt"). CONSISTENCY(pptx-bare-as-points).
+    /// </summary>
+    private static string FormatPptIndentPoints(long emu)
+    {
+        var pt = emu / 12700.0;
+        return pt.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture) + "pt";
+    }
+
+    /// <summary>
     /// Normalize DrawingML alignment abbreviations to human-readable values.
     /// OOXML stores "l", "r", "ctr", "just" etc. — we return "left", "right", "center", "justify".
     /// </summary>

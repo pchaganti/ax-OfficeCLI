@@ -1028,7 +1028,8 @@ public partial class PowerPointHandler
 
                 case "indent":
                 {
-                    var indentEmu = (int)ParseEmu(value);
+                    // CONSISTENCY(pptx-bare-as-points): mirror AddParagraph / Set.Shape.
+                    var indentEmu = (int)Math.Round(SpacingConverter.ParsePointsSigned(value) * 12700.0);
                     foreach (var para in shape.TextBody?.Elements<Drawing.Paragraph>() ?? Enumerable.Empty<Drawing.Paragraph>())
                     {
                         var pProps = para.ParagraphProperties ?? (para.ParagraphProperties = new Drawing.ParagraphProperties());
@@ -1039,7 +1040,8 @@ public partial class PowerPointHandler
 
                 case "marginleft" or "marl":
                 {
-                    var mlEmu = (int)ParseEmu(value);
+                    // CONSISTENCY(pptx-bare-as-points): mirror AddParagraph / Set.Shape.
+                    var mlEmu = (int)Math.Round(SpacingConverter.ParsePointsSigned(value) * 12700.0);
                     foreach (var para in shape.TextBody?.Elements<Drawing.Paragraph>() ?? Enumerable.Empty<Drawing.Paragraph>())
                     {
                         var pProps = para.ParagraphProperties ?? (para.ParagraphProperties = new Drawing.ParagraphProperties());
@@ -1050,7 +1052,7 @@ public partial class PowerPointHandler
 
                 case "marginright" or "marr":
                 {
-                    var mrEmu = (int)ParseEmu(value);
+                    var mrEmu = (int)Math.Round(SpacingConverter.ParsePointsSigned(value) * 12700.0);
                     foreach (var para in shape.TextBody?.Elements<Drawing.Paragraph>() ?? Enumerable.Empty<Drawing.Paragraph>())
                     {
                         var pProps = para.ParagraphProperties ?? (para.ParagraphProperties = new Drawing.ParagraphProperties());
@@ -1938,12 +1940,12 @@ public partial class PowerPointHandler
                     }
                     break;
                 }
-                case "vmerge":
-                    cell.VerticalMerge = new DocumentFormat.OpenXml.BooleanValue(IsTruthy(value));
-                    break;
-                case "hmerge":
-                    cell.HorizontalMerge = new DocumentFormat.OpenXml.BooleanValue(IsTruthy(value));
-                    break;
+                // vmerge / hmerge are get-only per schema (set=false). Removed
+                // from Set so the key falls through to default → unsupported
+                // warning + exit 2, matching schema intent. Without this, the
+                // case consumed the key and called IsTruthy() which threw on
+                // non-boolean inputs like "restart" (R7 minor-2). Users
+                // wanting to merge should use merge.down=N / merge.right=N.
                 case "merge.right":
                 {
                     // Convenience: merge.right=N sets gridSpan on this cell and hMerge on next N cells.

@@ -101,6 +101,17 @@ internal static class SpacingConverter
     }
 
     /// <summary>
+    /// Parse a length value to points, allowing negative values. Accepts
+    /// unit-qualified "12pt", "0.5cm", "0.5in", "-1cm", "-12pt", or a bare
+    /// signed number (treated as points). Used for PPTX paragraph indent
+    /// which permits hanging-indent style negatives. CONSISTENCY(pptx-bare-as-points).
+    /// </summary>
+    public static double ParsePointsSigned(string value)
+    {
+        return ParseSpacingToPointsSigned(value, bareIsPoints: true);
+    }
+
+    /// <summary>
     /// Parse a length value to points. Accepts unit-qualified "12pt", "0.5cm",
     /// "0.5in" or bare number (treated as points). Used for XLSX shape margin
     /// to mirror Get's "Npt" output. CONSISTENCY(spacing-units).

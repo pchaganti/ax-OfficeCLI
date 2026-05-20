@@ -32,6 +32,13 @@ public partial class WordHandler : IDocumentHandler
     /// </summary>
     public List<string> LastAddUnsupportedProps { get; internal set; } = new();
 
+    /// <summary>
+    /// Advisory warnings from the most recent Add() call (e.g. unknown
+    /// style id referenced but stored as-is). Surfaced to the CLI layer
+    /// as stderr WARNING lines, non-fatal. Reset at the start of each Add.
+    /// </summary>
+    public List<string> LastAddWarnings { get; internal set; } = new();
+
     public WordHandler(string filePath, bool editable)
     {
         _filePath = filePath;

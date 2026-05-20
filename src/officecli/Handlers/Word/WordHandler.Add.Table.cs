@@ -534,6 +534,12 @@ public partial class WordHandler
             InsertAtPosition(parent, table, index);
         else
             AppendToParent(parent, table);
+        // OOXML §17.4.66: every <w:tc> must end with <w:p>. Word rejects
+        // a cell ending with <w:tbl> as the last child. Nested table Add
+        // appends the inner <w:tbl> as the cell's last child — restore the
+        // required trailing empty paragraph here so Word can open the doc.
+        if (parent is TableCell && parent.LastChild is Table)
+            parent.AppendChild(new Paragraph());
         var tbls = parent.Elements<Table>().ToList();
         var idx = tbls.FindIndex(t => ReferenceEquals(t, table));
         return $"{parentPath}/tbl[{(idx >= 0 ? idx + 1 : tbls.Count)}]";

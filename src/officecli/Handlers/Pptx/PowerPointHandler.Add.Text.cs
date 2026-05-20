@@ -218,11 +218,19 @@ public partial class PowerPointHandler
                 if (properties.TryGetValue("align", out var pAlign))
                     pProps.Alignment = ParseTextAlignment(pAlign);
                 if (properties.TryGetValue("indent", out var pIndent))
-                    pProps.Indent = (int)ParseEmu(pIndent);
+                {
+                    // CONSISTENCY(pptx-bare-as-points): paragraph-level
+                    // length inputs treat bare numbers as points (see
+                    // spaceBefore/spaceAfter via SpacingConverter.ParsePptSpacing).
+                    // ParseEmu("1") would return 1 raw EMU ≈ 0mm, useless.
+                    // Bare "1" → 1pt → 12700 EMU; unit-qualified inputs
+                    // ("0.5cm", "12pt") still go through ParseEmu.
+                    pProps.Indent = (int)Math.Round(SpacingConverter.ParsePointsSigned(pIndent) * 12700.0);
+                }
                 if (properties.TryGetValue("marginLeft", out var pMarL) || properties.TryGetValue("marl", out pMarL))
-                    pProps.LeftMargin = (int)ParseEmu(pMarL);
+                    pProps.LeftMargin = (int)Math.Round(SpacingConverter.ParsePointsSigned(pMarL) * 12700.0);
                 if (properties.TryGetValue("marginRight", out var pMarR) || properties.TryGetValue("marr", out pMarR))
-                    pProps.RightMargin = (int)ParseEmu(pMarR);
+                    pProps.RightMargin = (int)Math.Round(SpacingConverter.ParsePointsSigned(pMarR) * 12700.0);
                 if (properties.TryGetValue("list", out var pList) || properties.TryGetValue("liststyle", out pList))
                     ApplyListStyle(pProps, pList);
                 if (properties.TryGetValue("level", out var pLevelStr))
