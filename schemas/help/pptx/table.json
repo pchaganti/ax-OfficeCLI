@@ -107,6 +107,22 @@
       "readback": "not surfaced at table level",
       "enforcement": "strict"
     },
+    "colWidths": {
+      "type": "string",
+      "description": "per-column widths as comma- or semicolon-separated lengths (EMU/cm/in/pt). Length must match 'cols'; extra/missing entries fall back to the uniform default. Get readback is comma-separated FormatEmu output.",
+      "aliases": [
+        "colwidths"
+      ],
+      "add": true,
+      "set": false,
+      "get": true,
+      "examples": [
+        "--prop colWidths=2cm,3cm,2cm",
+        "--prop colWidths=\"1in;2in;1in\""
+      ],
+      "readback": "comma-separated length list (e.g. \"2cm,3cm,2cm\")",
+      "enforcement": "strict"
+    },
     "headerFill": {
       "type": "color",
       "description": "solid fill color applied to row 0 (header).",
