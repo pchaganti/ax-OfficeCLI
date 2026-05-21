@@ -323,7 +323,7 @@ public partial class WordHandler
         {
             ApplyTabsShorthand(pProps, pTabsVal);
         }
-        if (properties.TryGetValue("shd", out var pShdVal) || properties.TryGetValue("shading", out pShdVal))
+        if (properties.TryGetValue("shd", out var pShdVal) || properties.TryGetValue("shading", out pShdVal) || properties.TryGetValue("fill", out pShdVal))
         {
             var shdParts = pShdVal.Split(';');
             var shd = new Shading();
@@ -830,8 +830,7 @@ public partial class WordHandler
             // command on dump replay.
 
             run.AppendChild(rProps);
-            AppendTextWithBreaks(run, text);
-            para.AppendChild(run);
+            AppendTextWithPageFields(para, run, rProps, text);
         }
 
         // Dotted-key fallback: any "element.attr=value" prop the hand-rolled
@@ -1930,6 +1929,54 @@ public partial class WordHandler
     /// round-trip through Word instead of being collapsed to a single space.
     /// CRLF/CR are normalized to LF first.
     /// </summary>
+    // Expand `{page}` / `{pages}` tokens in user-supplied paragraph text into
+    // proper PAGE / NUMPAGES complex-field runs (begin / instrText / separate /
+    // result / end). The pre-built `run` is reused for the first literal
+    // segment so its rPr stays intact; subsequent literal segments and the
+    // field-run sequences clone `rPropsTemplate` so formatting (font/size/
+    // color/...) survives the split. Without this Word renders the tokens
+    // verbatim instead of substituting page numbers.
+    private static readonly System.Text.RegularExpressions.Regex PageFieldTokenRegex =
+        new(@"\{(page|pages)\}", System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    internal static void AppendTextWithPageFields(Paragraph para, Run firstRun, RunProperties rPropsTemplate, string text)
+    {
+        if (string.IsNullOrEmpty(text) || !PageFieldTokenRegex.IsMatch(text))
+        {
+            AppendTextWithBreaks(firstRun, text);
+            para.AppendChild(firstRun);
+            return;
+        }
+
+        int cursor = 0;
+        bool firstRunUsed = false;
+        foreach (System.Text.RegularExpressions.Match m in PageFieldTokenRegex.Matches(text))
+        {
+            if (m.Index > cursor)
+            {
+                var segment = text.Substring(cursor, m.Index - cursor);
+                var segRun = firstRunUsed ? new Run((RunProperties)rPropsTemplate.CloneNode(true)) : firstRun;
+                AppendTextWithBreaks(segRun, segment);
+                para.AppendChild(segRun);
+                firstRunUsed = true;
+            }
+            var instr = m.Groups[1].Value.Equals("pages", StringComparison.OrdinalIgnoreCase) ? " NUMPAGES " : " PAGE ";
+            para.AppendChild(new Run((RunProperties)rPropsTemplate.CloneNode(true), new FieldChar { FieldCharType = FieldCharValues.Begin }));
+            para.AppendChild(new Run((RunProperties)rPropsTemplate.CloneNode(true), new FieldCode(instr) { Space = SpaceProcessingModeValues.Preserve }));
+            para.AppendChild(new Run((RunProperties)rPropsTemplate.CloneNode(true), new FieldChar { FieldCharType = FieldCharValues.Separate }));
+            para.AppendChild(new Run((RunProperties)rPropsTemplate.CloneNode(true), new Text("1") { Space = SpaceProcessingModeValues.Preserve }));
+            para.AppendChild(new Run((RunProperties)rPropsTemplate.CloneNode(true), new FieldChar { FieldCharType = FieldCharValues.End }));
+            firstRunUsed = true;
+            cursor = m.Index + m.Length;
+        }
+        if (cursor < text.Length)
+        {
+            var tailRun = firstRunUsed ? new Run((RunProperties)rPropsTemplate.CloneNode(true)) : firstRun;
+            AppendTextWithBreaks(tailRun, text.Substring(cursor));
+            para.AppendChild(tailRun);
+        }
+    }
+
     internal static void AppendTextWithBreaks(Run run, string text)
     {
         if (string.IsNullOrEmpty(text))

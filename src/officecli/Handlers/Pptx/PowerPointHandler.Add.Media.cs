@@ -428,8 +428,8 @@ public partial class PowerPointHandler
                 // for that axis (matches OLE/picture/shape add convention).
                 long chartX = properties.TryGetValue("x", out var xv) ? ParseEmu(xv) : 838200;     // ~2.3cm
                 long chartY = properties.TryGetValue("y", out var yv) ? ParseEmu(yv) : 1825625;     // ~5cm
-                long chartCx = properties.TryGetValue("width", out var wv) ? ParseEmu(wv) : 8229600; // ~22.9cm
-                long chartCy = properties.TryGetValue("height", out var hv) ? ParseEmu(hv) : 4572000; // ~12.7cm
+                long chartCx = properties.TryGetValue("width", out var wv) || properties.TryGetValue("w", out wv) ? ParseEmu(wv) : 8229600; // ~22.9cm
+                long chartCy = properties.TryGetValue("height", out var hv) || properties.TryGetValue("h", out hv) ? ParseEmu(hv) : 4572000; // ~12.7cm
                 if (properties.TryGetValue("anchor", out var chartAnchorRaw) && !string.IsNullOrWhiteSpace(chartAnchorRaw))
                 {
                     var anchorParts = chartAnchorRaw.Split(',', StringSplitOptions.TrimEntries);
@@ -441,8 +441,8 @@ public partial class PowerPointHandler
                     if (!properties.ContainsKey("y")) chartY = ParseEmu(anchorParts[1]);
                     if (anchorParts.Length == 4)
                     {
-                        if (!properties.ContainsKey("width")) chartCx = ParseEmu(anchorParts[2]);
-                        if (!properties.ContainsKey("height")) chartCy = ParseEmu(anchorParts[3]);
+                        if (!properties.ContainsKey("width") && !properties.ContainsKey("w")) chartCx = ParseEmu(anchorParts[2]);
+                        if (!properties.ContainsKey("height") && !properties.ContainsKey("h")) chartCy = ParseEmu(anchorParts[3]);
                     }
                 }
                 // CONSISTENCY(positive-size): symmetric with Add.Shape negative-size guard.

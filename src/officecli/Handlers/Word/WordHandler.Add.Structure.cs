@@ -1275,6 +1275,11 @@ public partial class WordHandler
                 levelFormatRaw = perLvlFmt;
             else if (topIsBullet)
                 levelFormatRaw = "bullet";
+            else if (properties.ContainsKey("format"))
+                // Top-level format explicitly set → propagate to every level instead of
+                // cycling through decimal/lowerLetter/lowerRoman, which silently turned
+                // `format=decimal` into mixed numbering at level 1+.
+                levelFormatRaw = topFormatRaw;
             else
                 levelFormatRaw = (lvl % 3) switch { 0 => "decimal", 1 => "lowerLetter", _ => "lowerRoman" };
             var numFmt = ParseNumberFormat(levelFormatRaw);

@@ -204,6 +204,10 @@ public partial class PowerPointHandler
         node.Format["rows"] = rows.Count;
         node.Format["cols"] = cols;
 
+        var gridCols = table.TableGrid?.Elements<Drawing.GridColumn>().ToList();
+        if (gridCols != null && gridCols.Count > 0)
+            node.Format["colWidths"] = string.Join(",", gridCols.Select(gc => gc.Width?.Value is long w ? FormatEmu(w) : "0"));
+
         // Table style
         var tblPr = table.GetFirstChild<Drawing.TableProperties>();
         var tableStyleId = tblPr?.GetFirstChild<Drawing.TableStyleId>()?.InnerText;

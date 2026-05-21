@@ -13,6 +13,7 @@ public partial class WordHandler
 {
     public List<string> Set(string path, Dictionary<string, string> properties)
     {
+        Modified = true;
         var unsupported = new List<string>();
 
         // Batch Set: if path looks like a selector (not starting with /), Query → Set each
@@ -755,7 +756,7 @@ public partial class WordHandler
                     pProps.ContextualSpacing = new ContextualSpacing { Val = OnOffValue.FromBoolean(false) };
                 else pProps.ContextualSpacing = null;
                 return true;
-            case "shading" or "shd":
+            case "shading" or "shd" or "fill":
                 pProps.Shading = ParseShadingValue(value);
                 return true;
             case "spacebefore":

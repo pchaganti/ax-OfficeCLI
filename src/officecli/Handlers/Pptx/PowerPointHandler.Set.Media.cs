@@ -109,6 +109,19 @@ public partial class PowerPointHandler
                             }
                         }
                     }
+                    // Refresh alt (Description) to reflect the new image source
+                    // when the user did not also explicitly pass alt= in this Set —
+                    // otherwise the alt would silently keep referring to the
+                    // pre-replacement filename.
+                    if (!properties.ContainsKey("alt"))
+                    {
+                        var derivedAlt = TryDeriveAltFromSrc(value);
+                        if (derivedAlt != null)
+                        {
+                            var nvPicPrSrc = pic.NonVisualPictureProperties?.NonVisualDrawingProperties;
+                            if (nvPicPrSrc != null) nvPicPrSrc.Description = derivedAlt;
+                        }
+                    }
                     break;
                 }
                 case "rotation" or "rotate":
@@ -351,6 +364,16 @@ public partial class PowerPointHandler
         }
         GetSlide(slidePart).Save();
         return unsupported;
+    }
+
+    // Mirrors Add.Media.cs DefaultPictureAlt: derive a sensible alt from the
+    // src= path, skipping data URIs / raw base64 blobs that would yield gibberish.
+    private static string? TryDeriveAltFromSrc(string src)
+    {
+        if (string.IsNullOrEmpty(src)) return null;
+        if (src.StartsWith("data:", StringComparison.OrdinalIgnoreCase)) return null;
+        if (src.Length > 256 && src.IndexOf('/') < 0 && src.IndexOf('\\') < 0) return null;
+        try { return Path.GetFileName(src); } catch { return null; }
     }
 
     private List<string> SetZoomByPath(Match zoomSetMatch, Dictionary<string, string> properties)

@@ -14,6 +14,7 @@ public partial class PowerPointHandler
 {
     public List<string> Set(string path, Dictionary<string, string> properties)
     {
+        Modified = true;
         path = NormalizePptxPathSegmentCasing(path);
         path = NormalizeCellPath(path);
         path = ResolveIdPath(path);
@@ -280,6 +281,13 @@ public partial class PowerPointHandler
         // Try table column path: /slide[N]/table[M]/col[C]
         var tblColMatch = Regex.Match(path, @"^/slide\[(\d+)\]/table\[(\d+)\]/col\[(\d+)\]$");
         if (tblColMatch.Success) return SetTableColByPath(tblColMatch, properties);
+
+        // Try title shorthand path: /slide[N]/title[K] — K-th title-type shape on the slide.
+        // CONSISTENCY(placeholder-aliases): mirrors how /slide[N]/placeholder[title] resolves
+        // (ResolvePlaceholderShape by type), so users who learned `title[K]` from rendered
+        // HTML / outline view can address the title shape without knowing the placeholder id.
+        var titleIdxMatch = Regex.Match(path, @"^/slide\[(\d+)\]/title\[(\d+)\]$");
+        if (titleIdxMatch.Success) return SetTitleByPath(titleIdxMatch, properties);
 
         // Try placeholder paragraph/run path: /slide[N]/placeholder[X]/paragraph[P]/run[K]
         var phParaRunMatch = Regex.Match(path, @"^/slide\[(\d+)\]/placeholder\[(\w+)\]/(?:paragraph|p)\[(\d+)\]/(?:run|r)\[(\d+)\]$");

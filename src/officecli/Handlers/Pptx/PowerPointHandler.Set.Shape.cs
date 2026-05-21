@@ -314,6 +314,57 @@ public partial class PowerPointHandler
         return unsupported;
     }
 
+    private List<string> SetTitleByPath(Match titleMatch, Dictionary<string, string> properties)
+    {
+        var slideIdx = int.Parse(titleMatch.Groups[1].Value);
+        var titleIdx = int.Parse(titleMatch.Groups[2].Value);
+
+        var slideParts = GetSlideParts().ToList();
+        if (slideIdx < 1 || slideIdx > slideParts.Count)
+            throw new ArgumentException($"Slide {slideIdx} not found (total: {slideParts.Count})");
+        var slidePart = slideParts[slideIdx - 1];
+
+        Shape? shape = null;
+        if (titleIdx == 1)
+        {
+            // Reuse placeholder resolution so layout-only titles are materialized.
+            try { shape = ResolvePlaceholderShape(slidePart, "title"); }
+            catch (ArgumentException) { shape = null; }
+        }
+        if (shape == null)
+        {
+            var shapeTree = GetSlide(slidePart).CommonSlideData?.ShapeTree
+                ?? throw new ArgumentException($"Slide {slideIdx} has no shape tree");
+            var titles = shapeTree.Elements<Shape>().Where(IsTitle).ToList();
+            if (titleIdx < 1 || titleIdx > titles.Count)
+                throw new ArgumentException($"Title {titleIdx} not found on slide {slideIdx} (slide has {titles.Count} title shape(s))");
+            shape = titles[titleIdx - 1];
+        }
+
+        var allRuns = shape.Descendants<Drawing.Run>().ToList();
+        if (allRuns.Count == 0 && shape.TextBody != null && HasRunLevelProperty(properties))
+        {
+            var firstPara = shape.TextBody.Elements<Drawing.Paragraph>().FirstOrDefault();
+            if (firstPara == null)
+            {
+                firstPara = new Drawing.Paragraph();
+                shape.TextBody.Append(firstPara);
+            }
+            var seededRun = new Drawing.Run(
+                new Drawing.RunProperties { Language = "en-US" },
+                new Drawing.Text { Text = "" });
+            var endParaRPr = firstPara.GetFirstChild<Drawing.EndParagraphRunProperties>();
+            if (endParaRPr != null)
+                firstPara.InsertBefore(seededRun, endParaRPr);
+            else
+                firstPara.Append(seededRun);
+            allRuns = new List<Drawing.Run> { seededRun };
+        }
+        var unsupported = SetRunOrShapeProperties(properties, allRuns, shape, slidePart);
+        GetSlide(slidePart).Save();
+        return unsupported;
+    }
+
     private static bool HasRunLevelProperty(Dictionary<string, string> properties)
     {
         foreach (var key in properties.Keys)

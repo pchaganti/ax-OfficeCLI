@@ -250,6 +250,7 @@ static partial class CommandBuilder
                             Code = "advisory",
                         });
                     }
+                    hadWarnings = true;
                 }
 
                 if (json)
