@@ -6,6 +6,8 @@ using System.Xml;
 using System.Xml.Linq;
 using DocumentFormat.OpenXml.Packaging;
 using AP = DocumentFormat.OpenXml.ExtendedProperties;
+using CP = DocumentFormat.OpenXml.CustomProperties;
+using VT = DocumentFormat.OpenXml.VariantTypes;
 
 namespace OfficeCli.Core;
 
@@ -144,13 +146,14 @@ internal static class OfficeCliMetadata
 
     /// <summary>
     /// Stamp a freshly-created document as authored by OfficeCLI. Writes
-    /// <c>docProps/core.xml</c> (Creator, Created, LastModifiedBy, Modified) and
-    /// <c>docProps/app.xml</c> (Application = "OfficeCLI/&lt;version&gt;", no AppVersion).
+    /// <c>docProps/core.xml</c> (Creator, Created, LastModifiedBy, Modified),
+    /// <c>docProps/app.xml</c> (Application = "OfficeCLI/&lt;version&gt;", no AppVersion),
+    /// and <c>docProps/custom.xml</c> (OfficeCLI.Version, OfficeCLI.LastModified).
     ///
-    /// Only invoked from <see cref="BlankDocCreator"/> on initial creation —
-    /// existing documents are left untouched on edit, both to avoid clobbering
-    /// foreign tooling's metadata and because read-modify-write of arbitrary
-    /// core.xml has unbounded edge cases.
+    /// Only invoked from <see cref="BlankDocCreator"/> on initial creation.
+    /// For edits to existing documents, use <see cref="StampOnSave"/> which
+    /// only updates the audit trail in <c>custom.xml</c> and leaves
+    /// <c>app.xml</c>'s &lt;Application&gt; untouched.
     /// </summary>
     public static void StampOnCreate(OpenXmlPackage doc)
     {
@@ -164,5 +167,85 @@ internal static class OfficeCliMetadata
             (part.Properties.Application ??= new AP.Application()).Text = AppName;
             part.Properties.Save();
         }
+
+        WriteCustomProperties(doc, nowUtc);
+    }
+
+    /// <summary>
+    /// Stamp an audit trail on every save of an existing document. Writes
+    /// only <c>docProps/custom.xml</c> with OfficeCLI.Version and
+    /// OfficeCLI.LastModified. Does NOT touch &lt;Application&gt; in app.xml
+    /// (preserving the original authoring tool's identity) nor core.xml
+    /// (avoiding LastModifiedBy clobbering of the real human author).
+    /// </summary>
+    public static void StampOnSave(OpenXmlPackage doc)
+    {
+        WriteCustomProperties(doc, DateTime.UtcNow);
+    }
+
+    private const string CustomPropsFmtId = "{D5CDD505-2E9C-101B-9397-08002B2CF9AE}";
+
+    private static CustomFilePropertiesPart? GetOrCreateCustomPart(OpenXmlPackage doc) => doc switch
+    {
+        WordprocessingDocument w => w.CustomFilePropertiesPart ?? w.AddCustomFilePropertiesPart(),
+        SpreadsheetDocument s => s.CustomFilePropertiesPart ?? s.AddCustomFilePropertiesPart(),
+        PresentationDocument p => p.CustomFilePropertiesPart ?? p.AddCustomFilePropertiesPart(),
+        _ => null
+    };
+
+    /// <summary>
+    /// Write/update OfficeCLI custom properties in <c>docProps/custom.xml</c>.
+    /// Properties used: <c>OfficeCLI.Version</c>, <c>OfficeCLI.LastModified</c>.
+    /// Existing properties (from any author) are preserved verbatim; only
+    /// the two OfficeCLI-owned keys are upserted, and <c>pid</c> values are
+    /// renumbered into the contiguous 2..N range the OOXML schema requires.
+    /// </summary>
+    private static void WriteCustomProperties(OpenXmlPackage doc, DateTime nowUtc)
+    {
+        var part = GetOrCreateCustomPart(doc);
+        if (part == null) return;
+
+        part.Properties ??= new CP.Properties();
+        var props = part.Properties;
+
+        void Upsert(string name, string value)
+        {
+            CP.CustomDocumentProperty? existing = null;
+            foreach (var el in props.Elements<CP.CustomDocumentProperty>())
+            {
+                if (string.Equals(el.Name?.Value, name, StringComparison.Ordinal))
+                {
+                    existing = el;
+                    break;
+                }
+            }
+            if (existing != null)
+            {
+                existing.RemoveAllChildren();
+                existing.AppendChild(new VT.VTLPWSTR(value));
+                return;
+            }
+            var added = new CP.CustomDocumentProperty
+            {
+                FormatId = CustomPropsFmtId,
+                Name = name,
+            };
+            added.AppendChild(new VT.VTLPWSTR(value));
+            props.AppendChild(added);
+        }
+
+        Upsert("OfficeCLI.Version", ResolveVersion());
+        Upsert("OfficeCLI.LastModified", nowUtc.ToString("yyyy-MM-ddTHH:mm:ssZ"));
+
+        // OOXML requires pid to be a contiguous sequence starting at 2.
+        // Renumber every CustomDocumentProperty in document order so the
+        // schema stays valid regardless of prior authors' numbering.
+        int pid = 2;
+        foreach (var el in props.Elements<CP.CustomDocumentProperty>())
+        {
+            el.PropertyId = pid++;
+        }
+
+        props.Save();
     }
 }

@@ -17,6 +17,7 @@ public partial class WordHandler
 {
     public string Add(string parentPath, string type, InsertPosition? position, Dictionary<string, string> properties)
     {
+        Modified = true;
         // The signature is non-nullable, but the body uses `type?.Equals(...)`
         // below to short-circuit header/footer routing — that null-conditional
         // makes the C# flow analyzer treat `type` as nullable from that point

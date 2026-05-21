@@ -15,6 +15,7 @@ public partial class PowerPointHandler
 {
     public string? Remove(string path)
     {
+        Modified = true;
         // CONSISTENCY(null-path-guard): callers that pass null get an
         // ArgumentNullException instead of a confusing downstream NRE.
         // Mirrors the Word/Excel guards on the same surface.

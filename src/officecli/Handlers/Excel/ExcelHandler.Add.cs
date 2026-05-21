@@ -18,6 +18,7 @@ public partial class ExcelHandler
 {
     public string Add(string parentPath, string type, InsertPosition? position, Dictionary<string, string> properties)
     {
+        Modified = true;
         var index = position?.Index;
         // Normalize to case-insensitive lookup so camelCase keys (e.g. minColor) match lowercase lookups.
         // Preserve TrackingPropertyDictionary so handler-as-truth read

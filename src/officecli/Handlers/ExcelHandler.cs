@@ -29,6 +29,13 @@ public partial class ExcelHandler : IDocumentHandler
     private Dictionary<SheetData, SortedList<uint, Row>>? _rowIndex;
     public int LastFindMatchCount { get; internal set; }
 
+    /// <summary>
+    /// Set true by Add/Set/Remove/RawSet, consumed by Save/Dispose to decide
+    /// whether to stamp <c>docProps/custom.xml</c> with an OfficeCLI audit
+    /// trail. Pure Get/Query sessions leave this false.
+    /// </summary>
+    internal bool Modified { get; set; }
+
     public ExcelHandler(string filePath, bool editable)
     {
         _filePath = filePath;
@@ -241,6 +248,7 @@ public partial class ExcelHandler : IDocumentHandler
 
     public void RawSet(string partPath, string xpath, string action, string? xml)
     {
+        Modified = true;
         if (partPath == null) throw new ArgumentNullException(nameof(partPath));
         var workbookPart = _doc.WorkbookPart
             ?? throw new InvalidOperationException("No workbook part");
@@ -343,6 +351,11 @@ public partial class ExcelHandler : IDocumentHandler
         // reflects the in-memory tree, then push the package out to the
         // backing stream and force the OS buffer to disk.
         FlushDirtyParts();
+        if (Modified)
+        {
+            try { OfficeCli.Core.OfficeCliMetadata.StampOnSave(_doc); }
+            catch { /* best-effort audit trail */ }
+        }
         _doc.Save();
         _backingStream?.Flush();
     }
@@ -355,6 +368,11 @@ public partial class ExcelHandler : IDocumentHandler
         // Mirror the PPT/Word pattern: when we own the backing FileStream the
         // package would otherwise leave the on-disk file in whatever state
         // the last auto-flush left it. Save explicitly before disposing.
+        if (Modified)
+        {
+            try { OfficeCli.Core.OfficeCliMetadata.StampOnSave(_doc); }
+            catch { /* best-effort audit trail */ }
+        }
         try { _doc.Save(); } catch { /* read-only or already disposed */ }
         _doc.Dispose();
         _backingStream?.Dispose();

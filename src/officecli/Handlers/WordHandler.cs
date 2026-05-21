@@ -39,6 +39,14 @@ public partial class WordHandler : IDocumentHandler
     /// </summary>
     public List<string> LastAddWarnings { get; internal set; } = new();
 
+    /// <summary>
+    /// Set true by Add/Set/Remove/RawSet, consumed by Save/Dispose to decide
+    /// whether to stamp <c>docProps/custom.xml</c> with an OfficeCLI audit
+    /// trail. Pure Get/Query sessions leave this false and never touch the
+    /// file's metadata.
+    /// </summary>
+    internal bool Modified { get; set; }
+
     public WordHandler(string filePath, bool editable)
     {
         _filePath = filePath;
@@ -194,6 +202,7 @@ public partial class WordHandler : IDocumentHandler
 
     public void RawSet(string partPath, string xpath, string action, string? xml)
     {
+        Modified = true;
         if (partPath == null) throw new ArgumentNullException(nameof(partPath));
         var mainPart = _doc.MainDocumentPart
             ?? throw new InvalidOperationException("No main document part");
@@ -308,6 +317,11 @@ public partial class WordHandler : IDocumentHandler
         // stream still holds the file. The on-disk snapshot will have
         // `<w:br />` form instead of the canonical `<w:br/>` form; both are
         // schema-valid OOXML.
+        if (Modified)
+        {
+            try { OfficeCli.Core.OfficeCliMetadata.StampOnSave(_doc); }
+            catch { /* best-effort audit trail */ }
+        }
         _doc.Save();
         _backingStream?.Flush();
     }
@@ -318,6 +332,11 @@ public partial class WordHandler : IDocumentHandler
         // package would otherwise leave the on-disk file in whatever state
         // the last auto-flush left it (potentially truncated for the
         // stream-Open path). Save first, then dispose.
+        if (Modified)
+        {
+            try { OfficeCli.Core.OfficeCliMetadata.StampOnSave(_doc); }
+            catch { /* best-effort audit trail */ }
+        }
         try { _doc.Save(); } catch { /* read-only or already disposed */ }
         _doc.Dispose();
         _backingStream?.Dispose();

@@ -17,6 +17,13 @@ public partial class PowerPointHandler : IDocumentHandler
     private uint _nextShapeId = 10000;
     public int LastFindMatchCount { get; internal set; }
 
+    /// <summary>
+    /// Set true by Add/Set/Remove/RawSet, consumed by Save/Dispose to decide
+    /// whether to stamp <c>docProps/custom.xml</c> with an OfficeCLI audit
+    /// trail. Pure Get/Query sessions leave this false.
+    /// </summary>
+    internal bool Modified { get; set; }
+
     // Backing FileStream when we open via stream (shared-read mode). null
     // when the package owns its own file handle via PresentationDocument.Open(path).
     private FileStream? _backingStream;
@@ -136,6 +143,7 @@ public partial class PowerPointHandler : IDocumentHandler
 
     public void RawSet(string partPath, string xpath, string action, string? xml)
     {
+        Modified = true;
         if (partPath == null) throw new ArgumentNullException(nameof(partPath));
         var presentationPart = _doc.PresentationPart
             ?? throw new InvalidOperationException("No presentation part");
@@ -510,6 +518,11 @@ public partial class PowerPointHandler : IDocumentHandler
     {
         // _doc writes through to _backingStream; force the FileStream buffer
         // out to disk so external readers see the latest bytes immediately.
+        if (Modified)
+        {
+            try { OfficeCli.Core.OfficeCliMetadata.StampOnSave(_doc); }
+            catch { /* best-effort audit trail */ }
+        }
         _doc.Save();
         _backingStream?.Flush();
     }
@@ -521,6 +534,11 @@ public partial class PowerPointHandler : IDocumentHandler
         // package would otherwise leave the on-disk file in whatever state
         // the last auto-flush left it — for the stream-Open path this can
         // truncate to zero bytes and look like a corrupted zip on reopen.
+        if (Modified)
+        {
+            try { OfficeCli.Core.OfficeCliMetadata.StampOnSave(_doc); }
+            catch { /* best-effort audit trail */ }
+        }
         try { _doc.Save(); } catch { /* read-only or already disposed */ }
         _doc.Dispose();
         _backingStream?.Dispose();

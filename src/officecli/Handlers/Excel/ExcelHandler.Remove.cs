@@ -14,6 +14,7 @@ public partial class ExcelHandler
 {
     public string? Remove(string path)
     {
+        Modified = true;
         // CONSISTENCY(container-remove-guard): reject removal of the
         // workbook root up front. Sheet-level removal has its own guard
         // (can't remove last sheet) further down and is a legitimate op;
@@ -820,6 +821,7 @@ public partial class ExcelHandler
     /// </summary>
     public string? RemoveCellWithShift(string path, string shift)
     {
+        Modified = true;
         if (string.IsNullOrEmpty(shift))
             throw new ArgumentException("--shift requires a value: left or up");
         var direction = shift.ToLowerInvariant();

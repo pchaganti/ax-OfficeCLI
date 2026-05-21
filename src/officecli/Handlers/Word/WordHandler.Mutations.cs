@@ -18,6 +18,7 @@ public partial class WordHandler
 {
     public string? Remove(string path)
     {
+        Modified = true;
         // CONSISTENCY(container-remove-guard): reject removal of required
         // structural container elements up front. Without this guard,
         // `remove /body` / `remove /styles` etc. fall through to
