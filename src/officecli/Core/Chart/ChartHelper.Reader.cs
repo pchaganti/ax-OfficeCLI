@@ -1361,7 +1361,7 @@ internal static partial class ChartHelper
         if (dash?.HasValue == true)
         {
             if (parts.Count == 1) parts.Add("0.5"); // default width slot
-            parts.Add(dash.InnerText);
+            parts.Add(dash.InnerText ?? "");
         }
         return string.Join(":", parts);
     }

@@ -615,7 +615,7 @@ public partial class PowerPointHandler
         // unsized bevel input (e.g. "circle") don't gain a "-6-6" tail. Schema
         // documents this contract: "'preset' alone, or 'preset-widthPt-heightPt'
         // when non-default sizing was written."
-        var preset = bevel.Preset?.HasValue == true ? bevel.Preset.InnerText : "circle";
+        var preset = bevel.Preset?.HasValue == true ? (bevel.Preset.InnerText ?? "circle") : "circle";
         var hasW = bevel.Width?.HasValue == true;
         var hasH = bevel.Height?.HasValue == true;
         var wEmu = hasW ? bevel.Width!.Value : 76200L;
