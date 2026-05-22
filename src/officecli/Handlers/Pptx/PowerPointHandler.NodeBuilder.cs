@@ -1826,15 +1826,28 @@ public partial class PowerPointHandler
         );
         // CONSISTENCY(text-escape-boundary): \n / \t resolution at CLI --prop;
         // text arrives here with real newlines and tabs already.
-        var lines = text.Split('\n');
-        foreach (var line in lines)
+        if (string.IsNullOrEmpty(text))
         {
-            var para = new Drawing.Paragraph();
-            AppendLineWithTabs(para, line, seg => new Drawing.Run(
-                new Drawing.RunProperties { Language = "en-US" },
-                new Drawing.Text { Text = seg }
-            ));
-            body.AppendChild(para);
+            // Decorator shapes (no text) must not seed a default <a:r> with
+            // lang="en-US" — that lang attribute leaks back through
+            // FillUnknownRunProps to shape-level Format on round-trip, so a
+            // source <p:sp> with no rPr lang gains lang=en-US after Add→Get.
+            // Mirror what PowerPoint emits for an empty text body: a single
+            // empty paragraph with no run, no endParaRPr lang. (DRIFT-3)
+            body.AppendChild(new Drawing.Paragraph());
+        }
+        else
+        {
+            var lines = text.Split('\n');
+            foreach (var line in lines)
+            {
+                var para = new Drawing.Paragraph();
+                AppendLineWithTabs(para, line, seg => new Drawing.Run(
+                    new Drawing.RunProperties { Language = "en-US" },
+                    new Drawing.Text { Text = seg }
+                ));
+                body.AppendChild(para);
+            }
         }
         shape.TextBody = body;
         return shape;
