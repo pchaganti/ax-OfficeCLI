@@ -730,6 +730,22 @@ public partial class PowerPointHandler
                     .FirstOrDefault(p => p?.Type?.Value == phTypeVal);
                 boundToLayout = layoutMatch != null;
             }
+            else if (!callerProvidedIdx && properties.ContainsKey("geometry"))
+            {
+                // DRIFT-4 — caller supplied an explicit geometry= prop. That's
+                // the dump→replay signature for a TextBox-style placeholder
+                // (source had <p:ph type=None/> + its own prstGeom). Forcing
+                // idx=1 here would gain a spurious phIndex on round-trip and
+                // (worse) re-binding to a layout body slot drops the explicit
+                // prstGeom. Leave idx unset; layout binding falls through to
+                // type-only match if any.
+                var layoutMatch = layoutPartCheck?.SlideLayout?.CommonSlideData?.ShapeTree
+                    ?.Elements<Shape>()
+                    .Select(s => s.NonVisualShapeProperties?.ApplicationNonVisualDrawingProperties
+                        ?.GetFirstChild<PlaceholderShape>())
+                    .FirstOrDefault(p => p?.Type?.Value == phTypeVal);
+                boundToLayout = layoutMatch != null;
+            }
             else
             {
                 var layoutMatch = layoutPartCheck?.SlideLayout?.CommonSlideData?.ShapeTree
@@ -791,15 +807,31 @@ public partial class PowerPointHandler
                 new Drawing.Offset { X = geom.x, Y = geom.y },
                 new Drawing.Extents { Cx = geom.cx, Cy = geom.cy }
             ));
-            // R24 — do NOT inject <a:prstGeom prst="rect"/>. PPT and
-            // LibreOffice both fall back to a rectangle when no geometry is
-            // declared on a placeholder's spPr (the placeholder slot is
+            // R24 — do NOT inject <a:prstGeom prst="rect"/> by default. PPT
+            // and LibreOffice both fall back to a rectangle when no geometry
+            // is declared on a placeholder's spPr (the placeholder slot is
             // inherently rectangular), so the explicit element is redundant
             // for rendering. The cost of emitting it is real: NodeBuilder
             // surfaces it as `geometry=rect` in dump, the batch emitter
             // forwards it through Set, and Set's geometry path seeds a
             // default outline (bbe1a0c8) — so an idempotent dump+replay
             // grows a 1pt border around every formerly-unbound placeholder.
+        }
+        // DRIFT-4 — when caller explicitly supplies a geometry prop, honor it:
+        // dump→replay of a source with <p:sp><a:prstGeom prst=".."/>... wrapped
+        // as a placeholder must preserve the prstGeom; otherwise geometry
+        // silently disappears on the second dump.
+        if (properties.TryGetValue("geometry", out var phGeom) && !string.IsNullOrEmpty(phGeom))
+        {
+            var prstName = phGeom.Trim();
+            if (prstName.Equals("custom", StringComparison.OrdinalIgnoreCase))
+                prstName = "rect";
+            if (TryParsePresetShape(prstName, out var prstEnum))
+            {
+                shape.ShapeProperties.AppendChild(
+                    new Drawing.PresetGeometry(new Drawing.AdjustValueList()) { Preset = prstEnum }
+                );
+            }
         }
 
         // Optional text prepopulation. Build a minimal TextBody so PowerPoint
