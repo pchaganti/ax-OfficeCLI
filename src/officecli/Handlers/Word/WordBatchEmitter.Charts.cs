@@ -24,6 +24,10 @@ public static partial class WordBatchEmitter
         foreach (var s in spec.Series)
         {
             if (s.Type != "series") continue;
+            // Skip reference-line series: AddReferenceLine re-creates the Target
+            // series from `referenceLine=...` props. Including its values in the
+            // data string would duplicate the series on replay.
+            if (s.Format.TryGetValue("refLine", out var rl) && rl?.ToString() == "true") continue;
             if (!s.Format.TryGetValue("name", out var nObj) || nObj == null) continue;
             if (!s.Format.TryGetValue("values", out var vObj) || vObj == null) continue;
             var name = nObj.ToString() ?? "";
