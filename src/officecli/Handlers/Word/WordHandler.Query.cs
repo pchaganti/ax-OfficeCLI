@@ -706,7 +706,8 @@ public partial class WordHandler
                 {
                     var on = TryReadOnOff(pPr.BiDi.Val);
                     styleNode.Format["direction"] = on == true ? "rtl" : "ltr";
-                    styleNode.Format["bidi"] = on == true;
+                    // Canonical-key rule: Get emits only `direction`; bidi alias
+                    // is accepted by Add/Set but not echoed back.
                 }
                 if (pPr.SpacingBetweenLines != null)
                 {
