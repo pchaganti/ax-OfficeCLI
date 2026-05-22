@@ -301,11 +301,20 @@ internal static partial class ChartHelper
                     // Combo charts (bar+line in same plot area) have incompatible dLblPos
                     // value sets — bar supports inEnd/inBase/outEnd but not t/b/l/r, while
                     // line supports t/b/l/r but not inEnd/inBase/outEnd. Only 'ctr' is
-                    // universally valid. Skip entirely for combo charts.
+                    // universally valid. Used to skip entirely; that lost dump→replay of
+                    // bar-group labelPos values reported as chart-level by the Reader
+                    // (Reader walks Descendants<DataLabels> and emits the first dLblPos
+                    // it sees). For combo: apply per-group, skipping groups whose
+                    // ST_DLblPos* enum forbids the requested value rather than producing
+                    // schema-invalid XML or silently dropping a legal-on-this-group value.
                     var chartGroupCount = plotArea2.ChildElements.Count(
                         e => e is C.BarChart or C.Bar3DChart or C.LineChart or C.Line3DChart
                             or C.ScatterChart or C.BubbleChart);
-                    if (chartGroupCount > 1) break;
+                    if (chartGroupCount > 1)
+                    {
+                        ApplyComboLabelPos(plotArea2, value);
+                        break;
+                    }
 
                     // Pie only supports: bestFit, center, insideEnd, insideBase
                     var isPie = plotArea2.GetFirstChild<C.PieChart>() != null
@@ -543,8 +552,20 @@ internal static partial class ChartHelper
                     }
                     if (targetVal)
                     {
-                        foreach (var axis in plotArea2.Elements<C.ValueAxis>())
-                            ApplyAxisLabelRotation(axis, rotAttrVal);
+                        // Chart-level `yaxis.labelRotation` historically applied
+                        // to every C.ValueAxis. When a secondary axis (value2)
+                        // is present, this leaked the rotation into a sibling
+                        // the user did not address — Reader emits per-axis
+                        // labelRotation under axis[@role=value2], so on the
+                        // second round-trip the secondary axis gained a
+                        // labelRotation it did not have originally. Target
+                        // only the primary value axis here; callers wanting to
+                        // rotate the secondary use `axis[@role=value2]` set
+                        // with the per-axis `labelRotation` key, which the
+                        // Reader emits symmetrically.
+                        var primaryVal = plotArea2.Elements<C.ValueAxis>().FirstOrDefault();
+                        if (primaryVal != null)
+                            ApplyAxisLabelRotation(primaryVal, rotAttrVal);
                     }
                     break;
                 }
@@ -3597,5 +3618,57 @@ internal static partial class ChartHelper
             dataLabels.Add(dl);
         }
         return dataLabels.Count > 0;
+    }
+
+    // Apply a chart-level `labelPos=...` request to a combo chart by writing
+    // dLblPos on each chart-group's dLbls element only when ST_DLblPos*
+    // permits the requested value for that group's chart type. Skips groups
+    // where the value is illegal (preserves prior behavior of "don't write
+    // invalid XML") but lands the value where it's legal so dump→replay of a
+    // combo chart's bar-group labelPos no longer silently drops it.
+    private static void ApplyComboLabelPos(C.PlotArea plotArea, string value)
+    {
+        var lc = value.ToLowerInvariant();
+        bool barOk = lc is "outsideend" or "outend" or "insideend" or "inend"
+            or "insidebase" or "inbase" or "base" or "center" or "ctr";
+        bool lineOk = lc is "top" or "t" or "bottom" or "b" or "left" or "l"
+            or "right" or "r" or "center" or "ctr";
+        // bubble shares bar's CT_DLblPos value set; scatter follows line.
+        foreach (var grp in plotArea.ChildElements.OfType<OpenXmlCompositeElement>())
+        {
+            bool isBarLike = grp is C.BarChart or C.Bar3DChart or C.BubbleChart;
+            bool isLineLike = grp is C.LineChart or C.Line3DChart or C.ScatterChart;
+            if (!isBarLike && !isLineLike) continue;
+            bool allowed = (isBarLike && barOk) || (isLineLike && lineOk);
+            if (!allowed) continue;
+
+            var pos = lc switch
+            {
+                "center" or "ctr" => C.DataLabelPositionValues.Center,
+                "outsideend" or "outend" => C.DataLabelPositionValues.OutsideEnd,
+                "insideend" or "inend" => C.DataLabelPositionValues.InsideEnd,
+                "insidebase" or "inbase" or "base" => C.DataLabelPositionValues.InsideBase,
+                "top" or "t" => C.DataLabelPositionValues.Top,
+                "bottom" or "b" => C.DataLabelPositionValues.Bottom,
+                "left" or "l" => C.DataLabelPositionValues.Left,
+                "right" or "r" => C.DataLabelPositionValues.Right,
+                _ => C.DataLabelPositionValues.OutsideEnd,
+            };
+
+            var dl = grp.GetFirstChild<C.DataLabels>();
+            if (dl == null)
+            {
+                dl = new C.DataLabels();
+                dl.AppendChild(new C.ShowLegendKey { Val = false });
+                dl.AppendChild(new C.ShowValue { Val = false });
+                dl.AppendChild(new C.ShowCategoryName { Val = false });
+                dl.AppendChild(new C.ShowSeriesName { Val = false });
+                dl.AppendChild(new C.ShowPercent { Val = false });
+                dl.AppendChild(new C.ShowBubbleSize { Val = false });
+                InsertChartGroupDLbls(grp, dl);
+            }
+            dl.RemoveAllChildren<C.DataLabelPosition>();
+            dl.PrependChild(new C.DataLabelPosition { Val = pos });
+        }
     }
 }
