@@ -183,7 +183,20 @@ internal static class FormulaParser
                     var styVal = sty?.GetAttribute("val", "http://schemas.openxmlformats.org/officeDocument/2006/math").Value;
                     var hasNor = rPr.ChildElements.Any(e => e.LocalName == "nor");
                     if (hasNor)
-                        result = $"\\text{{{EscapeLatex(text)}}}";
+                    {
+                        // m:nor (NormalText) flags an upright run. Function
+                        // names like sin/cos/tan/log/ln go through this same
+                        // node on the write path (see ParseCommand case "lim"
+                        // or "sin" or "cos" ...), so an upright run whose text
+                        // is one of those names round-trips back to \sin
+                        // rather than \text{sin}. CONSISTENCY(formula-funcname):
+                        // keep this set in sync with the upright-name list in
+                        // ParseCommand's "lim or sin or cos ..." arm.
+                        if (_uprightFunctionNames.Contains(text))
+                            result = "\\" + text;
+                        else
+                            result = $"\\text{{{EscapeLatex(text)}}}";
+                    }
                     else if (styVal == "b")
                         result = $"\\mathbf{{{EscapeLatex(text)}}}";
                     else if (styVal == "bi")
@@ -1859,6 +1872,17 @@ internal static class FormulaParser
         "Psi" => "Ψ",
         "Omega" => "Ω",
         _ => null
+    };
+
+    // Function names written by ParseCommand's `case "lim" or "sin" or ...`
+    // arm as an m:r + m:nor + literal text. Round-trip back to "\name" on the
+    // OMML→LaTeX side when an upright run's payload matches one of these.
+    // CONSISTENCY(formula-funcname): mirrors the list in ParseCommand.
+    private static readonly HashSet<string> _uprightFunctionNames = new(StringComparer.Ordinal)
+    {
+        "lim", "sin", "cos", "tan", "log", "ln", "exp", "min", "max",
+        "sup", "inf", "det", "gcd", "dim", "ker", "hom", "deg",
+        "arg", "sec", "csc", "cot", "sinh", "cosh", "tanh"
     };
 
     private static readonly (string Symbol, string Command)[] SymbolToCommandMap = new[]
