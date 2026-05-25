@@ -145,6 +145,8 @@ public partial class PowerPointHandler : IDocumentHandler
     {
         Modified = true;
         if (partPath == null) throw new ArgumentNullException(nameof(partPath));
+        if (xpath == null) throw new ArgumentNullException(nameof(xpath));
+        if (action == null) throw new ArgumentNullException(nameof(action));
         var presentationPart = _doc.PresentationPart
             ?? throw new InvalidOperationException("No presentation part");
 
@@ -586,8 +588,12 @@ public partial class PowerPointHandler : IDocumentHandler
                     if (saSpTree != null)
                     {
                         // Allocate a non-colliding cNvPr id within the slide.
+                        // R42-T1: spTree carries pptx-namespaced <p:nvSpPr>/<p:nvGrpSpPr>/<p:nvGraphicFramePr>
+                        // wrappers whose cNvPr maps to DocumentFormat.OpenXml.Presentation.NonVisualDrawingProperties,
+                        // NOT the Drawing-namespace type. The wrong SDK type matched zero descendants,
+                        // pinning nextId at 1 and colliding with nvGrpSpPr cNvPr id=1.
                         uint nextId = 1;
-                        foreach (var nv in saSpTree.Descendants<DocumentFormat.OpenXml.Drawing.NonVisualDrawingProperties>())
+                        foreach (var nv in saSpTree.Descendants<DocumentFormat.OpenXml.Presentation.NonVisualDrawingProperties>())
                         {
                             if (nv.Id?.Value >= nextId) nextId = nv.Id!.Value + 1;
                         }
