@@ -216,6 +216,22 @@ public static partial class WordBatchEmitter
         // BUG-DUMP6-05: collapse N runs that share a hyperlink wrapper into
         // one synthetic hyperlink-typed entry — see CoalesceHyperlinkRuns.
         runs = CoalesceHyperlinkRuns(runs);
+        // BUG-D1-MULTIDRAWING-HOST: when this paragraph hosts ≥2 drawing-
+        // bearing runs (side-by-side card layout), every textbox must attach
+        // to the SAME host paragraph just emitted by the `add p` above so the
+        // side-by-side relationship survives round-trip. A single drawing
+        // either reached the wrapper-coalesce shortcut (children.Count == 1)
+        // OR shares its source paragraph with sibling text/runs — in the
+        // latter case attaching to the host paragraph is still correct
+        // (preserves the inline relationship that the source had).
+        int drawingBearingCount = runs.Count(r =>
+        {
+            if (r.Type == "picture") return true;
+            if (r.Type != "run" && r.Type != "r") return false;
+            var probe = word.GetElementXml(r.Path);
+            return !string.IsNullOrEmpty(probe) && IsTextboxDrawing(probe);
+        });
+        string? sharedAttachPara = drawingBearingCount >= 2 ? paraTargetPath : null;
         foreach (var run in runs)
         {
             if (TryEmitBookmarkRun(run, paraTargetPath, items, ctx)) continue;
@@ -224,7 +240,7 @@ public static partial class WordBatchEmitter
             if (TryEmitPtabRun(run, paraTargetPath, items)) continue;
             if (TryEmitEquationRun(run, paraTargetPath, items)) continue;
             if (TryEmitFieldRun(run, paraTargetPath, items)) continue;
-            if (TryEmitPictureRun(word, run, paraTargetPath, parentPath, targetIndex, items, ctx)) continue;
+            if (TryEmitPictureRun(word, run, paraTargetPath, parentPath, targetIndex, items, ctx, sharedAttachPara)) continue;
             if (TryEmitNoteRefRun(run, paraTargetPath, items, ctx)) continue;
             EmitPlainOrHyperlinkRun(run, paraTargetPath, items);
         }
@@ -738,7 +754,7 @@ public static partial class WordBatchEmitter
         return true;
     }
 
-    private static bool TryEmitPictureRun(WordHandler word, DocumentNode run, string paraTargetPath, string parentPath, int targetIndex, List<BatchItem> items, BodyEmitContext? ctx)
+    private static bool TryEmitPictureRun(WordHandler word, DocumentNode run, string paraTargetPath, string parentPath, int targetIndex, List<BatchItem> items, BodyEmitContext? ctx, string? sharedAttachPara = null)
     {
         // Drawing-bearing runs surface as type="picture" regardless of
         // whether the Drawing wraps an image (Blip) or a chart (c:chart).
@@ -757,7 +773,7 @@ public static partial class WordBatchEmitter
             var probeXml = word.GetElementXml(run.Path);
             if (string.IsNullOrEmpty(probeXml)) return false;
             if (!IsTextboxDrawing(probeXml)) return false;
-            if (TryEmitTextbox(word, run, probeXml, parentPath, items, ctx))
+            if (TryEmitTextbox(word, run, probeXml, parentPath, items, ctx, sharedAttachPara))
                 return true;
             // AlternateContent-wrapped non-textbox shapes (rare) fall back to
             // a raw-set append, mirroring the original drawing-fallback path.
@@ -823,7 +839,7 @@ public static partial class WordBatchEmitter
         var rawXml = word.GetElementXml(run.Path);
         if (!string.IsNullOrEmpty(rawXml) && IsTextboxDrawing(rawXml))
         {
-            if (TryEmitTextbox(word, run, rawXml, parentPath, items, ctx))
+            if (TryEmitTextbox(word, run, rawXml, parentPath, items, ctx, sharedAttachPara))
                 return true;
         }
         if (!string.IsNullOrEmpty(rawXml) &&
@@ -860,7 +876,8 @@ public static partial class WordBatchEmitter
     /// raw drawing XML so the rebuilt textbox keeps its layout.
     /// </summary>
     private static bool TryEmitTextbox(WordHandler word, DocumentNode run, string rawXml,
-                                       string parentPath, List<BatchItem> items, BodyEmitContext? ctx)
+                                       string parentPath, List<BatchItem> items, BodyEmitContext? ctx,
+                                       string? attachParaPath = null)
     {
         if (ctx == null) return false;
 
@@ -869,6 +886,15 @@ public static partial class WordBatchEmitter
         // Other parents fall through to the raw-set append.
         string hostPath = parentPath;
         if (!IsTextboxHostPath(hostPath)) return false;
+
+        // BUG-D1-MULTIDRAWING-HOST: when N textboxes share a source
+        // paragraph (side-by-side card layout), attach each to the same
+        // already-emitted host paragraph (attachParaPath = /body/p[last()])
+        // instead of /body — otherwise AddTextbox creates a fresh host per
+        // textbox and the side-by-side layout fans out into N stacked
+        // paragraphs. The textbox INDEX still scopes to hostPath so
+        // /body/textbox[K] addressing remains continuous across the doc.
+        string emitParent = attachParaPath ?? hostPath;
 
         // Allocate next 1-based textbox index for this host.
         int n = ctx.TextboxCounters.TryGetValue(hostPath, out var prev) ? prev + 1 : 1;
@@ -926,7 +952,7 @@ public static partial class WordBatchEmitter
         items.Add(new BatchItem
         {
             Command = "add",
-            Parent = hostPath,
+            Parent = emitParent,
             Type = "textbox",
             Props = props.Count > 0 ? props : null
         });

@@ -1552,9 +1552,19 @@ public partial class WordHandler
 
     private string AddTextbox(OpenXmlElement parent, string parentPath, int? index, Dictionary<string, string> properties)
     {
+        // BUG-D1-MULTIDRAWING-HOST: a paragraph parent means "attach the
+        // textbox drawing to this existing paragraph" instead of creating a
+        // fresh host. Used by the dump emitter when N textboxes share one
+        // source paragraph (side-by-side card layout) — we want them all
+        // anchored on the same paragraph, not stacked across N paragraphs.
+        Paragraph? attachToPara = parent as Paragraph;
         // Resolve target container: body is the canonical anchor; cell/header/
         // footer are also legal (they all hold block-flow paragraphs).
-        var (host, hostRoot) = ResolveDrawingHost(parent, parentPath);
+        // When attachToPara is set, the indexing host is the paragraph's
+        // ancestor body/cell/header/footer — textbox index stays continuous.
+        var (host, hostRoot) = attachToPara != null
+            ? ResolveDrawingHostFromParagraph(attachToPara, parentPath)
+            : ResolveDrawingHost(parent, parentPath);
         long cxEmu = ParseDrawingSize(properties.GetValueOrDefault("width"), defaultEmu: 2_286_000);  // ~6cm
         long cyEmu = ParseDrawingSize(properties.GetValueOrDefault("height"), defaultEmu: 914_400);   // ~2.4cm
         string wrap = properties.GetValueOrDefault("wrap", "square").ToLowerInvariant();
@@ -1590,15 +1600,45 @@ public partial class WordHandler
 
         var drawing = ParseDrawingFromXml(drawingXml);
         var run = new Run(drawing);
-        var newPara = new Paragraph(run);
-        AssignParaId(newPara);
-        InsertAtIndexOrAppend(host, newPara, index);
+        Paragraph anchorPara;
+        if (attachToPara != null)
+        {
+            attachToPara.AppendChild(run);
+            anchorPara = attachToPara;
+        }
+        else
+        {
+            anchorPara = new Paragraph(run);
+            AssignParaId(anchorPara);
+            InsertAtIndexOrAppend(host, anchorPara, index);
+        }
 
         // Compute the 1-based textbox index across the host. Walk all
         // paragraphs in the host and count those that carry at least one
         // wp:anchor with wsp content — same selector as Get.
-        int txbxIdx = CountTextboxesInHost(host, newPara);
+        int txbxIdx = CountTextboxesInHost(host, anchorPara);
         return $"{hostRoot}/textbox[{txbxIdx}]";
+    }
+
+    private static (OpenXmlElement host, string hostRoot) ResolveDrawingHostFromParagraph(
+        Paragraph para, string parentPath)
+    {
+        // CONSISTENCY(d1-multi-drawing): a paragraph parent (e.g.
+        // /body/p[last()]) means "attach to this existing paragraph". Walk
+        // up to the nearest Body / TableCell / Header / Footer ancestor —
+        // that's the textbox-index host. hostRoot is parentPath stripped of
+        // the trailing "/p[..]" segment so /<hostRoot>/textbox[N] keeps its
+        // continuous numbering across the entire body/cell/header/footer.
+        var idx = parentPath.LastIndexOf("/p[", StringComparison.Ordinal);
+        var hostRoot = idx >= 0 ? parentPath.Substring(0, idx) : parentPath;
+        if (string.IsNullOrEmpty(hostRoot)) hostRoot = "/";
+        OpenXmlElement? anc = para.Parent;
+        while (anc != null && anc is not (Body or TableCell or Header or Footer))
+            anc = anc.Parent;
+        if (anc == null)
+            throw new ArgumentException(
+                $"Cannot attach textbox to {parentPath}: no body/cell/header/footer ancestor.");
+        return (anc, hostRoot);
     }
 
     private string AddShape(OpenXmlElement parent, string parentPath, int? index, Dictionary<string, string> properties)
