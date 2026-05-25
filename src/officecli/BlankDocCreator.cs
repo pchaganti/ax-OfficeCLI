@@ -102,6 +102,16 @@ public static class BlankDocCreator
 
         // Compatibility: do not compress punctuation spacing
         // Schema order: characterSpacingControl must come before compat in w:settings
+        //
+        // `compatibilityMode=15` is the Word 2013+ modern-mode flag.
+        // Without it, Word opens the doc in "Compatibility Mode" (the title
+        // bar shows the indicator and the UI silently disables several
+        // newer features). Word's own blank-document save always stamps
+        // this value; we did not, so every doc officecli generated looked
+        // like a Word 2010 file to readers. The other four compatSettings
+        // listed below are what current Word writes alongside; including
+        // them keeps the settings block byte-similar to Word's own output
+        // so subsequent edits by Word don't churn this block.
         var settings = new DocumentFormat.OpenXml.Wordprocessing.Settings(
             new CharacterSpacingControl { Val = CharacterSpacingValues.DoNotCompress },
             new Compatibility(
@@ -113,7 +123,31 @@ public static class BlankDocCreator
                 new AdjustLineHeightInTable(),
                 new CompatibilitySetting
                 {
+                    Name = new EnumValue<CompatSettingNameValues>(CompatSettingNameValues.CompatibilityMode),
+                    Val = new StringValue("15"),
+                    Uri = new StringValue("http://schemas.microsoft.com/office/word")
+                },
+                new CompatibilitySetting
+                {
+                    Name = new EnumValue<CompatSettingNameValues>(CompatSettingNameValues.OverrideTableStyleFontSizeAndJustification),
+                    Val = new StringValue("1"),
+                    Uri = new StringValue("http://schemas.microsoft.com/office/word")
+                },
+                new CompatibilitySetting
+                {
+                    Name = new EnumValue<CompatSettingNameValues>(CompatSettingNameValues.EnableOpenTypeFeatures),
+                    Val = new StringValue("1"),
+                    Uri = new StringValue("http://schemas.microsoft.com/office/word")
+                },
+                new CompatibilitySetting
+                {
                     Name = new EnumValue<CompatSettingNameValues>(CompatSettingNameValues.DoNotFlipMirrorIndents),
+                    Val = new StringValue("1"),
+                    Uri = new StringValue("http://schemas.microsoft.com/office/word")
+                },
+                new CompatibilitySetting
+                {
+                    Name = new EnumValue<CompatSettingNameValues>(CompatSettingNameValues.DifferentiateMultirowTableHeaders),
                     Val = new StringValue("1"),
                     Uri = new StringValue("http://schemas.microsoft.com/office/word")
                 }
