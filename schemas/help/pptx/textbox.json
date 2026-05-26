@@ -65,33 +65,35 @@
     },
     "size": {
       "type": "font-size",
-      "description": "font size",
+      "description": "font size — Add/Set forwards to the first run; Get exposes the inheritance-resolved value as effective.size, not bare size.",
       "aliases": ["fontsize"],
-      "add": true, "set": true, "get": true,
+      "add": true, "set": true, "get": false,
       "examples": ["--prop size=14", "--prop size=14pt", "--prop size=10.5pt"],
-      "readback": "unit-qualified string, e.g. \"14pt\"",
+      "readback": "n/a at shape level — read effective.size on the shape, or size on the inner run",
       "enforcement": "strict"
     },
     "bold": {
       "type": "bool",
-      "add": true, "set": true, "get": true,
+      "description": "Add/Set forwards to the first run; Get does not surface bold at the shape level.",
+      "add": true, "set": true, "get": false,
       "examples": ["--prop bold=true"],
-      "readback": "true | false",
+      "readback": "n/a at shape level — read bold on the inner run",
       "enforcement": "strict"
     },
     "italic": {
       "type": "bool",
-      "add": true, "set": true, "get": true,
+      "description": "Add/Set forwards to the first run; Get does not surface italic at the shape level.",
+      "add": true, "set": true, "get": false,
       "examples": ["--prop italic=true"],
-      "readback": "true | false",
+      "readback": "n/a at shape level — read italic on the inner run",
       "enforcement": "strict"
     },
     "color": {
       "type": "color",
-      "description": "text color",
-      "add": true, "set": true, "get": true,
+      "description": "text color — Add/Set forwards to the first run; Get exposes the inheritance-resolved value as effective.color, not bare color.",
+      "add": true, "set": true, "get": false,
       "examples": ["--prop color=0000FF", "--prop color=#0000FF"],
-      "readback": "#RRGGBB (uppercase)",
+      "readback": "n/a at shape level — read effective.color on the shape, or color on the inner run",
       "enforcement": "strict"
     },
     "fill": {

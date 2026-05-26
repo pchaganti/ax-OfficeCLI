@@ -20,6 +20,15 @@
   "note": "Positional /shape[N] enumerates ALL shapes on the slide including layout-inherited placeholders — new shapes typically land at the end, not at /shape[1]. `add` echoes the canonical /shape[@id=ID] path; prefer that for follow-up Set/Get. effective.* keys (direction, size, font, color, bold) are read-only inheritance-resolved values walked up the placeholder→layout→master→defaults chain; suppressed when the corresponding direct key is set. Each pairs with effective.*.src naming the writing layer.",
   "extends": "_shared/shape",
   "properties": {
+    "size": {
+      "type": "font-size",
+      "description": "font size — Add/Set forwards to the first run; Get exposes the inheritance-resolved value as effective.size, not bare size.",
+      "aliases": ["fontSize", "fontsize", "font.size"],
+      "add": true, "set": true, "get": false,
+      "examples": ["--prop size=14", "--prop size=14pt", "--prop size=10.5pt"],
+      "readback": "n/a at shape level — read effective.size on the shape, or size on the inner run",
+      "enforcement": "strict"
+    },
     "evaluated": {
       "type": "bool",
       "description": "cross-handler protocol flag — emitted on shapes whose body contains an <a:fld> dynamic field (slide number, date-time, footer, etc.). True when every dynamic field has cached text the renderer can show; false when at least one is empty (view text substitutes #OCLI_NOTEVAL!{type}; view issues emits subtype slide_field_not_evaluated). PowerPoint always re-renders fields on open, so there is no cache_stale equivalent. Read this via get --json instead of pattern-matching the sentinel.",

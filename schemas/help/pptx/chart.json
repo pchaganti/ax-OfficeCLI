@@ -107,6 +107,12 @@
     },
     "chartType": {
       "type": "enum",
+      "values": [
+        "bar", "column", "line", "pie", "doughnut", "area",
+        "scatter", "bubble", "radar", "stock", "combo",
+        "waterfall", "funnel", "treemap", "sunburst",
+        "boxWhisker", "histogram", "pareto"
+      ],
       "description": "pptx override: chartType is consumed by AddChart (creation only). Switching chart type post-creation is not supported — rebuild the chart with the new type.",
       "aliases": ["type"],
       "add": true,

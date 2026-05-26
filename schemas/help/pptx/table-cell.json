@@ -16,9 +16,17 @@
       "/slide[N]/table[M]/tr[R]/tc[C]"
     ]
   },
-  "note": "Appending a cell to a row is unusual — normally cells are seeded at row-Add time. This op exists for completeness.",
+  "note": "Appending a cell to a row is unusual — normally cells are seeded at row-Add time. This op exists for completeness; pptx tables are strictly rectangular, so a standalone Add cell only succeeds when the row currently has fewer cells than the table grid (an OOXML-illegal state).",
   "extends": "_shared/table-cell",
   "properties": {
+    "text": {
+      "type": "string",
+      "description": "single-run text content. pptx-only override: prefer set tc[C] for cell text in pptx; standalone Add cell rarely has room to land within a rectangular table grid. Set + Get unchanged.",
+      "add": false, "set": true, "get": true,
+      "examples": ["--prop text=\"Hello\""],
+      "readback": "string concatenated from all <a:r>/<a:t> in the cell paragraphs",
+      "enforcement": "strict"
+    },
     "colspan": {
       "type": "number",
       "description": "horizontal cell span (a:tc @gridSpan). Surfaces only when the cell spans more than one column. Read-only — set spans by structuring the table at Add time.",

@@ -5,13 +5,12 @@
   "properties": {
     "cols": {
       "type": "int",
-      "description": "override column count for the new row (defaults to table grid column count).",
+      "description": "asserts the new row's cell count matches the table grid. The row is structurally locked to the existing <a:tblGrid> — to widen, add a column first (or set gridSpan on cell 1 to merge into a wider span). Defaults to the existing grid column count when omitted.",
       "add": true,
       "set": false,
       "get": false,
       "examples": [
-        "--prop cols=4",
-        "--prop cols=3"
+        "--prop cols=2"
       ],
       "readback": "n/a (structural — cell count surfaces via DocumentNode.Children, not Format)",
       "enforcement": "strict"
