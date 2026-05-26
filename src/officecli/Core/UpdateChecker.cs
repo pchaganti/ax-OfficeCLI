@@ -21,9 +21,12 @@ namespace OfficeCli.Core;
 /// </summary>
 internal static class UpdateChecker
 {
-    internal static readonly string ConfigDir = Path.Combine(
+    // Resolved per-call rather than cached so tests can override $HOME between
+    // cases without restarting the process. Production behavior is unchanged —
+    // $HOME never moves under a running officecli invocation.
+    internal static string ConfigDir => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".officecli");
-    private static readonly string ConfigPath = Path.Combine(ConfigDir, "config.json");
+    private static string ConfigPath => Path.Combine(ConfigDir, "config.json");
     private const string GitHubRepo = "iOfficeAI/OfficeCLI";
     // PrimaryBase is the project-controlled mirror (Cloudflare-fronted nginx on
     // a VPS that periodically syncs github releases). FallbackBase is the
@@ -41,11 +44,9 @@ internal static class UpdateChecker
     /// </summary>
     internal static void CheckInBackground()
     {
-        try
-        {
-            Directory.CreateDirectory(ConfigDir);
-        }
-        catch { return; }
+        // Best-effort: SaveConfig falls back to $TMPDIR inside containers when
+        // home is read-only, so a CreateDirectory failure here is not fatal.
+        try { Directory.CreateDirectory(ConfigDir); } catch { /* continue */ }
 
         // Apply pending update from previous background check (.update file).
         // After this returns, the current process image is still the OLD binary;
@@ -77,7 +78,9 @@ internal static class UpdateChecker
         {
             // Update timestamp immediately to prevent concurrent spawns
             config.LastUpdateCheck = DateTime.UtcNow;
-            try { SaveConfig(config); } catch { }
+            // No persisted timestamp → next invocation thinks stale → respawns.
+            // Bail rather than burn an HTTP roundtrip we'll be repeating forever.
+            if (!SaveConfig(config)) return;
             SpawnRefreshProcess();
         }
     }
@@ -107,7 +110,7 @@ internal static class UpdateChecker
             using var client = new HttpClient(handler);
             // UA carries running version so the mirror can produce a version
             // distribution from access logs without any extra telemetry.
-            client.DefaultRequestHeaders.Add("User-Agent", $"OfficeCLI-UpdateChecker/{currentVersion}");
+            AddUserAgent(client, currentVersion);
             client.Timeout = TimeSpan.FromSeconds(10);
 
             string? latestVersion = null;
@@ -155,7 +158,7 @@ internal static class UpdateChecker
             // bytes while /releases/latest already reports v1.0.96. Works
             // identically on the github fallback (canonical github URL form).
             using var downloadClient = new HttpClient();
-            downloadClient.DefaultRequestHeaders.Add("User-Agent", $"OfficeCLI-UpdateChecker/{currentVersion}");
+            AddUserAgent(downloadClient, currentVersion);
             downloadClient.Timeout = TimeSpan.FromMinutes(5);
 
             var downloadUrl = $"{resolvedBase}/releases/download/v{latestVersion}/{assetName}";
@@ -477,20 +480,80 @@ internal static class UpdateChecker
 
     internal static AppConfig LoadConfig()
     {
-        if (!File.Exists(ConfigPath)) return new AppConfig();
-        try
+        foreach (var path in ConfigPathCandidates())
         {
-            var json = File.ReadAllText(ConfigPath);
-            return JsonSerializer.Deserialize(json, AppConfigContext.Default.AppConfig) ?? new AppConfig();
+            if (!File.Exists(path)) continue;
+            try
+            {
+                var json = File.ReadAllText(path);
+                return JsonSerializer.Deserialize(json, AppConfigContext.Default.AppConfig)
+                       ?? new AppConfig();
+            }
+            catch { continue; }
         }
-        catch { return new AppConfig(); }
+        return new AppConfig();
     }
 
-    internal static void SaveConfig(AppConfig config)
+    /// <summary>Persist <paramref name="config"/>. Returns false when no
+    /// candidate path is writable (e.g. read-only home outside a container,
+    /// or read-only home + read-only tmp inside one). Callers should treat
+    /// false as "we can't throttle next invocation" and skip work that would
+    /// otherwise repeat on every command.</summary>
+    internal static bool SaveConfig(AppConfig config)
     {
-        Directory.CreateDirectory(ConfigDir);
         var json = JsonSerializer.Serialize(config, AppConfigContext.Default.AppConfig);
-        File.WriteAllText(ConfigPath, json);
+        foreach (var path in ConfigPathCandidates())
+        {
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+                File.WriteAllText(path, json);
+                return true;
+            }
+            catch { continue; }
+        }
+        return false;
+    }
+
+    /// <summary>Order: $HOME first; $TMPDIR appended only when running in a
+    /// container. The /tmp fallback exists for read-only-rootfs containers
+    /// (docker --read-only, K8s readOnlyRootFilesystem, Lambda, Cloud Run)
+    /// where ~/.officecli can't be written but /tmp is a tmpfs. Iteration
+    /// stops at the first success — non-container hosts never touch /tmp,
+    /// and containers with writable home never touch /tmp either.</summary>
+    private static IEnumerable<string> ConfigPathCandidates()
+    {
+        yield return ConfigPath;
+        if (IsInContainer())
+            yield return Path.Combine(Path.GetTempPath(), "officecli-config.json");
+    }
+
+    /// <summary>True when running inside docker/k8s/podman or a major
+    /// serverless runtime. Used both to enable the /tmp config fallback and
+    /// to tag the UpdateChecker User-Agent with <c>(container)</c>.</summary>
+    private static bool IsInContainer()
+    {
+        if (Environment.GetEnvironmentVariable("KUBERNETES_SERVICE_HOST") != null) return true;
+        if (Environment.GetEnvironmentVariable("AWS_LAMBDA_FUNCTION_NAME") != null) return true;
+        if (Environment.GetEnvironmentVariable("K_SERVICE") != null) return true;          // Cloud Run
+        if (Environment.GetEnvironmentVariable("FUNCTION_TARGET") != null) return true;    // GCP Functions
+        if (OperatingSystem.IsLinux())
+        {
+            if (File.Exists("/.dockerenv"))    return true;
+            if (File.Exists("/.containerenv")) return true;  // Podman
+        }
+        return false;
+    }
+
+    /// <summary>UA shape: <c>OfficeCLI/{ver}</c>, optionally followed by
+    /// <c>(container)</c>. Server-side log analytics use the OfficeCLI/
+    /// prefix to identify update-check traffic and the comment to split
+    /// container vs bare-metal device counts.</summary>
+    private static void AddUserAgent(HttpClient client, string currentVersion)
+    {
+        var ua = $"OfficeCLI/{currentVersion}";
+        if (IsInContainer()) ua += " (container)";
+        client.DefaultRequestHeaders.Add("User-Agent", ua);
     }
 
     /// <summary>
