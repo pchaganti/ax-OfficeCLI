@@ -65,7 +65,10 @@ public partial class PowerPointHandler
             var allSlides = pres.PresentationPart?.SlideParts.ToList()
                 ?? throw new InvalidOperationException("PresentationPart missing");
             if (slideIdx < 1 || slideIdx > allSlides.Count)
-                throw new ArgumentException($"Slide jump target out of range: slide[{slideIdx}] (total {allSlides.Count}).");
+                throw new ArgumentException(
+                    $"Slide jump target out of range: slide[{slideIdx}] (total {allSlides.Count}). " +
+                    $"A slide-jump link can only target a slide that already exists — add slide[{slideIdx}] " +
+                    "first, then set the link (forward references are not buffered outside batch mode).");
             var targetSlide = allSlides[slideIdx - 1];
 
             // Reuse an existing slide-to-slide relationship if present
