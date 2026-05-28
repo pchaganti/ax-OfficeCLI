@@ -46,6 +46,71 @@ public static class ModernFunctionQualifier
         "FILTER",
     };
 
+    // Subset of modern functions that produce spilling dynamic-array results.
+    // Their CellFormula MUST carry t="array" + ref="<cellRef>" or Excel 365
+    // rejects the file (0x800A03EC). LET/LAMBDA can return arrays but are
+    // commonly used for scalars too — include them when the spill metadata
+    // is harmless to non-spilling outputs (Excel honors t="array" with ref=
+    // pointing at the single anchor cell even when the formula resolves to
+    // a single value). Source: Microsoft 365 dynamic-array catalogue.
+    private static readonly HashSet<string> DynamicArrayFunctions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "FILTER", "SORT", "SORTBY", "UNIQUE", "SEQUENCE", "RANDARRAY",
+        "XLOOKUP", "XMATCH",
+        "LET", "LAMBDA",
+        "TAKE", "DROP", "CHOOSECOLS", "CHOOSEROWS",
+        "TOCOL", "TOROW", "WRAPCOLS", "WRAPROWS", "EXPAND",
+        "TEXTSPLIT",
+        "ANCHORARRAY",
+    };
+
+    /// <summary>
+    /// True when the formula calls any function whose result must be written
+    /// with <c>t="array"</c> + <c>ref="&lt;cellRef&gt;"</c> on the cell-level
+    /// CellFormula element — the spill metadata Excel 365 requires for
+    /// dynamic-array functions. Operates on the raw formula (no leading '=').
+    /// Quoted string literals are skipped so a SORT call inside text doesn't
+    /// trigger a false positive.
+    /// </summary>
+    public static bool IsDynamicArrayFormula(string formula)
+    {
+        if (string.IsNullOrEmpty(formula)) return false;
+        int i = 0;
+        while (i < formula.Length)
+        {
+            char c = formula[i];
+            if (c == '"')
+            {
+                i++;
+                while (i < formula.Length)
+                {
+                    if (formula[i] == '"')
+                    {
+                        if (i + 1 < formula.Length && formula[i + 1] == '"') { i += 2; continue; }
+                        i++; break;
+                    }
+                    i++;
+                }
+                continue;
+            }
+            if (IsIdentStart(c) && (i == 0 || !IsIdentPrev(formula[i - 1])))
+            {
+                int start = i;
+                while (i < formula.Length && IsIdentCont(formula[i])) i++;
+                int j = i;
+                while (j < formula.Length && formula[j] == ' ') j++;
+                if (j < formula.Length && formula[j] == '(')
+                {
+                    var name = formula.Substring(start, i - start);
+                    if (DynamicArrayFunctions.Contains(name)) return true;
+                }
+                continue;
+            }
+            i++;
+        }
+        return false;
+    }
+
     // Match a bare function name (identifier followed by '('), not preceded by
     // a '.' or alphanumeric (so _xlfn.SEQUENCE and MYSEQUENCE are skipped),
     // and not inside a quoted string literal.

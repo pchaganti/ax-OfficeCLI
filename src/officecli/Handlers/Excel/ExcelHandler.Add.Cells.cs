@@ -458,7 +458,18 @@ public partial class ExcelHandler
                 throw new ArgumentException("Literal braces '{...}' around a formula create an Excel-rejected file. Use --prop arrayformula=... (without braces) to declare a CSE array formula.");
             RejectCrossWorkbookFormula(fTrim);
             ValidateFormulaCellRefs(fTrim);
-            cell.CellFormula = new CellFormula(Core.PivotTableHelper.SanitizeXmlText(Core.ModernFunctionQualifier.Qualify(Core.ModernFunctionQualifier.AutoQuoteSheetRefs(fTrim))));
+            var addCellFormula = new CellFormula(Core.PivotTableHelper.SanitizeXmlText(Core.ModernFunctionQualifier.Qualify(Core.ModernFunctionQualifier.AutoQuoteSheetRefs(fTrim))));
+            // Dynamic-array functions (SORT/FILTER/UNIQUE/SEQUENCE/XLOOKUP/LET/etc.)
+            // must carry t="array" ref="<cellRef>" on the cell-level CellFormula —
+            // without it Excel 365 rejects the file (0x800A03EC) on open. The
+            // anchor reference is the single cell being written; Excel spills
+            // adjacent cells at runtime.
+            if (Core.ModernFunctionQualifier.IsDynamicArrayFormula(fTrim) && cell.CellReference?.Value != null)
+            {
+                addCellFormula.FormulaType = CellFormulaValues.Array;
+                addCellFormula.Reference = cell.CellReference.Value;
+            }
+            cell.CellFormula = addCellFormula;
             cell.CellValue = null;
         }
         // CE1: allow `runs=<json>` without an explicit `type=richtext`.

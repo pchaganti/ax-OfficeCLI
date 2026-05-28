@@ -507,7 +507,17 @@ public partial class ExcelHandler
                     // from formula text before assignment. CellValue text gets sanitized
                     // elsewhere; without symmetric handling here, save throws
                     // ArgumentException("invalid character") from XmlUtf8RawTextWriter.
-                    cell.CellFormula = new CellFormula(Core.PivotTableHelper.SanitizeXmlText(Core.ModernFunctionQualifier.Qualify(Core.ModernFunctionQualifier.AutoQuoteSheetRefs(value.TrimStart('=')))));
+                    var setFormulaText = value.TrimStart('=');
+                    var setCellFormula = new CellFormula(Core.PivotTableHelper.SanitizeXmlText(Core.ModernFunctionQualifier.Qualify(Core.ModernFunctionQualifier.AutoQuoteSheetRefs(setFormulaText))));
+                    // Dynamic-array spill metadata — see Add.Cells.cs for rationale.
+                    // Without t="array" ref="<cellRef>" Excel 365 rejects the file
+                    // (0x800A03EC) when the formula calls SORT/FILTER/UNIQUE/etc.
+                    if (Core.ModernFunctionQualifier.IsDynamicArrayFormula(setFormulaText) && cell.CellReference?.Value != null)
+                    {
+                        setCellFormula.FormulaType = CellFormulaValues.Array;
+                        setCellFormula.Reference = cell.CellReference.Value;
+                    }
+                    cell.CellFormula = setCellFormula;
                     // Try to evaluate and cache the result immediately
                     var evalSheetData = GetSheet(worksheet).GetFirstChild<SheetData>();
                     var evaluator = new Core.FormulaEvaluator(evalSheetData!, _doc.WorkbookPart);
