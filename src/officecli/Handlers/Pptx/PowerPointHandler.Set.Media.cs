@@ -262,7 +262,12 @@ public partial class PowerPointHandler
                 case "shadow":
                 {
                     var spPrSh = pic.ShapeProperties ?? (pic.ShapeProperties = new ShapeProperties());
-                    ApplyShadow(spPrSh, value);
+                    // Mirror the shape shadow path (ShapeProperties.cs): shadow=true is a
+                    // boolean enable, not a color — normalize to a default black shadow
+                    // before ApplyShadow, which otherwise rejects "true" as an invalid color.
+                    var shadowVal = value;
+                    if (IsValidBooleanString(shadowVal) && IsTruthy(shadowVal)) shadowVal = "000000";
+                    ApplyShadow(spPrSh, shadowVal);
                     break;
                 }
                 case "glow":
