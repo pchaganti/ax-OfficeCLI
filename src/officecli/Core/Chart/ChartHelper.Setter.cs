@@ -3098,6 +3098,38 @@ internal static partial class ChartHelper
         }
         if (parts.Length > 3 && !string.IsNullOrEmpty(parts[3]))
             fontName = parts[3];
+        // CONSISTENCY(font-dash-form): mirror BuildDefaultRunPropertiesFromCompoundSpec —
+        // accept the dash form "name-size" (e.g. "Verdana-14") when the colon form has
+        // no parseable size. Previously parts[0]="Verdana-14" failed TryParse and we
+        // silently kept fontSize=1000 with no typeface written.
+        if (parts.Length == 1 && fontName == null)
+        {
+            var raw = parts[0];
+            var dashIdx = raw.LastIndexOf('-');
+            if (dashIdx > 0 && dashIdx < raw.Length - 1)
+            {
+                var maybeName = raw[..dashIdx];
+                var maybeSize = raw[(dashIdx + 1)..];
+                if (maybeSize.EndsWith("pt", StringComparison.OrdinalIgnoreCase))
+                    maybeSize = maybeSize[..^2];
+                if (double.TryParse(maybeSize, System.Globalization.NumberStyles.Float,
+                        System.Globalization.CultureInfo.InvariantCulture, out var fs2))
+                {
+                    fontName = maybeName;
+                    fontSize = (int)System.Math.Round(fs2 * 100);
+                }
+                else
+                {
+                    fontName = raw;
+                }
+            }
+            else if (sizeStr.Length > 0 && !double.TryParse(sizeStr,
+                    System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out _))
+            {
+                fontName = raw;
+            }
+        }
 
         var defRp = new Drawing.DefaultRunProperties { FontSize = fontSize };
         if (bold) defRp.Bold = true;

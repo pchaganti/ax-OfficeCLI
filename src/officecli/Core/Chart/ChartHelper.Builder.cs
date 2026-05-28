@@ -1253,6 +1253,43 @@ internal static partial class ChartHelper
             ? (int)System.Math.Round(fs * 100) : 1000;
         var color = parts.Length > 1 ? parts[1] : null;
         var fontName = parts.Length > 2 ? parts[2] : null;
+        // CONSISTENCY(font-dash-form): when the spec has no colons and parts[0]
+        // didn't parse as a number, try the dash form "name-size" (e.g.
+        // "Arial-12", "Verdana-14") — what users naturally type when copying
+        // a CSS-style font shorthand. Previously this silently dropped both
+        // the typeface and the size (fontSize defaulted to 10pt, fontName=null,
+        // no <a:latin> written). If there's no parseable size suffix we still
+        // accept the bare typeface so `axisFont=Arial` writes the font.
+        if (parts.Length == 1 && fontName == null)
+        {
+            var raw = parts[0];
+            var dashIdx = raw.LastIndexOf('-');
+            if (dashIdx > 0 && dashIdx < raw.Length - 1)
+            {
+                var maybeName = raw[..dashIdx];
+                var maybeSize = raw[(dashIdx + 1)..];
+                if (maybeSize.EndsWith("pt", System.StringComparison.OrdinalIgnoreCase))
+                    maybeSize = maybeSize[..^2];
+                if (double.TryParse(maybeSize, System.Globalization.NumberStyles.Float,
+                        System.Globalization.CultureInfo.InvariantCulture, out var fs2))
+                {
+                    fontName = maybeName;
+                    fontSize = (int)System.Math.Round(fs2 * 100);
+                }
+                else
+                {
+                    // Bare typeface ("Arial") — keep default size, set typeface.
+                    fontName = raw;
+                }
+            }
+            else if (sizeStr.Length > 0 && !double.TryParse(sizeStr,
+                    System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out _))
+            {
+                // No dash, parts[0] isn't numeric → treat as bare typeface.
+                fontName = raw;
+            }
+        }
 
         var defRp = new Drawing.DefaultRunProperties { FontSize = fontSize };
         if (!string.IsNullOrEmpty(color))
