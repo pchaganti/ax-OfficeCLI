@@ -124,7 +124,7 @@ officecli remove "$DOCX" '/body/p[10]' \
     --prop revision.date=2026-05-25T10:20:00Z
 
 # 2c. pPrChange — set a paragraph-level property (alignment here) + revision.author.
-#     Surfaces in query as revision.type=paragraphChange.
+#     Surfaces in query as revision.type=paragraph.
 officecli add "$DOCX" /body --type paragraph --prop text="This paragraph had alignment changed (pPrChange) by Carol."
 officecli set "$DOCX" '/body/p[11]' \
     --prop align=center \
