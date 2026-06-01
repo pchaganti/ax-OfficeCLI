@@ -378,17 +378,27 @@ public partial class PowerPointHandler
         }
         else if (parts.Length == 4)
         {
-            var insets = new int[4];
+            // CONSISTENCY(margin-sparse-roundtrip): "-" placeholder means
+            // "leave this side unset" so dump->replay can preserve sparse
+            // source bodyPr (e.g. `lIns=180000 tIns=180000 rIns=150000`
+            // with NO bIns must NOT round-trip into a fabricated
+            // bIns=45720 default). NodeBuilder emits the dash form when
+            // any side is null on the source bodyPr.
             for (int i = 0; i < 4; i++)
             {
-                insets[i] = Core.EmuConverter.ParseEmuAsInt(parts[i].Trim());
-                if (insets[i] > MaxInsetEmu)
-                    throw new ArgumentException($"Inset value {insets[i]} EMU exceeds maximum allowed ({MaxInsetEmu} EMU / ~142cm).");
+                var raw = parts[i].Trim();
+                if (raw == "-" || raw.Length == 0) continue;
+                var v = Core.EmuConverter.ParseEmuAsInt(raw);
+                if (v > MaxInsetEmu)
+                    throw new ArgumentException($"Inset value {v} EMU exceeds maximum allowed ({MaxInsetEmu} EMU / ~142cm).");
+                switch (i)
+                {
+                    case 0: bodyPr.LeftInset = v; break;
+                    case 1: bodyPr.TopInset = v; break;
+                    case 2: bodyPr.RightInset = v; break;
+                    case 3: bodyPr.BottomInset = v; break;
+                }
             }
-            bodyPr.LeftInset = insets[0];
-            bodyPr.TopInset = insets[1];
-            bodyPr.RightInset = insets[2];
-            bodyPr.BottomInset = insets[3];
         }
         else
         {

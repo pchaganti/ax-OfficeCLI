@@ -1171,6 +1171,21 @@ public partial class PowerPointHandler
                     break;
                 }
 
+                case "wrap" or "wordwrap":
+                {
+                    // Shape-level <a:bodyPr @wrap = "square" | "none">.
+                    // NodeBuilder surfaces this as Format["wrap"] = true|false,
+                    // mirror the table-cell wrap case higher up. Without a
+                    // shape-level handler, dump->replay silently lost
+                    // `wrap="square"` on every textbox emit.
+                    var bodyPr = shape.TextBody?.Elements<Drawing.BodyProperties>().FirstOrDefault();
+                    if (bodyPr == null) { unsupported.Add(key); break; }
+                    bodyPr.Wrap = IsTruthy(value)
+                        ? Drawing.TextWrappingValues.Square
+                        : Drawing.TextWrappingValues.None;
+                    break;
+                }
+
                 case "autofit":
                 {
                     var bodyPr = shape.TextBody?.Elements<Drawing.BodyProperties>().FirstOrDefault();

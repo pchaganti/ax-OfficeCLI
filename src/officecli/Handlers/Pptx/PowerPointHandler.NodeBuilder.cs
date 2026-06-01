@@ -1244,7 +1244,15 @@ public partial class PowerPointHandler
                 if (lIns == tIns && tIns == rIns && rIns == bIns && lIns != null)
                     node.Format["margin"] = FormatEmu(lIns.Value);
                 else
-                    node.Format["margin"] = $"{FormatEmu(lIns ?? 91440)},{FormatEmu(tIns ?? 45720)},{FormatEmu(rIns ?? 91440)},{FormatEmu(bIns ?? 45720)}";
+                    // CONSISTENCY(margin-sparse-roundtrip): emit "-" for any
+                    // side absent on the source bodyPr instead of substituting
+                    // the PowerPoint default (91440/45720). ApplyTextMargin's
+                    // 4-form path treats "-" as "leave unset" so dump->replay
+                    // preserves a source bodyPr like lIns/tIns/rIns-only
+                    // without fabricating a default bIns="45720".
+                    node.Format["margin"] = string.Join(",",
+                        new[] { lIns, tIns, rIns, bIns }.Select(
+                            v => v != null && v.HasValue ? FormatEmu(v.Value) : "-"));
             }
 
             // Vertical alignment — map XML enum to user-friendly name.

@@ -751,6 +751,7 @@ public partial class PowerPointHandler
                       "textfill", "textgradient", "geometry",
                       "baseline", "superscript", "subscript",
                       "textwarp", "wordart", "autofit",
+                      "wrap", "wordwrap",
                       "lineopacity", "line.opacity",
                       "linegradient", "line.gradient",
                       // previously dropped silently — route through Set
