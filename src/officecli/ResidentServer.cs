@@ -1449,9 +1449,11 @@ public class ResidentServer : IDisposable
             // Surface unsupported-element warnings via stderr so the
             // envelope-builder in HandleClient picks them up as
             // envelope.warnings (matches non-resident dispatch in
-            // CommandBuilder.Dump.cs).
+            // CommandBuilder.Dump.cs). R12a aux-parts: include Reason so
+            // resident-routed callers see the same explanation as the
+            // direct path.
             foreach (var w in pWarnings)
-                Console.Error.WriteLine($"warning: skipped {w.Element} on {w.SlidePath}");
+                Console.Error.WriteLine($"warning: skipped {w.Element} on {w.SlidePath}: {w.Reason}");
         }
         else
         {

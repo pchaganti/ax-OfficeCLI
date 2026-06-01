@@ -147,6 +147,17 @@ public static partial class PptxBatchEmitter
         // may go stale on replay; UnsupportedWarning surfaces that risk.
         EmitPresentationExtras(ppt, items, ctx);
 
+        // R12a aux-parts: surface a warning per package part the dump surface
+        // does not round-trip (tableStyles, viewProps, handoutMasters,
+        // printerSettings, customXml, embedded fonts, programmability tags,
+        // user docProps). Silent data loss is worse than a noisy warning —
+        // the warning channel lets agents/users see exactly which content
+        // vanished on dump. Mirrors WordBatchEmitter's R11 aux-part scan.
+        // Scoped to full-document dumps only; the subtree EmitPptx overload
+        // intentionally omits sibling parts and would otherwise warn every
+        // time. See PptxBatchEmitter.AuxParts.cs.
+        EmitAuxiliaryPartsScan(ppt, ctx.Unsupported);
+
         return (items, ctx.Unsupported);
     }
 

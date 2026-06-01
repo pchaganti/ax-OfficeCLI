@@ -134,7 +134,11 @@ static partial class CommandBuilder
                         // Human-visible stderr line; resident's BuildWarnings
                         // also picks this up so resident-routed callers see
                         // an equivalent envelope.warnings entry.
-                        Console.Error.WriteLine($"warning: skipped {w.Element} on {w.SlidePath}");
+                        // R12a aux-parts: include the reason so the stderr line
+                        // carries the same explanation as the envelope-side
+                        // message above (per-slide and per-aux-part warnings
+                        // both go through this branch).
+                        Console.Error.WriteLine($"warning: skipped {w.Element} on {w.SlidePath}: {w.Reason}");
                     }
                 }
             }

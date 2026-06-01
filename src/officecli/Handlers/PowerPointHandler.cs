@@ -24,6 +24,68 @@ public partial class PowerPointHandler : IDocumentHandler
     /// </summary>
     internal bool Modified { get; set; }
 
+    /// <summary>
+    /// Enumerate every <see cref="OpenXmlPart"/> in the package (transitive
+    /// walk via the SDK's own <c>GetAllParts</c> extension) yielding each
+    /// part's zip-URI (<c>OpenXmlPart.Uri.OriginalString</c>). Used by the
+    /// batch emitter's auxiliary-parts scan to surface warnings for parts the
+    /// dump surface does not round-trip (tableStyles, viewProps,
+    /// handoutMasters, printerSettings, customXml, embedded fonts, tags,
+    /// user docProps). Mirrors <see cref="WordHandler.EnumeratePartUris"/>.
+    /// </summary>
+    internal IEnumerable<string> EnumeratePartUris()
+    {
+        // Two complementary sources (same rationale as WordHandler):
+        //   1. SDK part graph (GetAllParts) — only reachable via the
+        //      relationship graph; misses orphan parts but matches every
+        //      real pptx file produced by PowerPoint / python-pptx / WPS.
+        //   2. Raw zip entries — catches orphan parts dropped by failed
+        //      saves and anything the SDK refuses to surface.
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var part in _doc.GetAllParts())
+        {
+            var u = part.Uri.OriginalString;
+            if (seen.Add(u)) yield return u;
+        }
+        if (File.Exists(_filePath))
+        {
+            List<string> zipEntries;
+            try
+            {
+                using var fs = File.Open(_filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                using var zip = new System.IO.Compression.ZipArchive(fs, System.IO.Compression.ZipArchiveMode.Read);
+                zipEntries = zip.Entries.Select(e => e.FullName).ToList();
+            }
+            catch { yield break; }
+            foreach (var name in zipEntries)
+            {
+                if (string.IsNullOrEmpty(name)) continue;
+                var u = name.StartsWith("/") ? name : "/" + name;
+                if (seen.Add(u)) yield return u;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Surface the <c>docProps/custom.xml</c> property names (if any).
+    /// Used by the batch emitter to detect user-defined custom document
+    /// properties whose values are silently dropped by dump (only
+    /// <c>OfficeCLI.*</c> values are auto-restamped on save; user-authored
+    /// props vanish). Mirrors <see cref="WordHandler.EnumerateCustomDocPropertyNames"/>.
+    /// </summary>
+    internal IReadOnlyList<string> EnumerateCustomDocPropertyNames()
+    {
+        var part = _doc.CustomFilePropertiesPart;
+        if (part?.Properties == null) return Array.Empty<string>();
+        var names = new List<string>();
+        foreach (var p in part.Properties.Elements<DocumentFormat.OpenXml.CustomProperties.CustomDocumentProperty>())
+        {
+            var n = p.Name?.Value;
+            if (!string.IsNullOrEmpty(n)) names.Add(n!);
+        }
+        return names;
+    }
+
     // Backing FileStream when we open via stream (shared-read mode). null
     // when the package owns its own file handle via PresentationDocument.Open(path).
     private FileStream? _backingStream;
