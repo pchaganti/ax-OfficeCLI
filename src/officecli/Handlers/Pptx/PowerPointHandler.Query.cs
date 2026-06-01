@@ -1432,7 +1432,7 @@ public partial class PowerPointHandler
                 or "equation" or "math" or "formula"
                 or "table" or "chart" or "placeholder" or "notes"
                 or "connector" or "connection"
-                or "group" or "zoom"
+                or "group" or "zoom" or "model3d" or "3dmodel"
                 or "slidemaster" or "slidelayout"
                 or "theme"
                 or "media" or "image"
@@ -1635,7 +1635,7 @@ public partial class PowerPointHandler
                 mediaSlideNum++;
                 var shapeTree = GetSlide(slidePart).CommonSlideData?.ShapeTree;
                 if (shapeTree == null) continue;
-                int picIdx = 0;
+                int picIdx = 0, videoIdx = 0, audioIdx = 0;
                 foreach (var pic in shapeTree.Elements<Picture>())
                 {
                     picIdx++;
@@ -1643,13 +1643,50 @@ public partial class PowerPointHandler
                     var isVideo = picNvPr?.GetFirstChild<Drawing.VideoFromFile>() != null;
                     var isAudio = picNvPr?.GetFirstChild<Drawing.AudioFromFile>() != null;
                     var mediaType = isVideo ? "video" : isAudio ? "audio" : "picture";
+                    if (isVideo) videoIdx++;
+                    else if (isAudio) audioIdx++;
                     // For "image" selector, skip video/audio
                     if (rawType == "image" && mediaType != "picture") continue;
                     var picNode = PictureToNode(pic, mediaSlideNum, picIdx, slidePart);
                     picNode.Format["mediaType"] = mediaType;
+                    // For the "media" selector a video/audio must carry its
+                    // media-type-specific Path/Type so selector-set routes to the
+                    // media setter (/slide[N]/video[M]), not the picture setter —
+                    // mirrors the Get path branch (BuildElementPathSegment at the
+                    // /slide[N]/video[M] resolver). Plain pictures keep picture Path.
+                    if (rawType == "media" && mediaType != "picture")
+                    {
+                        picNode.Path = $"/slide[{mediaSlideNum}]/{mediaType}[{(isVideo ? videoIdx : audioIdx)}]";
+                        picNode.Type = mediaType;
+                    }
                     // CONSISTENCY(picture-relid): contentType/fileSize now
                     // emitted inside PictureToNode so Get and Query agree.
                     results.Add(picNode);
+                }
+            }
+            return results;
+        }
+
+        // 3D model query. model3d lives inside mc:AlternateContent, invisible to
+        // the generic shape-tree fallback — without this branch `query "model3d"`
+        // leaked a raw internal OOXML path that selector-set could not target.
+        // Mirror the Get path resolver: enumerate per slide, emit
+        // /slide[N]/model3d[M] so set routes to /slide[N]/model3d[M].
+        if (rawType is "model3d" or "3dmodel")
+        {
+            int m3dSlideNum = 0;
+            foreach (var slidePart in GetSlideParts())
+            {
+                m3dSlideNum++;
+                if (parsed.SlideNum.HasValue && parsed.SlideNum.Value != m3dSlideNum) continue;
+                var shapeTree = GetSlide(slidePart).CommonSlideData?.ShapeTree;
+                if (shapeTree == null) continue;
+                var m3dEls = GetModel3DElements(shapeTree);
+                for (int i = 0; i < m3dEls.Count; i++)
+                {
+                    var node = Model3DToNode(m3dEls[i], m3dSlideNum, i + 1);
+                    if (MatchesGenericAttributes(node, parsed.Attributes))
+                        results.Add(node);
                 }
             }
             return results;
