@@ -1332,8 +1332,19 @@ public partial class PowerPointHandler
                 node.Format["lineJoin"] = "round";
             else if (outline.GetFirstChild<Drawing.LineJoinBevel>() != null)
                 node.Format["lineJoin"] = "bevel";
-            else if (outline.GetFirstChild<Drawing.Miter>() != null)
-                node.Format["lineJoin"] = "miter";
+            else
+            {
+                // R61 bt-2: surface the miter limit (`<a:miter lim="N"/>` attribute)
+                // alongside lineJoin=miter — previously only the bare join token
+                // was emitted and lim was silently dropped on round-trip.
+                var shapeMiterEl = outline.GetFirstChild<Drawing.Miter>();
+                if (shapeMiterEl != null)
+                {
+                    node.Format["lineJoin"] = "miter";
+                    if (shapeMiterEl.Limit?.HasValue == true)
+                        node.Format["miterLimit"] = shapeMiterEl.Limit.Value;
+                }
+            }
             // head/tail arrowheads on shape outlines.
             var shapeHeadEnd = outline.GetFirstChild<Drawing.HeadEnd>();
             if (shapeHeadEnd?.Type?.HasValue == true)
@@ -1476,6 +1487,25 @@ public partial class PowerPointHandler
                 // the effects readback surface and broke dump round-trip
                 // when set softEdge=<value> re-parses the readback.
                 node.Format["softEdge"] = $"{softEdge.Radius.Value / EmuConverter.EmuPerPointF:0.##}pt";
+
+            // R58 bt-1: shape-level <a:blur rad="…" grow="…"/> on spPr/effectLst
+            // was silently dropped on dump→replay — Set/Add already supported
+            // the `blur` key (ApplyBlur in Effects.cs), but NodeBuilder never
+            // emitted it, so source-authored shape blur (decorative depth-of-
+            // field, frosted-card looks) round-tripped to nothing. Emit as
+            // `blur=<rad>pt:<grow>` so the grow attribute (default true in the
+            // OOXML schema, but explicitly authored in real decks) survives.
+            var blur = activeEffectList.GetFirstChild<Drawing.Blur>();
+            if (blur != null)
+            {
+                var radPt = blur.Radius?.HasValue == true
+                    ? $"{blur.Radius.Value / EmuConverter.EmuPerPointF:0.##}pt"
+                    : "0pt";
+                // OOXML default for <a:blur grow> is true; emit the boolean
+                // verbatim so an explicit `grow="0"` survives the round-trip.
+                var grow = blur.Grow?.HasValue == true ? blur.Grow.Value : true;
+                node.Format["blur"] = $"{radPt}:{(grow ? "true" : "false")}";
+            }
 
             // R58 bt-2: surface the entire effectLst as `effectsRaw=<OuterXml>`
             // when it contains any child the compressed walker above does not
@@ -2046,6 +2076,39 @@ public partial class PowerPointHandler
                 var rSoftEdge = runEffectList.GetFirstChild<Drawing.SoftEdge>();
                 if (rSoftEdge?.Radius?.HasValue == true)
                     node.Format["softEdge"] = $"{rSoftEdge.Radius.Value / EmuConverter.EmuPerPointF:0.##}pt";
+            }
+
+            // R61 bt-1: <a:ln> (text outline / stroke) on rPr. Distinct from
+            // shape-level <a:ln> on spPr — the run-level outline strokes the
+            // glyph edges of THIS run only. Reader scans rPr's first child
+            // (Drawing.Outline is schema-order bucket 1 in DrawingRunPropChildOrder),
+            // surfaces width as canonical pt+EMU form (FormatLineWidth, mirroring
+            // shape lineWidth and run underline.width), and reads the colour out
+            // of an <a:solidFill> child (matching shape line.color readback). The
+            // compound `textOutline=width:color` form mirrors the connector `line=
+            // color:width:dash` compound — same `:` delimiter the rest of the
+            // pptx Set/Add line family uses (SplitCompoundLineValue). Without
+            // this, run-level <a:ln w="6350"><a:solidFill>FF0000</a:solidFill></a:ln>
+            // silently dropped on dump→batch replay.
+            var runOutline = run.RunProperties.GetFirstChild<Drawing.Outline>();
+            if (runOutline != null)
+            {
+                string? toWidth = runOutline.Width?.HasValue == true
+                    ? EmuConverter.FormatLineWidth(runOutline.Width.Value) : null;
+                string? toColor = ReadColorFromFill(runOutline.GetFirstChild<Drawing.SolidFill>());
+                if (toWidth != null) node.Format["textOutline.width"] = toWidth;
+                if (toColor != null) node.Format["textOutline.color"] = toColor;
+                // Compound canonical (width:color). Surfaces even when only one
+                // part is present so the bare <a:ln/> (theme-inherited stroke,
+                // no attrs) still emits a marker that round-trips.
+                if (toWidth != null && toColor != null)
+                    node.Format["textOutline"] = $"{toWidth}:{toColor}";
+                else if (toWidth != null)
+                    node.Format["textOutline"] = toWidth;
+                else if (toColor != null)
+                    node.Format["textOutline"] = toColor;
+                else
+                    node.Format["textOutline"] = "true";
             }
 
             // Long-tail OOXML fallback. drawingML rPr carries most properties
@@ -2639,6 +2702,47 @@ public partial class PowerPointHandler
                 _ => dashValue
             };
         }
+        // R58 bt-3: <a:ln cap="..." cmpd="..."> attributes — connector readback
+        // was previously dropping cap (lineCap) and cmpd (compound line) on
+        // round-trip even though the shape outline branch above already
+        // surfaces both. Mirror the shape mapping (rnd→round, sq→square) so
+        // canonical Format keys match across shape/connector outlines, and
+        // dump→batch replay rebuilds the double-line / round-cap stroke.
+        if (ln?.CapType?.HasValue == true)
+        {
+            var cxnCapRaw = ln.CapType.InnerText ?? "";
+            node.Format["lineCap"] = cxnCapRaw switch
+            {
+                "rnd" => "round",
+                "sq" => "square",
+                "flat" => "flat",
+                _ => cxnCapRaw
+            };
+        }
+        if (ln?.CompoundLineType?.HasValue == true)
+            node.Format["cmpd"] = ln.CompoundLineType.InnerText ?? "";
+
+        // R61 bt-2: <a:ln> line-join children (<a:round/>, <a:bevel/>, <a:miter lim="N"/>)
+        // — connector readback was previously dropping all three on round-trip even
+        // though the shape outline branch above (~line 1331) already surfaces them.
+        // Mirror shape mapping (round/bevel/miter) and surface the miter limit as
+        // miterLimit (OOXML lim attribute: 1000ths of a percent, e.g. 800000 = 800%).
+        // Without this, dump→batch replay drops <a:miter lim="800000"/> entirely.
+        if (ln?.GetFirstChild<Drawing.Round>() != null)
+            node.Format["lineJoin"] = "round";
+        else if (ln?.GetFirstChild<Drawing.LineJoinBevel>() != null)
+            node.Format["lineJoin"] = "bevel";
+        else
+        {
+            var miterEl = ln?.GetFirstChild<Drawing.Miter>();
+            if (miterEl != null)
+            {
+                node.Format["lineJoin"] = "miter";
+                if (miterEl.Limit?.HasValue == true)
+                    node.Format["miterLimit"] = miterEl.Limit.Value;
+            }
+        }
+
         // Gradient on the connector line — emit round-trippable spec so dump→batch
         // replay rebuilds the gradient instead of falling back to a bare <a:ln/>
         // (which would inherit the theme's default thin stroke). Mirrors the shape

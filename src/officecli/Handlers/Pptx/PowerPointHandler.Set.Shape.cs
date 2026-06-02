@@ -647,6 +647,119 @@ public partial class PowerPointHandler
                     }
                     break;
                 }
+                // R58 bt-3: lineCap (<a:ln cap="..."/>) — outline attribute,
+                // previously dropped on connector Set. Mirror shape ShapeProperties
+                // handling (rnd→round/sq→square aliases).
+                case "linecap" or "line.cap":
+                {
+                    var spPr = cxn.ShapeProperties ?? (cxn.ShapeProperties = new ShapeProperties());
+                    var outline = EnsureOutline(spPr);
+                    outline.CapType = value.ToLowerInvariant() switch
+                    {
+                        "round" or "rnd" => Drawing.LineCapValues.Round,
+                        "flat" => Drawing.LineCapValues.Flat,
+                        "square" or "sq" => Drawing.LineCapValues.Square,
+                        _ => throw new ArgumentException($"Invalid 'lineCap' value: '{value}'. Valid values: round, flat, square.")
+                    };
+                    break;
+                }
+                // R58 bt-3: cmpd (<a:ln cmpd="..."/>) — outline attribute,
+                // previously dropped on connector Set. Mirror shape handling
+                // (sng/dbl/thickThin/thinThick/tri tokens with single/double aliases).
+                case "cmpd" or "compoundline" or "line.compound":
+                {
+                    var spPr = cxn.ShapeProperties ?? (cxn.ShapeProperties = new ShapeProperties());
+                    var outline = EnsureOutline(spPr);
+                    outline.CompoundLineType = value switch
+                    {
+                        var s when s.Equals("sng", StringComparison.OrdinalIgnoreCase) || s.Equals("single", StringComparison.OrdinalIgnoreCase)
+                            => Drawing.CompoundLineValues.Single,
+                        var s when s.Equals("dbl", StringComparison.OrdinalIgnoreCase) || s.Equals("double", StringComparison.OrdinalIgnoreCase)
+                            => Drawing.CompoundLineValues.Double,
+                        var s when s.Equals("thickThin", StringComparison.OrdinalIgnoreCase)
+                            => Drawing.CompoundLineValues.ThickThin,
+                        var s when s.Equals("thinThick", StringComparison.OrdinalIgnoreCase)
+                            => Drawing.CompoundLineValues.ThinThick,
+                        var s when s.Equals("tri", StringComparison.OrdinalIgnoreCase) || s.Equals("triple", StringComparison.OrdinalIgnoreCase)
+                            => Drawing.CompoundLineValues.Triple,
+                        _ => throw new ArgumentException($"Invalid 'cmpd' value: '{value}'. Valid values: sng, dbl, thickThin, thinThick, tri.")
+                    };
+                    break;
+                }
+                // R61 bt-2: lineJoin (<a:round/>|<a:bevel/>|<a:miter/>) — outline child,
+                // previously dropped on connector Set. Mirror shape ShapeProperties
+                // handling. Accept compound "miter:<lim>" so a single key carries
+                // both the join token and the miter limit.
+                case "linejoin" or "line.join":
+                {
+                    var spPr = cxn.ShapeProperties ?? (cxn.ShapeProperties = new ShapeProperties());
+                    var outline = EnsureOutline(spPr);
+                    outline.RemoveAllChildren<Drawing.Round>();
+                    outline.RemoveAllChildren<Drawing.LineJoinBevel>();
+                    outline.RemoveAllChildren<Drawing.Miter>();
+                    var joinVal = value;
+                    int? joinMiterLim = null;
+                    var joinColon = value.IndexOf(':');
+                    if (joinColon > 0)
+                    {
+                        joinVal = value.Substring(0, joinColon);
+                        var limTok = value.Substring(joinColon + 1).Trim();
+                        if (!int.TryParse(limTok, System.Globalization.NumberStyles.Integer,
+                                System.Globalization.CultureInfo.InvariantCulture, out var limParsed))
+                            throw new ArgumentException($"Invalid 'lineJoin' miter limit token: '{limTok}'. Expected integer (1000ths of a percent, e.g. 800000 = 800%).");
+                        joinMiterLim = limParsed;
+                    }
+                    OpenXmlElement joinEl = joinVal.ToLowerInvariant() switch
+                    {
+                        "round" => new Drawing.Round(),
+                        "bevel" => new Drawing.LineJoinBevel(),
+                        "miter" => joinMiterLim.HasValue
+                            ? new Drawing.Miter { Limit = joinMiterLim.Value }
+                            : new Drawing.Miter(),
+                        _ => throw new ArgumentException($"Invalid 'lineJoin' value: '{joinVal}'. Valid values: round, bevel, miter.")
+                    };
+                    // CT_LineProperties schema: ... → prstDash → (round|bevel|miter) → headEnd → tailEnd
+                    var joinHeadEnd = outline.GetFirstChild<Drawing.HeadEnd>();
+                    if (joinHeadEnd != null) outline.InsertBefore(joinEl, joinHeadEnd);
+                    else
+                    {
+                        var joinTailEnd = outline.GetFirstChild<Drawing.TailEnd>();
+                        if (joinTailEnd != null) outline.InsertBefore(joinEl, joinTailEnd);
+                        else outline.AppendChild(joinEl);
+                    }
+                    break;
+                }
+                // R61 bt-2: miterLimit (<a:miter lim="N"/>) — extends an existing
+                // <a:miter/> with the lim attribute, or auto-creates the miter join
+                // if none was set. Value is OOXML 1000ths-of-a-percent.
+                case "miterlimit" or "miter.limit" or "line.miterlimit":
+                {
+                    var spPr = cxn.ShapeProperties ?? (cxn.ShapeProperties = new ShapeProperties());
+                    if (!int.TryParse(value, System.Globalization.NumberStyles.Integer,
+                            System.Globalization.CultureInfo.InvariantCulture, out var limVal))
+                        throw new ArgumentException($"Invalid 'miterLimit' value: '{value}'. Expected integer (1000ths of a percent, e.g. 800000 = 800%).");
+                    var outline = EnsureOutline(spPr);
+                    var miterEl = outline.GetFirstChild<Drawing.Miter>();
+                    if (miterEl == null)
+                    {
+                        outline.RemoveAllChildren<Drawing.Round>();
+                        outline.RemoveAllChildren<Drawing.LineJoinBevel>();
+                        miterEl = new Drawing.Miter { Limit = limVal };
+                        var mlHeadEnd = outline.GetFirstChild<Drawing.HeadEnd>();
+                        if (mlHeadEnd != null) outline.InsertBefore(miterEl, mlHeadEnd);
+                        else
+                        {
+                            var mlTailEnd = outline.GetFirstChild<Drawing.TailEnd>();
+                            if (mlTailEnd != null) outline.InsertBefore(miterEl, mlTailEnd);
+                            else outline.AppendChild(miterEl);
+                        }
+                    }
+                    else
+                    {
+                        miterEl.Limit = limVal;
+                    }
+                    break;
+                }
                 case "lineopacity" or "line.opacity":
                 {
                     var spPr = cxn.ShapeProperties ?? (cxn.ShapeProperties = new ShapeProperties());

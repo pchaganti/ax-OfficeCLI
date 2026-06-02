@@ -466,6 +466,100 @@ public partial class PowerPointHandler
                     break;
                 }
 
+                // R61 bt-1: <a:ln> on rPr — text outline / glyph stroke. Distinct
+                // from shape-level line= (which strokes the shape edge on spPr).
+                // Compound form `textOutline=width:color` mirrors SplitCompoundLineValue
+                // (the `line=` parser); split keys `textOutline.width` and
+                // `textOutline.color` allow additive Set without overwriting
+                // the other half. Schema order bucket 1 (ln) — ReorderDrawingRunProperties
+                // moves it before solidFill/latin/etc.
+                case "textOutline" or "textoutline":
+                {
+                    // "none" / "false" → strip; mirrors text underline=none clearing.
+                    if (value.Equals("none", System.StringComparison.OrdinalIgnoreCase)
+                        || value.Equals("false", System.StringComparison.OrdinalIgnoreCase))
+                    {
+                        foreach (var run in runs)
+                            run.RunProperties?.RemoveAllChildren<Drawing.Outline>();
+                        break;
+                    }
+                    // Compound is width:color (Get emit form mirrors the
+                    // canonical width-first dotted keys textOutline.width /
+                    // textOutline.color). SplitCompoundLineValue returns
+                    // (first, second, _) positions — name-shadows the line=
+                    // (color, width, dash) layout because the underlying
+                    // split is position-only.
+                    var (toWidthPart, toColorPart, _) = SplitCompoundLineValue(value);
+                    long? widthEmu = null;
+                    string? colorRgb = null;
+                    if (toColorPart != null)
+                    {
+                        widthEmu = Core.EmuConverter.ParseLineWidth(toWidthPart);
+                        colorRgb = toColorPart.Equals("none", System.StringComparison.OrdinalIgnoreCase)
+                            ? null : ParseHelpers.SanitizeColorForOoxml(toColorPart).Rgb;
+                    }
+                    else
+                    {
+                        // Single-part: try width first (bare "2pt", "0.5pt",
+                        // numeric EMU). Falls through to colour parse if not.
+                        try { widthEmu = Core.EmuConverter.ParseLineWidth(value); }
+                        catch { widthEmu = null; }
+                        if (widthEmu == null && !value.Equals("true", System.StringComparison.OrdinalIgnoreCase))
+                            colorRgb = ParseHelpers.SanitizeColorForOoxml(value).Rgb;
+                    }
+                    foreach (var run in runs)
+                    {
+                        var rProps = run.RunProperties ?? (run.RunProperties = new Drawing.RunProperties());
+                        rProps.RemoveAllChildren<Drawing.Outline>();
+                        var ln = new Drawing.Outline();
+                        if (widthEmu.HasValue) ln.Width = (int)widthEmu.Value;
+                        if (colorRgb != null)
+                            ln.AppendChild(new Drawing.SolidFill(
+                                new Drawing.RgbColorModelHex { Val = colorRgb }));
+                        rProps.AppendChild(ln);
+                        ReorderDrawingRunProperties(rProps);
+                    }
+                    break;
+                }
+
+                case "textOutline.width" or "textoutline.width":
+                {
+                    var widthEmu = Core.EmuConverter.ParseLineWidth(value);
+                    foreach (var run in runs)
+                    {
+                        var rProps = run.RunProperties ?? (run.RunProperties = new Drawing.RunProperties());
+                        var ln = rProps.GetFirstChild<Drawing.Outline>();
+                        if (ln == null)
+                        {
+                            ln = new Drawing.Outline();
+                            rProps.PrependChild(ln);
+                            ReorderDrawingRunProperties(rProps);
+                        }
+                        ln.Width = (int)widthEmu;
+                    }
+                    break;
+                }
+
+                case "textOutline.color" or "textoutline.color":
+                {
+                    var rgb = ParseHelpers.SanitizeColorForOoxml(value).Rgb;
+                    foreach (var run in runs)
+                    {
+                        var rProps = run.RunProperties ?? (run.RunProperties = new Drawing.RunProperties());
+                        var ln = rProps.GetFirstChild<Drawing.Outline>();
+                        if (ln == null)
+                        {
+                            ln = new Drawing.Outline();
+                            rProps.PrependChild(ln);
+                            ReorderDrawingRunProperties(rProps);
+                        }
+                        ln.RemoveAllChildren<Drawing.SolidFill>();
+                        ln.AppendChild(new Drawing.SolidFill(
+                            new Drawing.RgbColorModelHex { Val = rgb }));
+                    }
+                    break;
+                }
+
                 case "strikethrough" or "strike" or "font.strike" or "font.strikethrough":
                     foreach (var run in runs)
                     {
@@ -874,6 +968,9 @@ public partial class PowerPointHandler
                     break;
                 }
                 // lineJoin → child element <a:round/>|<a:bevel/>|<a:miter/> (was silently dropped).
+                // R61 bt-2: accept compound form "miter:<lim>" so a single CLI key can
+                // carry both the join token and the miter limit; standalone miterLimit
+                // case below also extends a pre-existing <a:miter> with the lim attr.
                 case "linejoin" or "line.join":
                 {
                     var spPr = shape.ShapeProperties;
@@ -882,12 +979,26 @@ public partial class PowerPointHandler
                     outline.RemoveAllChildren<Drawing.Round>();
                     outline.RemoveAllChildren<Drawing.LineJoinBevel>();
                     outline.RemoveAllChildren<Drawing.Miter>();
-                    OpenXmlElement joinEl = value.ToLowerInvariant() switch
+                    var joinValue = value;
+                    int? compoundMiterLimit = null;
+                    var colonIdx = value.IndexOf(':');
+                    if (colonIdx > 0)
+                    {
+                        joinValue = value.Substring(0, colonIdx);
+                        var limTok = value.Substring(colonIdx + 1).Trim();
+                        if (!int.TryParse(limTok, System.Globalization.NumberStyles.Integer,
+                                System.Globalization.CultureInfo.InvariantCulture, out var limParsed))
+                            throw new ArgumentException($"Invalid 'lineJoin' miter limit token: '{limTok}'. Expected integer (1000ths of a percent, e.g. 800000 = 800%).");
+                        compoundMiterLimit = limParsed;
+                    }
+                    OpenXmlElement joinEl = joinValue.ToLowerInvariant() switch
                     {
                         "round" => new Drawing.Round(),
                         "bevel" => new Drawing.LineJoinBevel(),
-                        "miter" => new Drawing.Miter(),
-                        _ => throw new ArgumentException($"Invalid 'lineJoin' value: '{value}'. Valid values: round, bevel, miter.")
+                        "miter" => compoundMiterLimit.HasValue
+                            ? new Drawing.Miter { Limit = compoundMiterLimit.Value }
+                            : new Drawing.Miter(),
+                        _ => throw new ArgumentException($"Invalid 'lineJoin' value: '{joinValue}'. Valid values: round, bevel, miter.")
                     };
                     // CT_LineProperties schema: ... → prstDash → (round|bevel|miter) → headEnd → tailEnd
                     var headEnd = outline.GetFirstChild<Drawing.HeadEnd>();
@@ -897,6 +1008,40 @@ public partial class PowerPointHandler
                         var tailEnd = outline.GetFirstChild<Drawing.TailEnd>();
                         if (tailEnd != null) outline.InsertBefore(joinEl, tailEnd);
                         else outline.AppendChild(joinEl);
+                    }
+                    break;
+                }
+                // R61 bt-2: miterLimit → <a:miter lim="N"/> attribute. Extends an
+                // existing <a:miter/> with the lim attribute, or auto-creates the
+                // miter join if none was set (matches PowerPoint behavior — lim
+                // is meaningless without miter as the join). Value is OOXML
+                // 1000ths-of-a-percent (e.g. 800000 = 800%).
+                case "miterlimit" or "miter.limit" or "line.miterlimit":
+                {
+                    var spPr = shape.ShapeProperties;
+                    if (spPr == null) { unsupported.Add(key); break; }
+                    if (!int.TryParse(value, System.Globalization.NumberStyles.Integer,
+                            System.Globalization.CultureInfo.InvariantCulture, out var limVal))
+                        throw new ArgumentException($"Invalid 'miterLimit' value: '{value}'. Expected integer (1000ths of a percent, e.g. 800000 = 800%).");
+                    var outline = EnsureOutline(spPr);
+                    var miterEl = outline.GetFirstChild<Drawing.Miter>();
+                    if (miterEl == null)
+                    {
+                        outline.RemoveAllChildren<Drawing.Round>();
+                        outline.RemoveAllChildren<Drawing.LineJoinBevel>();
+                        miterEl = new Drawing.Miter { Limit = limVal };
+                        var headEnd = outline.GetFirstChild<Drawing.HeadEnd>();
+                        if (headEnd != null) outline.InsertBefore(miterEl, headEnd);
+                        else
+                        {
+                            var tailEnd = outline.GetFirstChild<Drawing.TailEnd>();
+                            if (tailEnd != null) outline.InsertBefore(miterEl, tailEnd);
+                            else outline.AppendChild(miterEl);
+                        }
+                    }
+                    else
+                    {
+                        miterEl.Limit = limVal;
                     }
                     break;
                 }

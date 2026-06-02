@@ -240,7 +240,24 @@ public partial class PowerPointHandler
                     || properties.ContainsKey("line.width")
                     || properties.ContainsKey("lineDash") || properties.ContainsKey("linedash")
                     || properties.ContainsKey("headEnd") || properties.ContainsKey("headend")
-                    || properties.ContainsKey("tailEnd") || properties.ContainsKey("tailend");
+                    || properties.ContainsKey("tailEnd") || properties.ContainsKey("tailend")
+                    // R58 bt-3: lineCap (<a:ln cap=...>) and cmpd (<a:ln cmpd=...>)
+                    // also count as explicit line input — without these, replay
+                    // of a source connector that only carried cap+cmpd (no width
+                    // / color / dash) would fall into the bareLine skip branch
+                    // and drop the attributes entirely.
+                    || properties.ContainsKey("lineCap") || properties.ContainsKey("linecap")
+                    || properties.ContainsKey("line.cap")
+                    || properties.ContainsKey("cmpd") || properties.ContainsKey("compoundLine")
+                    || properties.ContainsKey("compoundline") || properties.ContainsKey("line.compound")
+                    // R61 bt-2: lineJoin (<a:round/>|<a:bevel/>|<a:miter/>) and miterLimit
+                    // (<a:miter lim=...>) — without these, replay of a source connector
+                    // that only carried join/limit (no width/color/dash) would fall into
+                    // the bareLine skip branch and drop them entirely.
+                    || properties.ContainsKey("lineJoin") || properties.ContainsKey("linejoin")
+                    || properties.ContainsKey("line.join")
+                    || properties.ContainsKey("miterLimit") || properties.ContainsKey("miterlimit")
+                    || properties.ContainsKey("miter.limit") || properties.ContainsKey("line.miterlimit");
                 bool skipOutline = bareLine && !hasAnyLineInput;
 
                 // Line style
@@ -264,6 +281,89 @@ public partial class PowerPointHandler
                 if (properties.TryGetValue("lineDash", out var cxnDash) || properties.TryGetValue("linedash", out cxnDash))
                 {
                     cxnOutline.AppendChild(new Drawing.PresetDash { Val = ParseLineDashValue(cxnDash) });
+                }
+                // R58 bt-3: lineCap (<a:ln cap="..."/>) and cmpd (<a:ln cmpd="..."/>)
+                // — attributes on the outline element itself, not children.
+                // Previously dropped silently on dump→replay; mirror the shape
+                // Add aliases (lineCap/line.cap, cmpd/compoundLine/line.compound)
+                // so both Add and Set paths accept the same vocabulary.
+                if (properties.TryGetValue("lineCap", out var cxnCap)
+                    || properties.TryGetValue("linecap", out cxnCap)
+                    || properties.TryGetValue("line.cap", out cxnCap))
+                {
+                    cxnOutline.CapType = cxnCap.ToLowerInvariant() switch
+                    {
+                        "round" or "rnd" => Drawing.LineCapValues.Round,
+                        "flat" => Drawing.LineCapValues.Flat,
+                        "square" or "sq" => Drawing.LineCapValues.Square,
+                        _ => throw new ArgumentException($"Invalid 'lineCap' value: '{cxnCap}'. Valid values: round, flat, square.")
+                    };
+                }
+                if (properties.TryGetValue("cmpd", out var cxnCmpd)
+                    || properties.TryGetValue("compoundLine", out cxnCmpd)
+                    || properties.TryGetValue("compoundline", out cxnCmpd)
+                    || properties.TryGetValue("line.compound", out cxnCmpd))
+                {
+                    cxnOutline.CompoundLineType = cxnCmpd switch
+                    {
+                        var s when s.Equals("sng", StringComparison.OrdinalIgnoreCase) || s.Equals("single", StringComparison.OrdinalIgnoreCase)
+                            => Drawing.CompoundLineValues.Single,
+                        var s when s.Equals("dbl", StringComparison.OrdinalIgnoreCase) || s.Equals("double", StringComparison.OrdinalIgnoreCase)
+                            => Drawing.CompoundLineValues.Double,
+                        var s when s.Equals("thickThin", StringComparison.OrdinalIgnoreCase)
+                            => Drawing.CompoundLineValues.ThickThin,
+                        var s when s.Equals("thinThick", StringComparison.OrdinalIgnoreCase)
+                            => Drawing.CompoundLineValues.ThinThick,
+                        var s when s.Equals("tri", StringComparison.OrdinalIgnoreCase) || s.Equals("triple", StringComparison.OrdinalIgnoreCase)
+                            => Drawing.CompoundLineValues.Triple,
+                        _ => throw new ArgumentException($"Invalid 'cmpd' value: '{cxnCmpd}'. Valid values: sng, dbl, thickThin, thinThick, tri.")
+                    };
+                }
+                // R61 bt-2: lineJoin (<a:round/>|<a:bevel/>|<a:miter/>) and miterLimit
+                // (<a:miter lim="N"/>) — previously silently dropped on connector
+                // dump→replay even though shape Set/Add already accepted them.
+                // Accept compound "miter:<lim>" form so a single key carries both.
+                int? cxnMiterLim = null;
+                if (properties.TryGetValue("miterLimit", out var cxnMiterLimRaw)
+                    || properties.TryGetValue("miterlimit", out cxnMiterLimRaw)
+                    || properties.TryGetValue("miter.limit", out cxnMiterLimRaw)
+                    || properties.TryGetValue("line.miterlimit", out cxnMiterLimRaw))
+                {
+                    if (!int.TryParse(cxnMiterLimRaw, System.Globalization.NumberStyles.Integer,
+                            System.Globalization.CultureInfo.InvariantCulture, out var cxnMiterLimParsed))
+                        throw new ArgumentException($"Invalid 'miterLimit' value: '{cxnMiterLimRaw}'. Expected integer (1000ths of a percent, e.g. 800000 = 800%).");
+                    cxnMiterLim = cxnMiterLimParsed;
+                }
+                if (properties.TryGetValue("lineJoin", out var cxnJoin)
+                    || properties.TryGetValue("linejoin", out cxnJoin)
+                    || properties.TryGetValue("line.join", out cxnJoin))
+                {
+                    var cxnJoinValue = cxnJoin;
+                    var cxnJoinColon = cxnJoin.IndexOf(':');
+                    if (cxnJoinColon > 0)
+                    {
+                        cxnJoinValue = cxnJoin.Substring(0, cxnJoinColon);
+                        var cxnLimTok = cxnJoin.Substring(cxnJoinColon + 1).Trim();
+                        if (!int.TryParse(cxnLimTok, System.Globalization.NumberStyles.Integer,
+                                System.Globalization.CultureInfo.InvariantCulture, out var cxnLimParsed))
+                            throw new ArgumentException($"Invalid 'lineJoin' miter limit token: '{cxnLimTok}'. Expected integer (1000ths of a percent, e.g. 800000 = 800%).");
+                        cxnMiterLim = cxnLimParsed;
+                    }
+                    OpenXmlElement cxnJoinEl = cxnJoinValue.ToLowerInvariant() switch
+                    {
+                        "round" => new Drawing.Round(),
+                        "bevel" => new Drawing.LineJoinBevel(),
+                        "miter" => cxnMiterLim.HasValue
+                            ? new Drawing.Miter { Limit = cxnMiterLim.Value }
+                            : new Drawing.Miter(),
+                        _ => throw new ArgumentException($"Invalid 'lineJoin' value: '{cxnJoinValue}'. Valid values: round, bevel, miter.")
+                    };
+                    cxnOutline.AppendChild(cxnJoinEl);
+                }
+                else if (cxnMiterLim.HasValue)
+                {
+                    // miterLimit alone implies miter join.
+                    cxnOutline.AppendChild(new Drawing.Miter { Limit = cxnMiterLim.Value });
                 }
                 // Arrow head/tail
                 if (properties.TryGetValue("headEnd", out var headVal) || properties.TryGetValue("headend", out headVal))

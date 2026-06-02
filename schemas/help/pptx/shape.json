@@ -421,7 +421,7 @@
     },
     "lineJoin": {
       "type": "enum",
-      "description": "line join style at shape corners (drawingML <a:ln> child <a:round/> | <a:bevel/> | <a:miter/>).",
+      "description": "line join style at shape corners (drawingML <a:ln> child <a:round/> | <a:bevel/> | <a:miter/>). Accepts compound 'miter:<lim>' to also set the miter limit in one key.",
       "aliases": [
         "linejoin",
         "line.join"
@@ -435,9 +435,27 @@
       "set": true,
       "get": true,
       "examples": [
-        "--prop lineJoin=miter"
+        "--prop lineJoin=miter",
+        "--prop lineJoin=miter:800000"
       ],
       "readback": "round | bevel | miter",
+      "enforcement": "report"
+    },
+    "miterLimit": {
+      "type": "number",
+      "description": "miter join limit (drawingML <a:miter @lim>) in 1000ths of a percent (e.g. 800000 = 800%). Implies lineJoin=miter when set without an explicit lineJoin.",
+      "aliases": [
+        "miterlimit",
+        "miter.limit",
+        "line.miterlimit"
+      ],
+      "add": true,
+      "set": true,
+      "get": true,
+      "examples": [
+        "--prop miterLimit=800000"
+      ],
+      "readback": "integer (1000ths of a percent)",
       "enforcement": "report"
     },
     "cmpd": {
