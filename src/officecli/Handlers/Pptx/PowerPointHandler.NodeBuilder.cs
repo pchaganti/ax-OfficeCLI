@@ -116,6 +116,22 @@ public partial class PowerPointHandler
                         picIdx++;
                         children.Add(PictureToNode(wrappedPic, slideNum, picIdx, slidePart, parentPathPrefix));
                     }
+                    else if (IsSmartArtGraphicFrame(gf))
+                    {
+                        // bt-4: graphicFrame hosting <dgm:relIds> (SmartArt).
+                        // Previously fell through all the typed branches and was
+                        // silently absent from Get/Query — `query "shape"` /
+                        // `get /slide[N]` showed 0 children, the dump emitter's
+                        // smartart-aware path runs in parallel from the raw XML
+                        // and can recover, but anything iterating the
+                        // DocumentNode tree (HTML preview, view text, fuzzers)
+                        // missed the diagram entirely. Surface as a typed
+                        // "smartart" node so it shows up in the tree; the dump
+                        // emitter's EmitSmartArtsForSlide still owns the
+                        // diagram-part round-trip.
+                        shapeIdx++;
+                        children.Add(SmartArtToNode(gf, slideNum, shapeIdx, parentPathPrefix));
+                    }
                     break;
                 case Picture pic:
                     picIdx++;
@@ -205,6 +221,59 @@ public partial class PowerPointHandler
                 $"{parentPathPrefix}/{grpPathSeg}", isSlideRoot: false);
         }
         return grpNode;
+    }
+
+    // bt-4: SmartArt sits inside a <p:graphicFrame> whose <a:graphicData uri>
+    // is "http://schemas.openxmlformats.org/drawingml/2006/diagram" and whose
+    // first child is a <dgm:relIds> pointing to four diagram parts. Detect
+    // by URI (the typed accessor finds dgm:relIds anywhere in the subtree,
+    // matching how GetSmartArtsOnSlide probes).
+    private const string SmartArtGraphicDataUri =
+        "http://schemas.openxmlformats.org/drawingml/2006/diagram";
+
+    internal static bool IsSmartArtGraphicFrame(GraphicFrame gf)
+    {
+        var data = gf.Graphic?.GraphicData;
+        if (data?.Uri?.Value?.Equals(SmartArtGraphicDataUri, StringComparison.OrdinalIgnoreCase) == true)
+            return true;
+        // Fallback: scan descendants by local name + namespace, mirroring
+        // GetSmartArtsOnSlide's recovery walk so an authored variant whose
+        // graphicData URI was rewritten still matches.
+        return gf.Descendants().Any(e =>
+            e.LocalName == "relIds" && e.NamespaceUri == SmartArtGraphicDataUri);
+    }
+
+    private static DocumentNode SmartArtToNode(GraphicFrame gf, int slideNum, int shapeIdx, string? parentPathPrefix = null)
+    {
+        var name = gf.NonVisualGraphicFrameProperties?.NonVisualDrawingProperties?.Name?.Value ?? "SmartArt";
+        var pathSeg = BuildElementPathSegment("shape", gf, shapeIdx);
+        var basePath = parentPathPrefix ?? $"/slide[{slideNum}]";
+        var node = new DocumentNode
+        {
+            Path = $"{basePath}/{pathSeg}",
+            Type = "smartart",
+            Preview = name,
+        };
+        node.Format["name"] = name;
+        var id = GetCNvPrId(gf);
+        if (id.HasValue) node.Format["id"] = id.Value;
+        var creationId = ReadCNvPrCreationId(gf);
+        if (creationId != null) node.Format["extLst.creationId"] = creationId;
+        var offset = gf.Transform?.Offset;
+        if (offset?.X != null) node.Format["x"] = FormatEmu(offset.X.Value);
+        if (offset?.Y != null) node.Format["y"] = FormatEmu(offset.Y.Value);
+        var extents = gf.Transform?.Extents;
+        if (extents?.Cx != null) node.Format["width"] = FormatEmu(extents.Cx.Value);
+        if (extents?.Cy != null) node.Format["height"] = FormatEmu(extents.Cy.Value);
+        if (gf.Parent is ShapeTree zTree)
+        {
+            var contentEls = zTree.ChildElements
+                .Where(e => e is Shape or Picture or GraphicFrame or GroupShape or ConnectionShape)
+                .ToList();
+            var zIdx = contentEls.IndexOf(gf);
+            if (zIdx >= 0) node.Format["zorder"] = zIdx + 1;
+        }
+        return node;
     }
 
     private static DocumentNode TableToNode(GraphicFrame gf, int slideNum, int tblIdx, int depth, string? parentPathPrefix = null)
@@ -583,6 +652,16 @@ public partial class PowerPointHandler
                         // export reach the underlying <p:pic>.
                         picIdx++;
                         yield return new RenderableYield(wrappedPic, parentPath, "picture", picIdx);
+                    }
+                    else if (IsSmartArtGraphicFrame(gf))
+                    {
+                        // bt-4: SmartArt graphicFrame — surface to query/view
+                        // walkers as a "smartart" yield so HTML preview, view
+                        // text, and other consumers see the diagram instead of
+                        // an empty slide. Indexed against shapeIdx so the path
+                        // mirrors SmartArtToNode's /slide[N]/shape[K].
+                        shapeIdx++;
+                        yield return new RenderableYield(gf, parentPath, "smartart", shapeIdx);
                     }
                     break;
                 case GroupShape g:
