@@ -172,14 +172,19 @@ public partial class PowerPointHandler
                 // Cell borders (per-edge). Priority cascade:
                 //   1. Explicit <a:lnL/R/T/B> on this cell (per-cell override)
                 //   2. TableStyleResolver output (built-in style catalogue)
-                //   3. "none" (unstyled table or unknown style id)
+                //   3. default thin-black border when the table has no resolvable
+                //      style at all (tableStyleId null/unknown), else "none"
                 // Explicit <a:lnL> with <a:noFill/> yields "none" via
                 // TableBorderToCss and short-circuits cleanly. The resolver
                 // computes per-cell borders based on position (outer vs.
                 // inner edges) following the style's <a:tcBdr> region rules.
+                // When no style resolves, native PowerPoint still applies the
+                // deck's default table style (thin black grid); mirror that with
+                // a 1pt solid #000000 fallback rather than rendering border-less.
                 // CONSISTENCY(table-borders): Npt solid #color idiom.
-                static string FormatBorder(ResolvedBorder? rb)
-                    => rb != null ? $"{Units.EmuToPt(rb.WidthEmu):0.##}pt {rb.Dash} {rb.Color}" : "none";
+                string FormatBorder(ResolvedBorder? rb)
+                    => rb != null ? $"{Units.EmuToPt(rb.WidthEmu):0.##}pt {rb.Dash} {rb.Color}"
+                       : (resolved == null ? "1pt solid #000000" : "none");
                 var borderLeft = tcPr?.GetFirstChild<Drawing.LeftBorderLineProperties>();
                 var borderRight = tcPr?.GetFirstChild<Drawing.RightBorderLineProperties>();
                 var borderTop = tcPr?.GetFirstChild<Drawing.TopBorderLineProperties>();

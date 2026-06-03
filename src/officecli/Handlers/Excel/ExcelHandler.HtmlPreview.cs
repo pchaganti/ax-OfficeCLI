@@ -662,6 +662,7 @@ public partial class ExcelHandler
                 var cell = ctx.CellMap.TryGetValue((r, c), out var mc) ? mc : null;
                 var style = GetCellStyleCss(cell, ctx.Stylesheet, ctx.FrozenRows, ctx.FrozenCols, r, c, ctx.FrozenLeftOffsets, ctx.FrozenTopOffsets, ctx.CfMap, ctx.DataBarMap, ctx.IconSetMap);
                 var value = cell != null ? GetFormattedCellValue(cell, ctx.Stylesheet, ctx.Evaluator) : "";
+                var richHtml = cell != null ? TryBuildRichTextHtml(cell) : null;
                 var adjColSpan = mergeInfo.ColSpan;
                 if (adjColSpan > 1 && ctx.HiddenCols.Count > 0)
                     for (int hc = c + 1; hc < c + mergeInfo.ColSpan; hc++)
@@ -669,14 +670,25 @@ public partial class ExcelHandler
                 var spanAttrs = "";
                 if (adjColSpan > 1) spanAttrs += $" colspan=\"{adjColSpan}\"";
                 if (mergeInfo.RowSpan > 1) spanAttrs += $" rowspan=\"{mergeInfo.RowSpan}\"";
-                rowSb.Append($"<td data-path=\"/{HtmlEncode(ctx.SheetName)}/{cellRef}\"{GetFormulaAttr(cell)}{spanAttrs}{style}>{BuildCellContent(cellRef, value, ctx.DataBarMap, ctx.IconSetMap)}</td>");
+                // Rich-text runs render as pre-built spans (already encoded); the
+                // bar/icon overlay path is mutually exclusive with rich text here.
+                var content = richHtml != null && !ctx.DataBarMap.ContainsKey(cellRef) && !ctx.IconSetMap.ContainsKey(cellRef)
+                    ? richHtml
+                    : BuildCellContent(cellRef, value, ctx.DataBarMap, ctx.IconSetMap);
+                var diagSvg = TryBuildCellDiagonalSvg(cell, ctx.Stylesheet) ?? "";
+                rowSb.Append($"<td data-path=\"/{HtmlEncode(ctx.SheetName)}/{cellRef}\"{GetFormulaAttr(cell)}{spanAttrs}{style}>{diagSvg}{content}</td>");
             }
             else
             {
                 var cell = ctx.CellMap.TryGetValue((r, c), out var nc) ? nc : null;
                 var style = GetCellStyleCss(cell, ctx.Stylesheet, ctx.FrozenRows, ctx.FrozenCols, r, c, ctx.FrozenLeftOffsets, ctx.FrozenTopOffsets, ctx.CfMap, ctx.DataBarMap, ctx.IconSetMap);
                 var value = cell != null ? GetFormattedCellValue(cell, ctx.Stylesheet, ctx.Evaluator) : "";
-                rowSb.Append($"<td data-path=\"/{HtmlEncode(ctx.SheetName)}/{cellRef}\"{GetFormulaAttr(cell)}{style}>{BuildCellContent(cellRef, value, ctx.DataBarMap, ctx.IconSetMap)}</td>");
+                var richHtml = cell != null ? TryBuildRichTextHtml(cell) : null;
+                var content = richHtml != null && !ctx.DataBarMap.ContainsKey(cellRef) && !ctx.IconSetMap.ContainsKey(cellRef)
+                    ? richHtml
+                    : BuildCellContent(cellRef, value, ctx.DataBarMap, ctx.IconSetMap);
+                var diagSvg = TryBuildCellDiagonalSvg(cell, ctx.Stylesheet) ?? "";
+                rowSb.Append($"<td data-path=\"/{HtmlEncode(ctx.SheetName)}/{cellRef}\"{GetFormulaAttr(cell)}{style}>{diagSvg}{content}</td>");
             }
         }
         return rowSb.ToString();
@@ -781,13 +793,18 @@ public partial class ExcelHandler
         Worksheet ws, Stylesheet? stylesheet, SheetData sheetData, WorkbookPart? workbookPart)
     {
         var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        if (stylesheet == null) return result;
-
-        var dxfs = stylesheet.DifferentialFormats?.Elements<DifferentialFormat>().ToArray();
-        if (dxfs == null || dxfs.Length == 0) return result;
 
         var cfElements = ws.Elements<ConditionalFormatting>().ToList();
         if (cfElements.Count == 0) return result;
+
+        // Color-scale rules carry inline stop colors (no dxfId, no stylesheet);
+        // render them in a separate pass so they work even when the workbook has
+        // no <dxfs> or no stylesheet at all.
+        AddColorScaleBackgrounds(cfElements, sheetData, result);
+
+        // The remaining dxf-indexed rules need the stylesheet's <dxfs> catalogue.
+        var dxfs = stylesheet?.DifferentialFormats?.Elements<DifferentialFormat>().ToArray();
+        if (dxfs == null || dxfs.Length == 0) return result;
 
         var evaluator = new Core.FormulaEvaluator(sheetData, workbookPart);
 
@@ -843,6 +860,97 @@ public partial class ExcelHandler
             }
         }
         return result;
+    }
+
+    /// <summary>
+    /// Color-scale CF rules (type="colorScale") carry inline &lt;cfvo&gt; stops and a
+    /// matching list of &lt;color&gt; children; they never use a dxfId. Interpolate a
+    /// per-cell background between the stop colors (2-stop min→max, or 3-stop
+    /// min→mid→max) based on each cell's value, and write "background:#RRGGBB" into
+    /// the shared CF map so the existing per-cell apply path picks it up.
+    /// First matching rule wins, consistent with the dxf loop.
+    /// </summary>
+    private void AddColorScaleBackgrounds(
+        List<ConditionalFormatting> cfElements, SheetData sheetData, Dictionary<string, string> result)
+    {
+        foreach (var cf in cfElements)
+        {
+            var sqref = cf.SequenceOfReferences?.Items?.ToList();
+            if (sqref == null || sqref.Count == 0) continue;
+
+            foreach (var rule in cf.Elements<ConditionalFormattingRule>())
+            {
+                var colorScale = rule.GetFirstChild<ColorScale>();
+                if (colorScale == null) continue;
+
+                var stops = colorScale.Elements<DocumentFormat.OpenXml.Spreadsheet.Color>()
+                    .Select(c => NormalizeScaleColor(c.Rgb?.Value))
+                    .ToList();
+                if (stops.Count < 2) continue;
+
+                // Collect numeric cell values in range to derive min/max anchors.
+                var cells = new List<(string cellRef, double value)>();
+                foreach (var rangeStr in sqref)
+                {
+                    foreach (var (cellRef, row, col) in ExpandSqref(rangeStr.Value ?? ""))
+                    {
+                        var cell = sheetData.Descendants<Cell>()
+                            .FirstOrDefault(c => string.Equals(c.CellReference?.Value, cellRef, StringComparison.OrdinalIgnoreCase));
+                        if (cell?.CellValue != null && double.TryParse(cell.CellValue.Text,
+                            System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var v))
+                            cells.Add((cellRef, v));
+                    }
+                }
+                if (cells.Count == 0) continue;
+
+                double minVal = cells.Min(c => c.value);
+                double maxVal = cells.Max(c => c.value);
+                if (maxVal <= minVal) maxVal = minVal + 1;
+
+                foreach (var (cellRef, value) in cells)
+                {
+                    if (result.ContainsKey(cellRef)) continue; // first matching rule wins
+                    var t = (value - minVal) / (maxVal - minVal);
+                    var rgb = InterpolateColorScale(stops, t);
+                    result[cellRef] = $"background:#{rgb}";
+                }
+            }
+        }
+    }
+
+    /// <summary>Strip an optional 8-hex ARGB prefix down to 6-hex RRGGBB; default black.</summary>
+    private static string NormalizeScaleColor(string? argb)
+    {
+        if (string.IsNullOrEmpty(argb)) return "000000";
+        return argb.Length > 6 ? argb[^6..] : argb;
+    }
+
+    /// <summary>
+    /// Linearly interpolate across an ordered list of RRGGBB stops by fraction
+    /// t in [0,1]. Two stops → single segment; three stops → min/mid(0.5)/max.
+    /// </summary>
+    private static string InterpolateColorScale(List<string> stops, double t)
+    {
+        t = Math.Max(0, Math.Min(1, t));
+        // Map t onto the segment between stop[i] and stop[i+1].
+        int segCount = stops.Count - 1;
+        double scaled = t * segCount;
+        int lo = Math.Min((int)scaled, segCount - 1);
+        double frac = scaled - lo;
+        var (r1, g1, b1) = HexToRgb(stops[lo]);
+        var (r2, g2, b2) = HexToRgb(stops[lo + 1]);
+        int r = (int)Math.Round(r1 + (r2 - r1) * frac);
+        int g = (int)Math.Round(g1 + (g2 - g1) * frac);
+        int b = (int)Math.Round(b1 + (b2 - b1) * frac);
+        return $"{r:X2}{g:X2}{b:X2}";
+    }
+
+    private static (int r, int g, int b) HexToRgb(string hex)
+    {
+        int r = Convert.ToInt32(hex.Substring(0, 2), 16);
+        int g = Convert.ToInt32(hex.Substring(2, 2), 16);
+        int b = Convert.ToInt32(hex.Substring(4, 2), 16);
+        return (r, g, b);
     }
 
     /// <summary>
@@ -1174,6 +1282,25 @@ public partial class ExcelHandler
 
         if (cell == null || stylesheet == null)
         {
+            // CF color-scale backgrounds carry inline colors and don't need the
+            // stylesheet — apply them here too so a workbook with no <dxfs>/styles
+            // (e.g. a freshly-created file) still renders the gradient.
+            var cfRefEarly = $"{IndexToColumnName(col)}{row}";
+            if (cfMap != null && cfMap.TryGetValue(cfRefEarly, out var cfCssEarly))
+            {
+                foreach (var cfPart in cfCssEarly.Split(';'))
+                    styles.RemoveAll(s => s.StartsWith(cfPart.Split(':')[0].Trim() + ":"));
+                styles.Add(cfCssEarly);
+            }
+            // Data bar / icon set need position:relative on the TD so their inner
+            // absolutely-positioned div anchors to the cell, not the sheet wrapper.
+            // This must run here too — a freshly-created xlsx has no stylesheet and
+            // every cell hits this early-return branch.
+            if ((dataBarMap != null && dataBarMap.ContainsKey(cfRefEarly)) ||
+                (iconSetMap != null && iconSetMap.ContainsKey(cfRefEarly)))
+            {
+                styles.Add("position:relative");
+            }
             // Frozen rows need opaque background so scrolling content doesn't show through
             // Use actual cell fill if available; fallback to white for cells with no explicit fill
             if (isFrozenRow && !styles.Any(s => s.StartsWith("background")))
@@ -1192,6 +1319,22 @@ public partial class ExcelHandler
                 BuildFillCss(xf, stylesheet, styles);
                 BuildBorderCss(xf, stylesheet, styles);
                 BuildAlignmentCss(xf, styles, cell);
+
+                // Number-format [Color] section (e.g. "$#,##0.00;[Red](...)" colors
+                // negatives red). Applies to numeric cells only; the section is
+                // chosen by the cell's value sign. Overrides the font color.
+                var numFmtColor = GetCellNumberFormatColor(cell, xf, stylesheet);
+                if (numFmtColor != null)
+                {
+                    styles.RemoveAll(s => s.StartsWith("color:"));
+                    styles.Add($"color:{numFmtColor}");
+                }
+
+                // Diagonal border needs the TD to be a positioning context for the
+                // inline SVG overlay emitted into the cell content (BuildRowInnerHtml).
+                if (TryBuildCellDiagonalSvg(cell, stylesheet) != null
+                    && !styles.Any(s => s.StartsWith("position:")))
+                    styles.Add("position:relative");
             }
         }
 
@@ -1316,6 +1459,49 @@ public partial class ExcelHandler
         AddBorderSideCss(border.RightBorder, "right", styles);
         AddBorderSideCss(border.BottomBorder, "bottom", styles);
         AddBorderSideCss(border.LeftBorder, "left", styles);
+    }
+
+    /// <summary>
+    /// Look up the cell's &lt;border&gt; and, if it carries a diagonal
+    /// (diagonalDown / diagonalUp with a styled &lt;diagonal&gt; child), return an
+    /// absolutely-positioned inline SVG that draws the diagonal line(s) inside the
+    /// TD. Mirrors the PPTX table diagonal-overlay idiom (cell-diag SVG). Returns
+    /// null when the cell has no diagonal border. The TD must be position:relative
+    /// for the overlay to anchor to the cell (added in GetCellStyleCss).
+    /// </summary>
+    private string? TryBuildCellDiagonalSvg(Cell? cell, Stylesheet? stylesheet)
+    {
+        if (cell == null || stylesheet == null) return null;
+        var styleIndex = cell.StyleIndex?.Value ?? 0;
+        var cellFormats = stylesheet.CellFormats;
+        if (cellFormats == null || styleIndex >= (uint)cellFormats.Elements<CellFormat>().Count())
+            return null;
+        var xf = cellFormats.Elements<CellFormat>().ElementAt((int)styleIndex);
+        var borderId = xf.BorderId?.Value ?? 0;
+        var borders = stylesheet.Borders;
+        if (borders == null || borderId == 0 || borderId >= (uint)borders.Elements<Border>().Count())
+            return null;
+        var border = borders.Elements<Border>().ElementAt((int)borderId);
+
+        bool down = border.DiagonalDown?.Value == true;
+        bool up = border.DiagonalUp?.Value == true;
+        if (!down && !up) return null;
+
+        var diag = border.DiagonalBorder;
+        if (diag?.Style?.Value == null || diag.Style.Value == BorderStyleValues.None) return null;
+
+        var bsv = diag.Style.Value;
+        double widthPx = bsv == BorderStyleValues.Thick ? 3 : bsv == BorderStyleValues.Medium ? 2 : 1;
+        var color = ResolveColorRgb(diag.Color) ?? "#000";
+
+        var lines = new StringBuilder();
+        // diagonalDown = top-left → bottom-right; diagonalUp = bottom-left → top-right.
+        if (down)
+            lines.Append($"<line x1=\"0\" y1=\"0\" x2=\"100%\" y2=\"100%\" stroke=\"{color}\" stroke-width=\"{widthPx:0.##}\"/>");
+        if (up)
+            lines.Append($"<line x1=\"0\" y1=\"100%\" x2=\"100%\" y2=\"0\" stroke=\"{color}\" stroke-width=\"{widthPx:0.##}\"/>");
+
+        return $"<svg class=\"cell-diag\" width=\"100%\" height=\"100%\" style=\"position:absolute;inset:0;pointer-events:none;overflow:visible\" preserveAspectRatio=\"none\">{lines}</svg>";
     }
 
     private void AddBorderSideCss(BorderPropertiesType? bp, string side, List<string> styles)
@@ -1561,6 +1747,79 @@ public partial class ExcelHandler
         return ApplyNumberFormat(numVal, fmtCode);
     }
 
+    /// <summary>
+    /// Rich-text cells (shared-string items with multiple &lt;r&gt; runs carrying
+    /// per-run &lt;rPr&gt;) flatten to plain text via GetCellDisplayValue's InnerText.
+    /// Build per-run &lt;span&gt; HTML instead so color/bold/italic/font survive.
+    /// Returns pre-encoded HTML (run text already HtmlEncoded) when the cell is a
+    /// shared string with at least one run that has run-properties; otherwise null
+    /// so the caller falls back to the flat CellHtml path.
+    /// </summary>
+    private string? TryBuildRichTextHtml(Cell cell)
+    {
+        if (cell.DataType?.Value != CellValues.SharedString) return null;
+        var value = cell.CellValue?.Text;
+        if (value == null || !int.TryParse(value, out int idx)) return null;
+
+        var sst = _doc.WorkbookPart?.GetPartsOfType<SharedStringTablePart>().FirstOrDefault();
+        var item = sst?.SharedStringTable?.Elements<SharedStringItem>().ElementAtOrDefault(idx);
+        if (item == null) return null;
+
+        var runs = item.Elements<Run>().ToList();
+        // Only worth wrapping when at least one run carries explicit run-properties;
+        // a single plain run is identical to flat text — let the normal path handle it.
+        if (runs.Count == 0 || !runs.Any(r => r.RunProperties != null)) return null;
+
+        var sb = new StringBuilder();
+        foreach (var run in runs)
+        {
+            var rPr = run.RunProperties;
+            var style = new StringBuilder();
+            if (rPr != null)
+            {
+                // Shared-string run properties expose children only via GetFirstChild;
+                // <b/>/<i/>/<u/> are presence-flags (a Val=false would disable, mirror that).
+                var bold = rPr.GetFirstChild<Bold>();
+                if (bold != null && bold.Val?.Value != false)
+                    style.Append("font-weight:bold;");
+                var italic = rPr.GetFirstChild<Italic>();
+                if (italic != null && italic.Val?.Value != false)
+                    style.Append("font-style:italic;");
+                var underline = rPr.GetFirstChild<Underline>();
+                if (underline != null && underline.Val?.Value != UnderlineValues.None)
+                    style.Append("text-decoration:underline;");
+                var colorHex = ResolveRunColorHex(rPr.GetFirstChild<Color>());
+                if (colorHex != null) style.Append($"color:{colorHex};");
+                if (rPr.GetFirstChild<FontSize>()?.Val?.Value is double fs)
+                    style.Append($"font-size:{fs:0.##}pt;");
+                var fontName = rPr.GetFirstChild<RunFont>()?.Val?.Value;
+                if (!string.IsNullOrEmpty(fontName))
+                    style.Append($"font-family:'{fontName}';");
+            }
+            var text = HtmlEncode(run.Text?.Text ?? "");
+            sb.Append(style.Length > 0 ? $"<span style=\"{style}\">{text}</span>" : $"<span>{text}</span>");
+        }
+        return sb.ToString();
+    }
+
+    /// <summary>Resolve a shared-string run &lt;color&gt; to a #RRGGBB hex (rgb or theme), else null.</summary>
+    private string? ResolveRunColorHex(Color? color)
+    {
+        if (color == null) return null;
+        var rgb = color.Rgb?.Value;
+        if (!string.IsNullOrEmpty(rgb))
+        {
+            if (rgb.Length > 6) rgb = rgb[^6..];   // strip ARGB alpha
+            return $"#{rgb}";
+        }
+        if (color.Theme?.Value is uint themeIdx)
+        {
+            var tint = color.Tint?.Value;
+            return ResolveThemeColor(themeIdx, tint);
+        }
+        return null;
+    }
+
     private static string? ResolveBuiltInFormat(uint numFmtId) => numFmtId switch
     {
         1 => "0",
@@ -1586,6 +1845,70 @@ public partial class ExcelHandler
         49 => "@",
         _ => null
     };
+
+    // Excel number-format [Color] names → CSS hex (the named palette only; the
+    // [Color N] indexed form maps to the indexed-color table, omitted here as a
+    // known limitation — named colors cover the common $;[Red](…) negative case).
+    private static readonly Dictionary<string, string> NumFmtColorNames =
+        new(StringComparer.OrdinalIgnoreCase)
+        {
+            ["Black"] = "#000000", ["White"] = "#FFFFFF", ["Red"] = "#FF0000",
+            ["Green"] = "#008000", ["Blue"] = "#0000FF", ["Yellow"] = "#FFFF00",
+            ["Magenta"] = "#FF00FF", ["Cyan"] = "#00FFFF",
+        };
+
+    /// <summary>
+    /// Resolve the CSS color implied by the number format's [Color] tag for the
+    /// section that applies to <paramref name="value"/> (positive;negative;zero).
+    /// Returns null when the active section carries no [Color] marker.
+    /// </summary>
+    private static string? GetNumberFormatColor(double value, string fmtCode)
+    {
+        string section;
+        if (fmtCode.Contains(';'))
+        {
+            var sections = fmtCode.Split(';');
+            if (value < 0 && sections.Length >= 2) section = sections[1];
+            else if (value == 0 && sections.Length >= 3) section = sections[2];
+            else section = sections[0];
+        }
+        else
+        {
+            section = fmtCode;
+        }
+
+        var m = System.Text.RegularExpressions.Regex.Match(
+            section, @"\[(Black|White|Red|Green|Blue|Yellow|Magenta|Cyan)\]",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        return m.Success && NumFmtColorNames.TryGetValue(m.Groups[1].Value, out var hex) ? hex : null;
+    }
+
+    /// <summary>
+    /// Resolve the number-format [Color] CSS for a numeric cell, or null. Mirrors
+    /// the format-code lookup in GetFormattedCellValue (custom &lt;numFmt&gt; then
+    /// built-in id), then delegates section/value selection to GetNumberFormatColor.
+    /// </summary>
+    private string? GetCellNumberFormatColor(Cell cell, CellFormat xf, Stylesheet stylesheet)
+    {
+        // Only numeric cells carry value-driven format sections.
+        var dt = cell.DataType?.Value;
+        if (dt == CellValues.SharedString || dt == CellValues.InlineString
+            || dt == CellValues.String || dt == CellValues.Boolean || dt == CellValues.Error)
+            return null;
+        if (!double.TryParse(cell.CellValue?.Text, System.Globalization.NumberStyles.Any,
+                System.Globalization.CultureInfo.InvariantCulture, out var numVal))
+            return null;
+
+        var numFmtId = xf.NumberFormatId?.Value ?? 0;
+        if (numFmtId == 0) return null;
+
+        var customFmt = stylesheet.NumberingFormats?.Elements<NumberingFormat>()
+            .FirstOrDefault(nf => nf.NumberFormatId?.Value == numFmtId);
+        var fmtCode = customFmt?.FormatCode?.Value ?? ResolveBuiltInFormat(numFmtId);
+        if (fmtCode == null) return null;
+
+        return GetNumberFormatColor(numVal, fmtCode);
+    }
 
     private static string ApplyNumberFormat(double value, string fmtCode)
     {
