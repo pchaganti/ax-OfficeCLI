@@ -237,17 +237,18 @@ public partial class ExcelHandler
         var sheetData = GetSheet(worksheet).GetFirstChild<SheetData>()
             ?? throw new ArgumentException("Sheet has no data");
 
-        // Determine target
-        string effectiveParentPath;
+        // Determine the target sheet's SheetData. The result path is built from
+        // the resolved target SHEET (below), NOT the raw --to: a row/col/cell
+        // lives directly under a sheet, so a non-sheet --to like /Sheet1/row[2]
+        // must not leak into the result path (it used to produce a doubled
+        // /Sheet1/row[2]/row[3]). Only the sheet segment of --to is meaningful.
         SheetData targetSheetData;
         if (string.IsNullOrEmpty(targetParentPath))
         {
-            effectiveParentPath = $"/{sheetName}";
             targetSheetData = sheetData;
         }
         else
         {
-            effectiveParentPath = targetParentPath;
             var tgtSegments = targetParentPath.TrimStart('/').Split('/', 2);
             var tgtWorksheet = FindWorksheet(tgtSegments[0])
                 ?? throw new ArgumentException($"Target sheet not found: {tgtSegments[0]}");
@@ -371,7 +372,7 @@ public partial class ExcelHandler
                 if (tgtWs != null) SaveWorksheet(tgtWs);
             }
             var newRowIndex = row.RowIndex?.Value ?? 0u;
-            return $"{effectiveParentPath}/row[{newRowIndex}]";
+            return $"/{targetSheetName}/row[{newRowIndex}]";
         }
 
         // Move col[L]: shuffle cells across the affected column band, renumber
