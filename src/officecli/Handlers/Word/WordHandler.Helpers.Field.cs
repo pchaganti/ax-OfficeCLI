@@ -357,4 +357,44 @@ public partial class WordHandler
             dp.Id = newId;
         }
     }
+
+    /// <summary>
+    /// Ensure all structured-document-tag ids (<c>w:sdtPr/w:id</c>) are unique.
+    /// Called on document open and after every raw mutation — the sibling of
+    /// <see cref="EnsureDocPropIds"/> / EnsureAllParaIds. NextSdtId allocates
+    /// max+1 for typed adds, but a raw-set can inject an sdt whose id collides
+    /// with an existing one; without this dedup the duplicate would land on
+    /// disk (an sdt id collision breaks content-control targeting in Word).
+    /// </summary>
+    private void EnsureSdtIds()
+    {
+        var mainPart = _doc.MainDocumentPart;
+        if (mainPart?.Document?.Body == null) return;
+
+        var allSdtIds = mainPart.Document.Body.Descendants<SdtId>().ToList();
+        foreach (var headerPart in mainPart.HeaderParts)
+            if (headerPart.Header != null)
+                allSdtIds.AddRange(headerPart.Header.Descendants<SdtId>());
+        foreach (var footerPart in mainPart.FooterParts)
+            if (footerPart.Footer != null)
+                allSdtIds.AddRange(footerPart.Footer.Descendants<SdtId>());
+
+        var usedIds = new HashSet<int>();
+        var duplicates = new List<SdtId>();
+
+        foreach (var sid in allSdtIds)
+        {
+            if (sid.Val?.HasValue == true && !usedIds.Add(sid.Val.Value))
+                duplicates.Add(sid);
+            else if (sid.Val?.HasValue != true)
+                duplicates.Add(sid);
+        }
+
+        foreach (var sid in duplicates)
+        {
+            int newId = 1;
+            while (!usedIds.Add(newId)) newId++;
+            sid.Val = newId;
+        }
+    }
 }

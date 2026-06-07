@@ -141,6 +141,7 @@ public partial class WordHandler : IDocumentHandler
         {
             EnsureAllParaIds();
             EnsureDocPropIds();
+            EnsureSdtIds();
         }
     }
 
@@ -391,6 +392,10 @@ public partial class WordHandler : IDocumentHandler
         // leave the duplicate on disk; re-run it here to dedupe to the lowest
         // free id — the same correction paraId gets above.
         EnsureDocPropIds();
+        // CONSISTENCY(sdt-global-uniqueness): same hazard for sdt <w:id>.
+        // NextSdtId allocates max+1 for typed adds, but a raw-set can inject an
+        // sdt carrying a colliding id. EnsureSdtIds otherwise runs only at open.
+        EnsureSdtIds();
         // BUG-R5-01: do not emit chatter from inside the handler — the CLI
         // wrappers (CommandBuilder.Raw raw-set + batch run raw-set) print
         // their own structured message. Writing here pollutes batch --json
