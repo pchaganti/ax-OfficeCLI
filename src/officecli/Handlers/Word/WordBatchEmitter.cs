@@ -457,13 +457,26 @@ public static partial class WordBatchEmitter
                     // this case, body-level bookmark anchors were silently
                     // dropped on dump.
                     {
-                        var bmFull = word.Get(child.Path);
+                        // Use the child node's own Format, NOT word.Get(child.Path):
+                        // Navigation assigns every body-direct-child bookmarkStart
+                        // the same path (/body/bookmarkStart[1]), so re-resolving by
+                        // path returns the FIRST bookmark for all of them — a doc
+                        // with body-level TableOfContents + TableOfFigures +
+                        // TableOfTables anchors emitted TableOfContents three times
+                        // (the dup adds then failed "already exists") and dropped
+                        // the other two. child.Format already carries the correct
+                        // per-bookmark name/id/endPara.
                         var bmProps = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-                        if (bmFull.Format.TryGetValue("name", out var nm)
+                        if (child.Format.TryGetValue("name", out var nm)
                             && nm != null && !string.IsNullOrEmpty(nm.ToString()))
                             bmProps["name"] = nm.ToString()!;
                         else
                             break; // BookmarkStart with no name is unusable
+                        // Preserve a cross-paragraph span (End sits N paragraphs
+                        // after Start) so the round-tripped anchor keeps its range.
+                        if (child.Format.TryGetValue("endPara", out var ep)
+                            && ep != null && ep.ToString() is { Length: > 0 } eps && eps != "0")
+                            bmProps["endPara"] = eps;
                         items.Add(new BatchItem
                         {
                             Command = "add",
