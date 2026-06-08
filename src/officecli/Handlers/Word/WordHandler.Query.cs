@@ -1338,7 +1338,14 @@ public partial class WordHandler
         {
             foreach (var sectPr in body.Elements<SectionProperties>())
                 foreach (var href in sectPr.Elements<HeaderReference>())
-                    if (href.Id?.Value == relId && href.Type?.Value != null)
+                    // BUG-R6B(BUG2): read the type via InnerText (raw attribute
+                    // string), not .Value. A non-standard w:type (e.g. "odd",
+                    // not in ST_HdrFtr {even,default,first}) makes the strict
+                    // enum accessor .Value throw a context-free "not a valid
+                    // enumeration value" — crashing dump. InnerText degrades
+                    // gracefully (same lenient read as the section harvest), so
+                    // dump survives pre-existing source rot like validate/get do.
+                    if (href.Id?.Value == relId && !string.IsNullOrEmpty(href.Type?.InnerText))
                     {
                         node.Format["type"] = href.Type.InnerText;
                         break;
@@ -1407,7 +1414,9 @@ public partial class WordHandler
         {
             foreach (var sectPr in body.Elements<SectionProperties>())
                 foreach (var fref in sectPr.Elements<FooterReference>())
-                    if (fref.Id?.Value == relId && fref.Type?.Value != null)
+                    // BUG-R6B(BUG2): see GetHeaderNode — read via InnerText, not
+                    // .Value, so a non-standard w:type doesn't crash dump.
+                    if (fref.Id?.Value == relId && !string.IsNullOrEmpty(fref.Type?.InnerText))
                     {
                         node.Format["type"] = fref.Type.InnerText;
                         break;

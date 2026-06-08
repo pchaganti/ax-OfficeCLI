@@ -578,6 +578,23 @@ public static partial class WordBatchEmitter
         // map and passes it via subTypeOverride.
         var subType = subTypeOverride;
 
+        // BUG-R6B(BUG2): a non-standard w:type (e.g. "odd", not in ST_HdrFtr
+        // {even,default,first}) is pre-existing source rot. validate/get/dump
+        // now all degrade gracefully on it; AddHeader/AddFooter on replay would
+        // still reject "odd", so normalize the emitted op to "default" and warn
+        // rather than emit a self-unreplayable script. Strict round-trip
+        // fidelity isn't possible for a value the schema doesn't recognise.
+        if (!string.Equals(subType, "default", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(subType, "first", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(subType, "even", StringComparison.OrdinalIgnoreCase))
+        {
+            warnings?.Add(new DocxUnsupportedWarning(
+                Element: kind,
+                Path: sourcePath,
+                Reason: $"non-standard {kind}Reference w:type '{subType}' (not in {{default, first, even}}); emitted as 'default'"));
+            subType = "default";
+        }
+
         // Create the part with just its role (default/first/even). AddHeader/
         // AddFooter seed an empty auto paragraph; EmitParagraph(autoPresent:
         // true) on paras[0] then routes through CollapseFieldChains so a
