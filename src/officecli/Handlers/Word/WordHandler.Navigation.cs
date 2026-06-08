@@ -2133,21 +2133,46 @@ public partial class WordHandler
             var breakEl = run.GetFirstChild<Break>();
             if (breakEl != null)
             {
-                node.Type = "break";
-                node.Text = "";
-                // Normalize "textWrapping" → "line" on emit. OOXML treats
-                // a typeless <w:br/> as textWrapping (the default), but
-                // AddBreak's user-facing vocab uses "line"; without
-                // normalisation, dump round-trip emits `type=line` from
-                // typeless source and `type=textWrapping` from the
-                // explicitly-stamped replay target — semantically
-                // identical, byte-different.
-                if (breakEl.Type?.HasValue == true)
+                // BUG-R10A(BUG2): a breaks-only run carrying MULTIPLE soft line
+                // breaks (<w:br/><w:br/><w:br/> with no <w:t>) must keep its
+                // count. The single-`break` upgrade below collapses the whole
+                // run to one `add pagebreak type=line`, dropping the extra
+                // breaks on dump round-trip. GetRunText already surfaced them as
+                // node.Text="\n\n\n" (one \n per line break / CR), and
+                // AppendTextWithBreaks rebuilds one <w:br/> per \n — so for the
+                // multi-line-break case keep the run as a `run` and let the text
+                // path carry the count. Only a SINGLE break (or any page/column
+                // break, which has no \n source representation) takes the
+                // type=break upgrade. A text-flanked run keeps its <w:t> child
+                // and never reaches this branch.
+                var lineBreakLikeCount =
+                    run.Elements<Break>().Count(b =>
+                        b.Type == null || b.Type.Value == BreakValues.TextWrapping)
+                    + run.Elements<CarriageReturn>().Count();
+                bool hasNonLineBreak = run.Elements<Break>().Any(b =>
+                    b.Type != null && b.Type.Value != BreakValues.TextWrapping);
+                if (lineBreakLikeCount > 1 && !hasNonLineBreak)
                 {
-                    var bt = breakEl.Type.InnerText;
-                    node.Format["breakType"] = string.Equals(bt, "textWrapping", StringComparison.OrdinalIgnoreCase)
-                        ? "line"
-                        : bt;
+                    // Leave node.Type == "run"; node.Text is already "\n…\n".
+                }
+                else
+                {
+                    node.Type = "break";
+                    node.Text = "";
+                    // Normalize "textWrapping" → "line" on emit. OOXML treats
+                    // a typeless <w:br/> as textWrapping (the default), but
+                    // AddBreak's user-facing vocab uses "line"; without
+                    // normalisation, dump round-trip emits `type=line` from
+                    // typeless source and `type=textWrapping` from the
+                    // explicitly-stamped replay target — semantically
+                    // identical, byte-different.
+                    if (breakEl.Type?.HasValue == true)
+                    {
+                        var bt = breakEl.Type.InnerText;
+                        node.Format["breakType"] = string.Equals(bt, "textWrapping", StringComparison.OrdinalIgnoreCase)
+                            ? "line"
+                            : bt;
+                    }
                 }
             }
         }
