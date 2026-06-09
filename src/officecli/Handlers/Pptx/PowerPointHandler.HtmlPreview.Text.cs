@@ -301,7 +301,11 @@ public partial class PowerPointHandler
             try
             {
                 var rel = part.HyperlinkRelationships.FirstOrDefault(r => r.Id == relId);
-                if (rel?.Uri != null) hyperlinkUrl = rel.Uri.ToString();
+                // Reject javascript:/vbscript:/data: etc. — OOXML hyperlink
+                // relationships are attacker-controlled and HtmlEncode does not
+                // neutralize a dangerous scheme. Mirrors the Word/Excel previews.
+                if (rel?.Uri != null && Core.HyperlinkUriValidator.IsSafeScheme(rel.Uri.ToString()))
+                    hyperlinkUrl = rel.Uri.ToString();
             }
             catch { }
         }

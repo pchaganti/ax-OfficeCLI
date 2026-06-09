@@ -59,7 +59,11 @@ public partial class PowerPointHandler
                         try
                         {
                             var rel = part.HyperlinkRelationships.FirstOrDefault(r => r.Id == hlId);
-                            if (rel?.Uri != null) shapeHrefUrl = rel.Uri.ToString();
+                            // Reject javascript:/vbscript:/data: etc. — OOXML hyperlink
+                            // relationships are attacker-controlled and HtmlEncode does not
+                            // neutralize a dangerous scheme. Mirrors the Word/Excel previews.
+                            if (rel?.Uri != null && Core.HyperlinkUriValidator.IsSafeScheme(rel.Uri.ToString()))
+                                shapeHrefUrl = rel.Uri.ToString();
                         }
                         catch { }
                     }
