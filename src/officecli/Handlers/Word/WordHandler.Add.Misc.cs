@@ -772,8 +772,11 @@ public partial class WordHandler
             (properties.TryGetValue("tgtFrame", out var hlTgt)
              || properties.TryGetValue("tgtframe", out hlTgt)))
             hyperlink.TargetFrame = hlTgt;
-        if (hasHistory && properties.TryGetValue("history", out var hlHist) && IsTruthy(hlHist))
-            hyperlink.History = OnOffValue.FromBoolean(true);
+        // BUG-DUMP-HISTFALSE: write the explicit boolean (true OR false).
+        // OOXML default for w:history is true, so dropping an explicit
+        // history=false on add silently flips the link to history-on.
+        if (hasHistory && properties.TryGetValue("history", out var hlHist))
+            hyperlink.History = OnOffValue.FromBoolean(IsTruthy(hlHist));
 
         // index is a childElement-index (ResolveAnchorPosition counts pPr).
         // Route through pPr-aware helper so index 0 clamps forward past

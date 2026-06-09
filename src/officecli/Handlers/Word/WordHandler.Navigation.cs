@@ -1990,6 +1990,11 @@ public partial class WordHandler
         // dotted child + attr automatically.
         if (run.RunProperties?.GetFirstChild<EastAsianLayout>() is { } eal)
         {
+            // BUG-DUMP-EALID: w:id links runs in the same two-lines-in-one
+            // combine group (a semantic grouping). Curated reader emitted
+            // vert/combine/vertCompress/combineBrackets but dropped w:id on
+            // dump→batch round-trip. Set side already accepts eastAsianLayout.id.
+            if (eal.Id?.HasValue == true) node.Format["eastAsianLayout.id"] = eal.Id.InnerText;
             if (eal.Vertical?.Value == true) node.Format["eastAsianLayout.vert"] = "1";
             if (eal.Combine?.Value == true) node.Format["eastAsianLayout.combine"] = "1";
             if (eal.VerticalCompress?.HasValue == true)
@@ -2341,8 +2346,11 @@ public partial class WordHandler
                 node.Format["tooltip"] = hlParent.Tooltip.Value;
             if (hlParent.TargetFrame?.Value != null)
                 node.Format["tgtFrame"] = hlParent.TargetFrame.Value;
-            if (hlParent.History?.Value == true)
-                node.Format["history"] = true;
+            // BUG-DUMP-HISTFALSE: OOXML default for w:history is true, so an
+            // explicit w:history="false" must be surfaced — emitting only on
+            // ==true dropped it and flipped the link to history-on on round-trip.
+            if (hlParent.History?.Value is bool hlpHist)
+                node.Format["history"] = hlpHist;
         }
 
         // Populate effective.* properties from style inheritance.
@@ -2418,8 +2426,11 @@ public partial class WordHandler
             node.Format["tooltip"] = hyperlink.Tooltip.Value;
         if (hyperlink.TargetFrame?.Value != null)
             node.Format["tgtFrame"] = hyperlink.TargetFrame.Value;
-        if (hyperlink.History?.Value == true)
-            node.Format["history"] = true;
+        // BUG-DUMP-HISTFALSE: OOXML default for w:history is true, so an
+        // explicit w:history="false" must be surfaced — emitting only on
+        // ==true dropped it and flipped the link to history-on on round-trip.
+        if (hyperlink.History?.Value is bool hlHist)
+            node.Format["history"] = hlHist;
         // Read run formatting from the first run inside the hyperlink
         var hlRun = hyperlink.Elements<Run>().FirstOrDefault(r => r.GetFirstChild<Text>() != null);
         if (hlRun?.RunProperties != null)
