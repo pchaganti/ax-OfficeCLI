@@ -1041,16 +1041,11 @@ public partial class PowerPointHandler
         if (prstDash?.Val?.HasValue == true)
         {
             var dashVal = prstDash.Val.InnerText;
-            var dashArray = dashVal switch
-            {
-                "dash" or "lgDash" => $"{lineWidth * 4:0.##},{lineWidth * 3:0.##}",
-                "sysDash" => $"{lineWidth * 3:0.##},{lineWidth * 1:0.##}",
-                "dot" or "sysDot" => $"{lineWidth * 1:0.##},{lineWidth * 2:0.##}",
-                "dashDot" => $"{lineWidth * 4:0.##},{lineWidth * 2:0.##},{lineWidth * 1:0.##},{lineWidth * 2:0.##}",
-                "lgDashDot" => $"{lineWidth * 6:0.##},{lineWidth * 2:0.##},{lineWidth * 1:0.##},{lineWidth * 2:0.##}",
-                "lgDashDotDot" => $"{lineWidth * 6:0.##},{lineWidth * 2:0.##},{lineWidth * 1:0.##},{lineWidth * 2:0.##},{lineWidth * 1:0.##},{lineWidth * 2:0.##}",
-                _ => ""
-            };
+            // CONSISTENCY(dash-presets): reuse the canonical CSS-tables dash converter
+            // so the shapes/connector path emits the SAME dasharray as table borders.
+            // Previously this path had its own divergent switch where lgDash == dash
+            // ({w*4},{w*3}); the canonical helper draws lgDash with the longer {w*8} on-length.
+            var dashArray = DashTypeToSvgDasharray(dashVal, lineWidth);
             if (!string.IsNullOrEmpty(dashArray))
                 dashAttr = $" stroke-dasharray=\"{dashArray}\"";
         }
@@ -1070,20 +1065,27 @@ public partial class PowerPointHandler
             var arrowSize = Math.Max(3, lineWidth * 3);
             var defs = new StringBuilder();
             defs.Append("<defs>");
-            // Both markers use a right-pointing triangle with tip at (arrowSize, arrowSize/2).
+            // BUG1(marker-id-collision): marker ids are document-global in HTML even when each
+            // marker sits in its own <svg>. A fixed id ("ah"/"at") makes every line's
+            // marker-end="url(#at)" resolve to the FIRST line's marker, so all arrowheads
+            // inherit the first line's color. Use a per-render counter to make each marker id
+            // unique so each line references its own correctly-colored marker.
+            var markerSeq = _markerCounter++;
+            // BUG2(marker-shape): emit the correct geometry per head/tail type (triangle,
+            // diamond/rhombus, oval/circle, stealth/notched) instead of always a triangle.
             // For marker-start we use orient="auto-start-reverse" so SVG flips the right-pointing
-            // triangle to point outward (leftward) at the line's start. Authoring both markers
-            // with the same geometry avoids a past bug where the head marker was authored
-            // leftward-pointing and the reverse flipped it inward on straight connectors.
+            // geometry to point outward (leftward) at the line's start.
             if (hasHead)
             {
-                defs.Append($"<marker id=\"ah\" markerWidth=\"{arrowSize:0.#}\" markerHeight=\"{arrowSize:0.#}\" refX=\"{arrowSize:0.#}\" refY=\"{arrowSize / 2:0.#}\" orient=\"auto-start-reverse\"><polygon points=\"0 0,{arrowSize:0.#} {arrowSize / 2:0.#},0 {arrowSize:0.#}\" fill=\"{safeColor}\"/></marker>");
-                markerStartAttr = " marker-start=\"url(#ah)\"";
+                var hid = $"ah{markerSeq}";
+                defs.Append($"<marker id=\"{hid}\" markerWidth=\"{arrowSize:0.#}\" markerHeight=\"{arrowSize:0.#}\" refX=\"{arrowSize:0.#}\" refY=\"{arrowSize / 2:0.#}\" orient=\"auto-start-reverse\">{ArrowMarkerGeometry(headEnd!.Type!.InnerText ?? "triangle", arrowSize, safeColor)}</marker>");
+                markerStartAttr = $" marker-start=\"url(#{hid})\"";
             }
             if (hasTail)
             {
-                defs.Append($"<marker id=\"at\" markerWidth=\"{arrowSize:0.#}\" markerHeight=\"{arrowSize:0.#}\" refX=\"{arrowSize:0.#}\" refY=\"{arrowSize / 2:0.#}\" orient=\"auto\"><polygon points=\"0 0,{arrowSize:0.#} {arrowSize / 2:0.#},0 {arrowSize:0.#}\" fill=\"{safeColor}\"/></marker>");
-                markerEndAttr = " marker-end=\"url(#at)\"";
+                var tid = $"at{markerSeq}";
+                defs.Append($"<marker id=\"{tid}\" markerWidth=\"{arrowSize:0.#}\" markerHeight=\"{arrowSize:0.#}\" refX=\"{arrowSize:0.#}\" refY=\"{arrowSize / 2:0.#}\" orient=\"auto\">{ArrowMarkerGeometry(tailEnd!.Type!.InnerText ?? "triangle", arrowSize, safeColor)}</marker>");
+                markerEndAttr = $" marker-end=\"url(#{tid})\"";
             }
             defs.Append("</defs>");
             markerDefs = defs.ToString();
@@ -1394,6 +1396,30 @@ public partial class PowerPointHandler
         }
     }
 
+    // Per-render counter ensuring each line's arrowhead marker gets a globally-unique
+    // HTML id (markers share the document id-space across separate <svg> elements).
+    private static int _markerCounter;
+
+    // Build the SVG geometry for an arrowhead marker of the given OOXML end type.
+    // Coordinate space: viewBox 0..arrowSize, line enters from the left, tip at the right
+    // (refX=arrowSize, refY=arrowSize/2). marker-start flips this via orient.
+    private static string ArrowMarkerGeometry(string endType, double arrowSize, string color)
+    {
+        var s = arrowSize;
+        var h = arrowSize / 2;
+        return endType switch
+        {
+            // Rhombus centered on the tip: left, top, right, bottom vertices.
+            "diamond" => $"<polygon points=\"0 {h:0.#},{h:0.#} 0,{s:0.#} {h:0.#},{h:0.#} {s:0.#}\" fill=\"{color}\"/>",
+            // Filled circle sitting at the line end.
+            "oval" => $"<circle cx=\"{h:0.#}\" cy=\"{h:0.#}\" r=\"{h:0.#}\" fill=\"{color}\"/>",
+            // Concave/notched arrow: triangle with a notch cut into the back edge.
+            "stealth" => $"<polygon points=\"0 0,{s:0.#} {h:0.#},0 {s:0.#},{h:0.#} {h:0.#}\" fill=\"{color}\"/>",
+            // triangle / arrow / default: right-pointing triangle.
+            _ => $"<polygon points=\"0 0,{s:0.#} {h:0.#},0 {s:0.#}\" fill=\"{color}\"/>",
+        };
+    }
+
     private static int _model3dCounter;
     // Cache: GLB content hash → JS variable name, to avoid embedding the same
     // GLB multiple times within a single render. MUST be reset between renders
@@ -1404,6 +1430,7 @@ public partial class PowerPointHandler
     internal static void ResetModel3DRenderState()
     {
         _model3dCounter = 0;
+        _markerCounter = 0;
         _glbDataCache.Clear();
     }
 
