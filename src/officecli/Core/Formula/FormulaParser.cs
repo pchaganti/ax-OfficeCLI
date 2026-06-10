@@ -169,7 +169,53 @@ internal static class FormulaParser
 
     public static string ToLatex(OpenXmlElement element)
     {
-        return ToLatexByName(element);
+        return TrimControlWordDelimiterSpaces(ToLatexByName(element));
+    }
+
+    // BUG-DUMP-R41-1: SymbolToCommandMap encodes a trailing space after every
+    // control word (e.g. "π" → "\pi ") so a following letter can't fuse into a
+    // bogus command ("\pix"). But that space is a LaTeX *delimiter* that is only
+    // NEEDED before an ASCII letter; before "}"/digit/"+"/"\"/end it is swallowed
+    // by a real TeX reader. Our own re-parser instead treats it as a literal
+    // space run (Tokenizer's default arm collects the space as Text), so
+    // "\frac{\pi }{2}" round-trips with an extra space run in the numerator
+    // (src m:t ['π','2',...] → reb ['π',' ','2',...]). Strip the delimiter space
+    // exactly where LaTeX would: after a control word (backslash + letters) when
+    // the next non-... char is not an ASCII letter. Intentional spacing the
+    // serializer emits is Unicode (thin/medium space), never "\, "/"~", so this
+    // pass never touches deliberate spacing.
+    private static string TrimControlWordDelimiterSpaces(string latex)
+    {
+        if (string.IsNullOrEmpty(latex) || latex.IndexOf('\\') < 0)
+            return latex;
+        var sb = new System.Text.StringBuilder(latex.Length);
+        int i = 0;
+        while (i < latex.Length)
+        {
+            char c = latex[i];
+            sb.Append(c);
+            i++;
+            if (c == '\\' && i < latex.Length && char.IsLetter(latex[i]))
+            {
+                // Consume the control word's letters.
+                while (i < latex.Length && char.IsLetter(latex[i]))
+                {
+                    sb.Append(latex[i]);
+                    i++;
+                }
+                // A single delimiter space follows the control word: keep it only
+                // if the next char is an ASCII letter (where it actually delimits).
+                if (i < latex.Length && latex[i] == ' ')
+                {
+                    char next = i + 1 < latex.Length ? latex[i + 1] : '\0';
+                    bool nextIsAsciiLetter = (next >= 'a' && next <= 'z') || (next >= 'A' && next <= 'Z');
+                    if (nextIsAsciiLetter)
+                        sb.Append(' ');
+                    i++; // consume the delimiter space regardless
+                }
+            }
+        }
+        return sb.ToString();
     }
 
     private static string ToLatexByName(OpenXmlElement element)
