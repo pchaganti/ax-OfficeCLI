@@ -214,6 +214,21 @@ public partial class ExcelHandler
             newRow.Hidden = addRowHidden.Equals("true", StringComparison.OrdinalIgnoreCase)
                 || addRowHidden == "1" || addRowHidden.Equals("yes", StringComparison.OrdinalIgnoreCase);
         }
+        // CONSISTENCY(add-set-symmetry): accept outline/group + collapsed at
+        // creation, mirroring SetRow (ExcelHandler.Set.cs L2823-2832).
+        if (properties.TryGetValue("outline", out var addRowOutline)
+            || properties.TryGetValue("outlinelevel", out addRowOutline)
+            || properties.TryGetValue("group", out addRowOutline))
+        {
+            if (!byte.TryParse(addRowOutline, out var addRowOutlineVal) || addRowOutlineVal > 7)
+                throw new ArgumentException($"Invalid 'outline' value: '{addRowOutline}'. Expected an integer 0-7 (outline/group level).");
+            newRow.OutlineLevel = addRowOutlineVal;
+        }
+        if (properties.TryGetValue("collapsed", out var addRowCollapsed))
+        {
+            newRow.Collapsed = addRowCollapsed.Equals("true", StringComparison.OrdinalIgnoreCase)
+                || addRowCollapsed == "1" || addRowCollapsed.Equals("yes", StringComparison.OrdinalIgnoreCase);
+        }
 
         // Create cells if cols specified
         if (properties.TryGetValue("cols", out var colsStr))
@@ -613,7 +628,7 @@ public partial class ExcelHandler
         }
 
         // Hyperlink support during Add
-        if (properties.TryGetValue("link", out var linkUrl) && !string.IsNullOrEmpty(linkUrl))
+        if ((properties.TryGetValue("link", out var linkUrl) || properties.TryGetValue("url", out linkUrl)) && !string.IsNullOrEmpty(linkUrl))
         {
             var ws = GetSheet(cellWorksheet);
             var hyperlinksEl = ws.GetFirstChild<Hyperlinks>();
@@ -879,6 +894,21 @@ public partial class ExcelHandler
             {
                 newCol.Hidden = addColHidden!.Equals("true", StringComparison.OrdinalIgnoreCase)
                     || addColHidden == "1" || addColHidden.Equals("yes", StringComparison.OrdinalIgnoreCase);
+            }
+            // CONSISTENCY(add-set-symmetry): accept outline/group + collapsed at
+            // creation, mirroring SetColumn (ExcelHandler.Set.cs L2624-2632).
+            if (properties.TryGetValue("outline", out var addColOutline)
+                || properties.TryGetValue("outlinelevel", out addColOutline)
+                || properties.TryGetValue("group", out addColOutline))
+            {
+                if (!byte.TryParse(addColOutline, out var addColOutlineVal) || addColOutlineVal > 7)
+                    throw new ArgumentException($"Invalid 'outline' value: '{addColOutline}'. Expected an integer 0-7 (outline/group level).");
+                newCol.OutlineLevel = addColOutlineVal;
+            }
+            if (properties.TryGetValue("collapsed", out var addColCollapsed))
+            {
+                newCol.Collapsed = addColCollapsed.Equals("true", StringComparison.OrdinalIgnoreCase)
+                    || addColCollapsed == "1" || addColCollapsed.Equals("yes", StringComparison.OrdinalIgnoreCase);
             }
             if (existingCol == null)
                 columns.AppendChild(newCol);

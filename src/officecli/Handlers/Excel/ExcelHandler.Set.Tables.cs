@@ -662,6 +662,76 @@ public partial class ExcelHandler
                     else unsup.Add(key);
                     break;
                 }
+                // ─── cellIs rule props (mirror AddCellIs in Add.Cf.cs) ───────
+                case "value":
+                case "value1":
+                {
+                    // formula1: the comparison threshold for a cellIs rule.
+                    var f1 = rule?.GetFirstChild<Formula>();
+                    if (f1 != null) f1.Text = value;
+                    else if (rule != null) rule.InsertAt(new Formula(value), 0);
+                    else unsup.Add(key);
+                    break;
+                }
+                case "value2":
+                case "formula2":
+                {
+                    // formula2: upper bound for between/notBetween.
+                    var formulas = rule?.Elements<Formula>().ToList();
+                    if (formulas != null && formulas.Count >= 2) formulas[1].Text = value;
+                    else if (formulas != null && formulas.Count == 1) rule!.InsertAfter(new Formula(value), formulas[0]);
+                    else if (rule != null) rule.Append(new Formula(value));
+                    else unsup.Add(key);
+                    break;
+                }
+                case "operator":
+                {
+                    if (rule != null)
+                        rule.Operator = ParseCellIsOperator(value);
+                    else unsup.Add(key);
+                    break;
+                }
+                case "fill":
+                {
+                    var dxf = ResolveCfDxf(rule);
+                    if (dxf != null)
+                    {
+                        var normFill = ParseHelpers.NormalizeArgbColor(value);
+                        dxf.RemoveAllChildren<Fill>();
+                        dxf.Append(new Fill(new PatternFill(
+                            new BackgroundColor { Rgb = normFill })
+                        { PatternType = PatternValues.Solid }));
+                        _dirtyStylesheet = true;
+                    }
+                    else unsup.Add(key);
+                    break;
+                }
+                case "font.color":
+                {
+                    var dxf = ResolveCfDxf(rule);
+                    if (dxf != null)
+                    {
+                        var font = dxf.GetFirstChild<Font>() ?? (Font)dxf.AppendChild(new Font());
+                        font.RemoveAllChildren<DocumentFormat.OpenXml.Spreadsheet.Color>();
+                        font.Append(new DocumentFormat.OpenXml.Spreadsheet.Color { Rgb = ParseHelpers.NormalizeArgbColor(value) });
+                        _dirtyStylesheet = true;
+                    }
+                    else unsup.Add(key);
+                    break;
+                }
+                case "font.bold":
+                {
+                    var dxf = ResolveCfDxf(rule);
+                    if (dxf != null)
+                    {
+                        var font = dxf.GetFirstChild<Font>() ?? (Font)dxf.AppendChild(new Font());
+                        font.RemoveAllChildren<Bold>();
+                        if (IsTruthy(value)) font.Append(new Bold());
+                        _dirtyStylesheet = true;
+                    }
+                    else unsup.Add(key);
+                    break;
+                }
                 default:
                     unsup.Add(key);
                     break;
@@ -670,6 +740,38 @@ public partial class ExcelHandler
         SaveWorksheet(worksheet);
         return unsup;
     }
+
+    /// <summary>
+    /// Resolve the DifferentialFormat (dxf) referenced by a cellIs/expression
+    /// rule via its FormatId. Returns null if the rule or dxf is missing.
+    /// </summary>
+    private DifferentialFormat? ResolveCfDxf(ConditionalFormattingRule? rule)
+    {
+        if (rule?.FormatId?.Value == null) return null;
+        var dxfs = _doc.WorkbookPart?.WorkbookStylesPart?.Stylesheet?.GetFirstChild<DifferentialFormats>();
+        var dxfList = dxfs?.Elements<DifferentialFormat>().ToList();
+        if (dxfList == null) return null;
+        var id = (int)rule.FormatId.Value;
+        return id >= 0 && id < dxfList.Count ? dxfList[id] : null;
+    }
+
+    /// <summary>
+    /// Parse a cellIs operator string. Mirrors AddCellIs's operator switch.
+    /// </summary>
+    private static ConditionalFormattingOperatorValues ParseCellIsOperator(string opStr) =>
+        opStr.Trim().ToLowerInvariant() switch
+        {
+            "greaterthan" or "gt" or ">" => ConditionalFormattingOperatorValues.GreaterThan,
+            "lessthan" or "lt" or "<" => ConditionalFormattingOperatorValues.LessThan,
+            "greaterthanorequal" or "gte" or ">=" => ConditionalFormattingOperatorValues.GreaterThanOrEqual,
+            "lessthanorequal" or "lte" or "<=" => ConditionalFormattingOperatorValues.LessThanOrEqual,
+            "equal" or "eq" or "=" or "==" => ConditionalFormattingOperatorValues.Equal,
+            "notequal" or "ne" or "!=" or "<>" => ConditionalFormattingOperatorValues.NotEqual,
+            "between" => ConditionalFormattingOperatorValues.Between,
+            "notbetween" => ConditionalFormattingOperatorValues.NotBetween,
+            _ => throw new ArgumentException(
+                $"Unsupported cellIs operator '{opStr}'. Valid: greaterThan, lessThan, greaterThanOrEqual, lessThanOrEqual, equal, notEqual, between, notBetween.")
+        };
 
     /// <summary>
     /// Resolve the x14:dataBar element paired with a 2007 dataBar rule via x14:id reference.
