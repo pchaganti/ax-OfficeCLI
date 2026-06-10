@@ -2987,7 +2987,20 @@ public static partial class WordBatchEmitter
             var rProps = FilterEmittableProps(hlRuns[k].Format);
             // The hyperlink-wrapper keys belong to the <w:hyperlink>, not its
             // child runs — strip them so `add r` doesn't choke / re-wrap.
-            foreach (var wk in HyperlinkWrapperOnlyKeys) rProps.Remove(wk);
+            // BUG-DUMP-R43-4: rStyle/rstyle is a PER-RUN character style (e.g.
+            // Internetlink), NOT a hyperlink-wrapper attribute. It lives in
+            // HyperlinkWrapperOnlyKeys only so a sole rStyle-bearing run stays on
+            // the lossless fast path; here, on the structured (multi-run) path,
+            // each trailing run must re-emit its OWN rStyle (the first run already
+            // got it via the wrapper add). Keep it — strip only the genuine
+            // wrapper attrs.
+            foreach (var wk in HyperlinkWrapperOnlyKeys)
+            {
+                if (string.Equals(wk, "rStyle", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(wk, "rstyle", StringComparison.OrdinalIgnoreCase))
+                    continue;
+                rProps.Remove(wk);
+            }
             // Drop the theme-default echoes Get stamps on every hyperlink run;
             // the wrapper's own run already carries the real Hyperlink style.
             if (rProps.TryGetValue("color", out var c)
