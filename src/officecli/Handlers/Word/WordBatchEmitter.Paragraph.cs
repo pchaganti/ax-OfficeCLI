@@ -760,6 +760,17 @@ public static partial class WordBatchEmitter
         // must stay on the explicit-run path so TryEmitPermRun replays the
         // marker at its offset; collapsing into `add p` would drop it.
         if (runs.Any(rr => rr.Type == "permStart" || rr.Type == "permEnd")) return false;
+        // BUG-DUMP-R40-7: a run-LESS paragraph whose only content is a
+        // bookmark/bookmarkEnd marker (the close end of a bookmark that spans
+        // into this paragraph) must stay on the explicit-run path so
+        // TryEmitBookmarkRun replays the `add bookmark end=true` op. The
+        // `bookmarks` collector (pNode.Children where Type=="bookmark") only
+        // catches the START side, so a lone bookmarkEnd left bookmarksCount==0
+        // and the single-run collapse folded the marker's name= into `add p`
+        // props (leaking a phantom paragraph name and dropping the bookmarkEnd
+        // entirely — the bookmark was left unterminated). Bookmark markers carry
+        // no paragraph-level text/format, so there is nothing to collapse anyway.
+        if (runs.Any(rr => rr.Type == "bookmark" || rr.Type == "bookmarkEnd")) return false;
         var r = runs[0];
         // Picture / ptab runs need their own typed `add` rows.
         if (r.Type == "picture" || r.Type == "ptab") return false;
