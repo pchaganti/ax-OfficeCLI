@@ -1677,15 +1677,20 @@ public partial class WordHandler
         // Schema-honesty: reject values the SDT builder does not emit the
         // correct child elements for. Keeps the schema and runtime in sync
         // instead of silently falling back to plain-text SDT.
+        // BUG-DUMP-R42-7/8: `group` (grouping content control) and `picture`
+        // (picture content control) carry a single empty <w:group/> / <w:picture/>
+        // marker in sdtPr. Previously unsupported, so a dump round-trip dropped
+        // the marker and degraded the control to a generic rich-text SDT.
         var supportedSdtTypes = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             "text", "plaintext", "richtext", "rich",
             "dropdown", "dropdownlist", "combobox", "combo",
-            "date", "datepicker"
+            "date", "datepicker",
+            "group", "picture"
         };
         if (!supportedSdtTypes.Contains(sdtType))
             throw new NotSupportedException(
-                $"SDT type '{sdtType}' is not implemented. Supported: text, richtext, dropdown, combobox, date. " +
+                $"SDT type '{sdtType}' is not implemented. Supported: text, richtext, dropdown, combobox, date, group, picture. " +
                 "Create the content control in Word, then edit via CLI.");
         var alias = ciProps.GetValueOrDefault("alias", ciProps.GetValueOrDefault("name", ""));
         var tag = ciProps.GetValueOrDefault("tag", "");
@@ -1761,6 +1766,14 @@ public partial class WordHandler
                     else
                         datePr.DateFormat = new DateFormat { Val = "yyyy-MM-dd" };
                     sdtProps.AppendChild(datePr);
+                    break;
+                case "group":
+                    // BUG-DUMP-R42-7: grouping content control — empty <w:group/>.
+                    sdtProps.AppendChild(new SdtContentGroup());
+                    break;
+                case "picture":
+                    // BUG-DUMP-R42-8: picture content control — empty <w:picture/>.
+                    sdtProps.AppendChild(new SdtContentPicture());
                     break;
                 case "richtext" or "rich":
                     // Rich text has no specific type element (absence of w:text means rich text)
@@ -1882,6 +1895,14 @@ public partial class WordHandler
                         datePr.DateFormat = new DateFormat { Val = "yyyy-MM-dd" };
                     sdtProps.AppendChild(datePr);
                     break;
+                case "group":
+                    // BUG-DUMP-R42-7: grouping content control — empty <w:group/>.
+                    sdtProps.AppendChild(new SdtContentGroup());
+                    break;
+                case "picture":
+                    // BUG-DUMP-R42-8: picture content control — empty <w:picture/>.
+                    sdtProps.AppendChild(new SdtContentPicture());
+                    break;
                 case "richtext" or "rich":
                     break;
                 default:
@@ -1922,8 +1943,11 @@ public partial class WordHandler
         // The type-content element (date/comboBox/dropDownList/text) was appended
         // last; placeholder + showingPlcHdr must precede it per schema.
         var typeElement = sdtProps.LastChild as OpenXmlElement;
+        // BUG-DUMP-R42-7/8: group / picture markers are also type-content
+        // elements that placeholder + showingPlcHdr must precede per CT_SdtPr.
         bool typeIsContent = typeElement is SdtContentDate or SdtContentComboBox
-            or SdtContentDropDownList or SdtContentText;
+            or SdtContentDropDownList or SdtContentText
+            or SdtContentGroup or SdtContentPicture;
         OpenXmlElement? insertBefore = typeIsContent ? typeElement : null;
 
         void InsertSchemaOrdered(OpenXmlElement el)

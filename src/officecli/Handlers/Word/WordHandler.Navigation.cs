@@ -3111,7 +3111,12 @@ public partial class WordHandler
             if (sdtId?.Val?.Value != null) node.Format["id"] = sdtId.Val.Value;
 
             // Determine SDT type (check specific types first, text last as fallback)
-            if (sdtProps.GetFirstChild<SdtContentDropDownList>() != null) node.Format["type"] = "dropdown";
+            // BUG-DUMP-R42-7/8: <w:group/> and <w:picture/> markers identify a
+            // grouping / picture content control; without reading them the
+            // control was reported (and later rebuilt) as a generic rich-text SDT.
+            if (sdtProps.GetFirstChild<SdtContentGroup>() != null) node.Format["type"] = "group";
+            else if (sdtProps.GetFirstChild<SdtContentPicture>() != null) node.Format["type"] = "picture";
+            else if (sdtProps.GetFirstChild<SdtContentDropDownList>() != null) node.Format["type"] = "dropdown";
             else if (sdtProps.GetFirstChild<SdtContentComboBox>() != null) node.Format["type"] = "combobox";
             else if (sdtProps.GetFirstChild<SdtContentDate>() != null) node.Format["type"] = "date";
             else if (sdtProps.GetFirstChild<SdtContentText>() != null) node.Format["type"] = "text";
@@ -3158,7 +3163,10 @@ public partial class WordHandler
             var sdtId = sdtProps.GetFirstChild<SdtId>();
             if (sdtId?.Val?.Value != null) node.Format["id"] = sdtId.Val.Value;
 
-            if (sdtProps.GetFirstChild<SdtContentDropDownList>() != null) node.Format["type"] = "dropdown";
+            // BUG-DUMP-R42-7/8: surface group / picture content-control markers.
+            if (sdtProps.GetFirstChild<SdtContentGroup>() != null) node.Format["type"] = "group";
+            else if (sdtProps.GetFirstChild<SdtContentPicture>() != null) node.Format["type"] = "picture";
+            else if (sdtProps.GetFirstChild<SdtContentDropDownList>() != null) node.Format["type"] = "dropdown";
             else if (sdtProps.GetFirstChild<SdtContentComboBox>() != null) node.Format["type"] = "combobox";
             else if (sdtProps.GetFirstChild<SdtContentDate>() != null) node.Format["type"] = "date";
             else if (sdtProps.GetFirstChild<SdtContentText>() != null) node.Format["type"] = "text";
