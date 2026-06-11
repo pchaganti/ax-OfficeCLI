@@ -103,6 +103,22 @@ public partial class PowerPointHandler
             (x, y, cx, cy) = resolved.Value;
         }
 
+        // Zero-thickness rule: a shape whose box collapses to one dimension
+        // (cy==0 horizontal, cx==0 vertical) with an outline is a divider line.
+        // A border-box <div> can't draw a 1px line in the collapsed axis (the
+        // solid path renders a 2*width-tall strip; the SVG-dash path computes a
+        // negative rect height and vanishes). Route through the connector
+        // pipeline, which already draws zero-dimension lines with the correct
+        // color/width/dash (DashTypeToSvgDasharray). Only when the shape has no
+        // text — a text-bearing collapsed shape is unusual; keep the div path.
+        if (overridePos == null && (cx == 0 || cy == 0)
+            && shape.ShapeProperties?.GetFirstChild<Drawing.Outline>() != null
+            && string.IsNullOrWhiteSpace(GetShapeText(shape)))
+        {
+            RenderConnector(sb, shape.ShapeProperties, themeColors, dataPath);
+            return;
+        }
+
         // Bug #8(A): a shape with <a:spAutoFit/> grows to fit its text in real
         // PowerPoint. A fixed pt height clips overflowing content, so emit
         // min-height + height:auto for spAutoFit. All other autofit modes
