@@ -2109,6 +2109,29 @@ public static partial class WordBatchEmitter
                 });
                 return true;
             }
+            // BUG-DUMP-R47-3: a legacy VML IMAGE pict (<w:pict><v:shape
+            // type="#_x0000_t75"><v:imagedata r:id>) — NOT a textbox, so the
+            // IsVmlTextbox path above never fired — carries its bitmap through an
+            // image-part rel. The no-rel raw-set just above skips it (it DOES carry
+            // r:id), so it used to fall straight into the warn-drop below and the
+            // image vanished from the rebuild (a full-width Gantt/diagram image
+            // disappearing shifts body pagination by several pages). Ship it through
+            // the same inlined-parts vmlshape carrier the rel-bearing VML-textbox
+            // path uses: GetVmlShapeEmitData inlines the v:imagedata image part(s)
+            // and AddVmlShape rewrites the rel id on replay. Fires for any
+            // pict-bearing run whose references all resolve.
+            if (probeXml.Contains("<w:pict", StringComparison.Ordinal)
+                && word.GetVmlShapeEmitData(run.Path) is { } vmlImgData)
+            {
+                items.Add(new BatchItem
+                {
+                    Command = "add",
+                    Parent = sharedAttachPara ?? paraTargetPath,
+                    Type = "vmlshape",
+                    Props = PackInlinedPartsProps(vmlImgData),
+                });
+                return true;
+            }
             // Drawing-bearing but not safely raw-set-able inline (lives in a
             // header/footer/cell, or carries an external relationship we can't
             // re-anchor). Flag the loss rather than silently dropping it.
