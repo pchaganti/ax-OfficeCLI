@@ -2651,7 +2651,38 @@ public static partial class WordBatchEmitter
             System.Text.RegularExpressions.RegexOptions.Singleline);
         if (!m.Success) return null;
         var inner = m.Groups[1].Value.Trim();
+        inner = StripRelReferencingBlipExts(inner);
         return inner.Length > 0 ? inner : null;
+    }
+
+    // BUG-R13C: an <a:blip>'s <a:extLst> can carry an <a:ext> whose child
+    // references an external package relationship — most commonly the SVG
+    // companion <asvg:svgBlip r:embed="rIdN"/> (a PNG fallback + SVG original).
+    // The dump inlines only the raster <a:blip> source (the base64 `src`); the
+    // SVG part and its relationship are not carried through dump→batch, so the
+    // r:embed="rIdN" both dangles AND, injected as a bare fragment, fails to
+    // parse ("'r' is an undeclared prefix") — the whole `add picture` step
+    // aborts and the image is lost. Drop any <a:ext> block that references a
+    // relationship (r:embed / r:link / r:id); the raster fallback still renders.
+    // Exts with no relationship reference (e.g. a14:useLocalDpi) are kept.
+    private static string StripRelReferencingBlipExts(string blipInner)
+    {
+        if (string.IsNullOrEmpty(blipInner)
+            || !blipInner.Contains("<a:ext", StringComparison.Ordinal))
+            return blipInner;
+        var cleaned = System.Text.RegularExpressions.Regex.Replace(
+            blipInner,
+            @"<a:ext\b[^>]*>.*?</a:ext>",
+            mm => System.Text.RegularExpressions.Regex.IsMatch(mm.Value, @"\br:(embed|link|id)\s*=")
+                ? string.Empty
+                : mm.Value,
+            System.Text.RegularExpressions.RegexOptions.Singleline);
+        // Drop a now-empty <a:extLst></a:extLst> (or self-closed) so a plain
+        // raster blip emits no spurious empty wrapper.
+        cleaned = System.Text.RegularExpressions.Regex.Replace(
+            cleaned, @"<a:extLst>\s*</a:extLst>", string.Empty,
+            System.Text.RegularExpressions.RegexOptions.Singleline);
+        return cleaned.Trim();
     }
 
     // BUG-DUMP-R45-4: capture the verbatim <a:effectLst>…</a:effectLst> sitting
