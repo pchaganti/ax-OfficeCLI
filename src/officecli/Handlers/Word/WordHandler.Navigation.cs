@@ -3629,23 +3629,40 @@ public partial class WordHandler
             }
             if (pProps.Indentation != null)
             {
-                var ind = pProps.Indentation;
+                // Malformed sources (some legal-document / HTML-export
+                // generators) split the indent across TWO <w:ind> elements —
+                // e.g. <w:ind w:start="360"/><w:ind w:firstLine="360"/>.
+                // GetFirstChild returns only the first, so a firstLine/hanging
+                // carried on a later element was dropped and the paragraph's
+                // first-line indent vanished on round-trip. Word merges the
+                // duplicate elements; coalesce each attribute across EVERY
+                // <w:ind> child (first element that sets it wins) so the
+                // readback matches what Word renders.
+                var allInd = pProps.Elements<Indentation>().ToList();
+                string? PickStr(Func<Indentation, string?> sel)
+                    => allInd.Select(sel).FirstOrDefault(v => v != null);
+                int? PickInt(Func<Indentation, int?> sel)
+                    => allInd.Select(sel).FirstOrDefault(v => v != null);
                 // CONSISTENCY(unit-qualified-spacing): indents return "Xpt" via SpacingConverter,
                 // matching spaceBefore/spaceAfter (Canonical DocumentNode.Format Rules).
-                if (ind.FirstLine?.Value != null) node.Format["firstLineIndent"] = SpacingConverter.FormatWordSpacing(ind.FirstLine.Value);
-                if (ind.Hanging?.Value != null) node.Format["hangingIndent"] = SpacingConverter.FormatWordSpacing(ind.Hanging.Value);
+                var firstLineV = PickStr(i => i.FirstLine?.Value);
+                if (firstLineV != null) node.Format["firstLineIndent"] = SpacingConverter.FormatWordSpacing(firstLineV);
+                var hangingV = PickStr(i => i.Hanging?.Value);
+                if (hangingV != null) node.Format["hangingIndent"] = SpacingConverter.FormatWordSpacing(hangingV);
                 // CONSISTENCY(ind-start-end): modern Word writes <w:ind w:start>/<w:end> instead of left/right.
-                var leftTwips = ind.Left?.Value ?? ind.Start?.Value;
+                var leftTwips = PickStr(i => i.Left?.Value ?? i.Start?.Value);
                 if (leftTwips != null) node.Format["indent"] = SpacingConverter.FormatWordSpacing(leftTwips);
-                var rightTwips = ind.Right?.Value ?? ind.End?.Value;
+                var rightTwips = PickStr(i => i.Right?.Value ?? i.End?.Value);
                 if (rightTwips != null) node.Format["rightIndent"] = SpacingConverter.FormatWordSpacing(rightTwips);
                 // CONSISTENCY(ind-chars): chars-unit indents (Chinese typography) — backfilled from style Get edc8f884.
-                if (ind.FirstLineChars?.Value != null) node.Format["firstLineChars"] = ind.FirstLineChars.Value;
-                if (ind.HangingChars?.Value != null) node.Format["hangingChars"] = ind.HangingChars.Value;
-                var leftChars = ind.LeftChars?.Value ?? ind.StartCharacters?.Value;
-                if (leftChars != null) node.Format["leftChars"] = leftChars;
-                var rightChars = ind.RightChars?.Value ?? ind.EndCharacters?.Value;
-                if (rightChars != null) node.Format["rightChars"] = rightChars;
+                var firstLineChars = PickInt(i => i.FirstLineChars?.Value);
+                if (firstLineChars != null) node.Format["firstLineChars"] = firstLineChars.Value;
+                var hangingChars = PickInt(i => i.HangingChars?.Value);
+                if (hangingChars != null) node.Format["hangingChars"] = hangingChars.Value;
+                var leftChars = PickInt(i => i.LeftChars?.Value ?? i.StartCharacters?.Value);
+                if (leftChars != null) node.Format["leftChars"] = leftChars.Value;
+                var rightChars = PickInt(i => i.RightChars?.Value ?? i.EndCharacters?.Value);
+                if (rightChars != null) node.Format["rightChars"] = rightChars.Value;
             }
             if (pProps.KeepNext != null)
             {
