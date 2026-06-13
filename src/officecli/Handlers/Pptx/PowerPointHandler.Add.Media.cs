@@ -19,18 +19,15 @@ public partial class PowerPointHandler
                     && !properties.TryGetValue("src", out imgPath))
                     throw new ArgumentException("'src' property is required for picture type");
 
-                var imgSlideMatch = Regex.Match(parentPath, @"^/slide\[(\d+)\]$");
-                if (!imgSlideMatch.Success)
-                    throw new ArgumentException($"Pictures must be added to a slide: /slide[N]");
-
-                var imgSlideIdx = int.Parse(imgSlideMatch.Groups[1].Value);
-                var imgSlideParts = GetSlideParts().ToList();
-                if (imgSlideIdx < 1 || imgSlideIdx > imgSlideParts.Count)
-                    throw new ArgumentException($"Slide {imgSlideIdx} not found (total: {imgSlideParts.Count})");
-
-                var imgSlidePart = imgSlideParts[imgSlideIdx - 1];
-                var imgShapeTree = GetSlide(imgSlidePart).CommonSlideData?.ShapeTree
-                    ?? throw new InvalidOperationException("Slide has no shape tree");
+                // Accept a slide (/slide[N]) or a nested-group parent
+                // (/slide[N]/group[K]/…) so dump-emitted grouped pictures replay.
+                var imgParent = ResolveSlideOrGroupAddParent(parentPath)
+                    ?? throw new ArgumentException($"Pictures must be added to a slide: /slide[N]");
+                var imgSlideIdx = imgParent.slideIdx;
+                var imgSlidePart = imgParent.slidePart;
+                var imgShapeTree = imgParent.shapeTree;
+                var imgInsertContainer = imgParent.insertContainer;
+                var imgReturnPrefix = imgParent.returnPathPrefix;
 
                 // Resolve image from file/base64/URL and buffer for
                 // both embedding and dimension sniffing (aspect ratio).
@@ -533,7 +530,7 @@ public partial class PowerPointHandler
                     ApplyPictureHyperlink(imgSlidePart, picture, picLink, picTip);
                 }
 
-                InsertAtPosition(imgShapeTree, picture, index);
+                InsertAtPosition(imgInsertContainer, picture, index);
 
                 // CONSISTENCY(zorder-on-add): dump-emit carries zorder=N; without
                 // consuming it here every picture appended at the end of the tree.
@@ -546,7 +543,7 @@ public partial class PowerPointHandler
 
                 GetSlide(imgSlidePart).Save();
 
-                return $"/slide[{imgSlideIdx}]/{BuildElementPathSegment("picture", picture, imgShapeTree.Elements<Picture>().Count())}";
+                return $"{imgReturnPrefix}/{BuildElementPathSegment("picture", picture, imgInsertContainer.Elements<Picture>().Count())}";
     }
 
 

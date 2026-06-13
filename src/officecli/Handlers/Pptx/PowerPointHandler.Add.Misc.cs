@@ -16,18 +16,14 @@ public partial class PowerPointHandler
 {
     private string AddConnector(string parentPath, int? index, Dictionary<string, string> properties)
     {
-                var cxnSlideMatch = Regex.Match(parentPath, @"^/slide\[(\d+)\]$");
-                if (!cxnSlideMatch.Success)
-                    throw new ArgumentException("Connectors must be added to a slide: /slide[N]");
-
-                var cxnSlideIdx = int.Parse(cxnSlideMatch.Groups[1].Value);
-                var cxnSlideParts = GetSlideParts().ToList();
-                if (cxnSlideIdx < 1 || cxnSlideIdx > cxnSlideParts.Count)
-                    throw new ArgumentException($"Slide {cxnSlideIdx} not found (total: {cxnSlideParts.Count})");
-
-                var cxnSlidePart = cxnSlideParts[cxnSlideIdx - 1];
-                var cxnShapeTree = GetSlide(cxnSlidePart).CommonSlideData?.ShapeTree
-                    ?? throw new InvalidOperationException("Slide has no shape tree");
+                // Accept a slide (/slide[N]) or a nested-group parent
+                // (/slide[N]/group[K]/…) so dump-emitted grouped connectors replay.
+                var cxnParent = ResolveSlideOrGroupAddParent(parentPath)
+                    ?? throw new ArgumentException("Connectors must be added to a slide: /slide[N]");
+                var cxnSlidePart = cxnParent.slidePart;
+                var cxnShapeTree = cxnParent.shapeTree;
+                var cxnInsertContainer = cxnParent.insertContainer;
+                var cxnReturnPrefix = cxnParent.returnPathPrefix;
 
                 var cxnId = AcquireShapeId(cxnShapeTree, properties);
                 var cxnName = properties.GetValueOrDefault("name", $"Connector {cxnShapeTree.Elements<ConnectionShape>().Count() + 1}");
@@ -448,14 +444,14 @@ public partial class PowerPointHandler
                     connector.AppendChild(cxnTxBody);
                 }
 
-                InsertAtPosition(cxnShapeTree, connector, index);
+                InsertAtPosition(cxnInsertContainer, connector, index);
                 if (properties.TryGetValue("zorder", out var cxnZ)
                     || properties.TryGetValue("z-order", out cxnZ)
                     || properties.TryGetValue("order", out cxnZ))
                     ApplyZOrder(cxnSlidePart, connector, cxnZ);
                 GetSlide(cxnSlidePart).Save();
 
-                return $"/slide[{cxnSlideIdx}]/{BuildElementPathSegment("connector", connector, cxnShapeTree.Elements<ConnectionShape>().Count())}";
+                return $"{cxnReturnPrefix}/{BuildElementPathSegment("connector", connector, cxnInsertContainer.Elements<ConnectionShape>().Count())}";
     }
 
     // R57 bt-4: Resolve a connector under a slide by either positional index

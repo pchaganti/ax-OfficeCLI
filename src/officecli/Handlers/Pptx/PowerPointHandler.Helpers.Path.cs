@@ -37,6 +37,53 @@ public partial class PowerPointHandler
             m => m.Value.ToLowerInvariant());
     }
 
+    /// <summary>
+    /// Resolve a content-add parent path that is either a slide (/slide[N]) or a
+    /// (possibly nested) group inside a slide (/slide[N]/group[K]/group[L]/…).
+    /// Returns the owning slide part, the slide's shape tree (for shape-id
+    /// allocation and from/to lookups), the container the new element should be
+    /// inserted into (the group when one is addressed, else the shape tree), the
+    /// 1-based slide index, and the canonical return-path prefix
+    /// (e.g. "/slide[2]/group[1]"). Returns null when the path is neither a slide
+    /// nor a slide-group path, so callers keep their own slide-only error message.
+    ///
+    /// CONSISTENCY(group-inner-shape-add): mirrors the nested-group resolution in
+    /// AddShape so picture/connector/media adds accept the same group parents that
+    /// dump emits for grouped content.
+    /// </summary>
+    private (SlidePart slidePart, ShapeTree shapeTree, OpenXmlCompositeElement insertContainer,
+             int slideIdx, string returnPathPrefix)?
+        ResolveSlideOrGroupAddParent(string parentPath)
+    {
+        var groupMatch = Regex.Match(parentPath, @"^/slide\[(\d+)\]((?:/group\[\d+\])*)$");
+        if (!groupMatch.Success) return null;
+
+        var slideIdx = int.Parse(groupMatch.Groups[1].Value);
+        var slideParts = GetSlideParts().ToList();
+        if (slideIdx < 1 || slideIdx > slideParts.Count)
+            throw new ArgumentException($"Slide {slideIdx} not found (total: {slideParts.Count})");
+        var slidePart = slideParts[slideIdx - 1];
+        var shapeTree = GetSlide(slidePart).CommonSlideData?.ShapeTree
+            ?? throw new InvalidOperationException("Slide has no shape tree");
+
+        OpenXmlCompositeElement insertContainer = shapeTree;
+        var groupSegs = groupMatch.Groups[2].Value;
+        if (groupSegs.Length > 0)
+        {
+            foreach (Match seg in Regex.Matches(groupSegs, @"/group\[(\d+)\]"))
+            {
+                var grpIdx = int.Parse(seg.Groups[1].Value);
+                var groups = insertContainer.Elements<GroupShape>().ToList();
+                if (grpIdx < 1 || grpIdx > groups.Count)
+                    throw new ArgumentException(
+                        $"Group {grpIdx} not found under {insertContainer.LocalName} on slide {slideIdx} (total: {groups.Count})");
+                insertContainer = groups[grpIdx - 1];
+            }
+        }
+        var returnPathPrefix = $"/slide[{slideIdx}]{groupSegs}";
+        return (slidePart, shapeTree, insertContainer, slideIdx, returnPathPrefix);
+    }
+
     private static string NormalizeCellPath(string path)
     {
         // Reject malformed segment separators that previously slipped past
