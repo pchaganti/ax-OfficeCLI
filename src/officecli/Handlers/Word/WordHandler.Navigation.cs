@@ -2497,6 +2497,12 @@ public partial class WordHandler
                             ? "line"
                             : bt;
                     }
+                    // <w:br w:clear="all|left|right|none"/> — a text-wrapping
+                    // break's float-clearing behavior. Dropping it left spacer
+                    // lines beside a floating table instead of below it, and
+                    // the layout below merged upward.
+                    if (breakEl.Clear?.HasValue == true)
+                        node.Format["breakClear"] = breakEl.Clear.InnerText;
                 }
             }
         }

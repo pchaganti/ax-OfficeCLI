@@ -1663,6 +1663,22 @@ public partial class WordHandler
         }
 
         var brk = new Break { Type = breakType };
+        // <w:br w:clear> — float-clearing for text-wrapping breaks (Word's
+        // "clear all/left/right"). Round-tripped via the breakClear key.
+        if (properties.TryGetValue("breakClear", out var brkClear)
+            || properties.TryGetValue("breakclear", out brkClear)
+            || properties.TryGetValue("clear", out brkClear))
+        {
+            var clearCanon = brkClear.ToLowerInvariant() switch
+            {
+                "all" => "all",
+                "left" => "left",
+                "right" => "right",
+                "none" => "none",
+                _ => throw new ArgumentException($"Invalid break clear: '{brkClear}'. Valid values: all, left, right, none.")
+            };
+            brk.Clear = new EnumValue<BreakTextRestartLocationValues>(new BreakTextRestartLocationValues(clearCanon));
+        }
         var brkRun = new Run(brk);
 
         string resultPath;
