@@ -2626,8 +2626,22 @@ public partial class WordHandler
         // that a source document already authored.
         if (node.Type is "fieldChar" or "instrText" or "break")
         {
+            // BUG-DUMP-R46-FFSIZE: a FORMCHECKBOX / FORMTEXT begin fieldChar
+            // legitimately carries the field-run's typography — a <w:sizeAuto/>
+            // checkbox sizes its glyph to the run's FONT SIZE, and AddFormField
+            // stamps the dumped size/bold/color/font back onto every rebuilt
+            // field run. Stripping it (as noise) shrank the dumped form field to
+            // the docDefaults size, enlarging the checkbox and inflating each
+            // list row. Keep the field-run formatting on a form-field begin node
+            // (it rides the FieldResultFormatKeys channel into `add formfield`);
+            // every other field marker still sheds its noise typography.
+            bool keepFieldRunFmt = node.Format.ContainsKey("hasFormFieldData");
             foreach (var noiseKey in TypographyOnlyKeys)
+            {
+                if (keepFieldRunFmt && FieldRunFormatKeepKeys.Contains(noiseKey))
+                    continue;
                 node.Format.Remove(noiseKey);
+            }
         }
         return node;
     }

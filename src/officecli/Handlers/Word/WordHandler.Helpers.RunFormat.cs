@@ -359,6 +359,16 @@ public partial class WordHandler
         "effective.underline", "effective.underline.src",
     };
 
+    // BUG-DUMP-R46-FFSIZE: typography keys a FORM-FIELD begin fieldChar keeps
+    // (instead of shedding as noise) so the field-run face/size round-trips into
+    // `add formfield` and a <w:sizeAuto/> checkbox renders at its source size.
+    // Mirrors the keys AddFormField's field-run formatting honors.
+    private static readonly HashSet<string> FieldRunFormatKeepKeys = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "size", "bold", "italic", "color", "underline", "strike",
+        "font.ascii", "font.hAnsi", "font.eastAsia", "font.cs",
+    };
+
     // CONSISTENCY(run-special-content): canonical parsers for the run-internal
     // structural types (ptab / fldChar / break) shared by Add and Set.
     // Lowercase XML attribute values are the canonical input; legacy
