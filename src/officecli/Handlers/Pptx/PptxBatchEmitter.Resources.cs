@@ -88,6 +88,9 @@ public static partial class PptxBatchEmitter
         if (string.IsNullOrEmpty(xml) || !xml.StartsWith("<")) return;
         xml = CanonicalizeRawXml(xml);
 
+        // Raw-set FIRST — it creates the notesMaster part on demand on a blank
+        // target. The add-part theme below then attaches the theme; ordering the
+        // theme after the part-create avoids "notesMaster does not exist yet".
         items.Add(new BatchItem
         {
             Command = "raw-set",
@@ -96,6 +99,30 @@ public static partial class PptxBatchEmitter
             Action = "replace",
             Xml = xml
         });
+
+        // The notes master is a theme-owning master too: source notesMaster.rels
+        // references its own theme part. The on-demand notesMaster create wired no
+        // theme relationship, so the rebuilt notesMaster had no .rels at all.
+        // Emit its theme part (distinct content + pinned rId).
+        try
+        {
+            var nmt = ppt.GetNotesMasterTheme();
+            if (nmt is { } nmtv)
+            {
+                items.Add(new BatchItem
+                {
+                    Command = "add-part",
+                    Parent = "/notesMaster",
+                    Type = "theme",
+                    Props = new Dictionary<string, string>
+                    {
+                        ["rid"] = nmtv.RelId,
+                        ["data"] = nmtv.ThemeXml,
+                    },
+                });
+            }
+        }
+        catch { /* best-effort */ }
     }
 
     private static void EmitMasterRaw(PowerPointHandler ppt, List<BatchItem> items)
