@@ -530,6 +530,20 @@ public static partial class PptxBatchEmitter
             var s = grpZ.ToString();
             if (!string.IsNullOrEmpty(s)) props["zorder"] = s!;
         }
+        // Preserve the group's OWN cNvPr id. Unlike the group's children (whose
+        // ids are stripped below to dodge sibling-id collisions and are only ever
+        // resolved positionally), the group's id IS externally referenced — slide
+        // animation timing targets the group via <p:spTgt spid="N">. Dropping it
+        // (auto-assign on replay) left the raw-set timing block pointing at a
+        // non-existent shape id, and PowerPoint refused the whole file. The
+        // group-as-slide-child node (grpNode) carries the id in its Format; the
+        // direct Get used for `props` above does not, so pull it from grpNode.
+        if (!props.ContainsKey("id")
+            && grpNode.Format.TryGetValue("id", out var grpIdObj) && grpIdObj != null)
+        {
+            var s = grpIdObj.ToString();
+            if (!string.IsNullOrEmpty(s)) props["id"] = s!;
+        }
         DeferSlideJumpLink(props, replayPath, ctx);
 
         items.Add(new BatchItem
