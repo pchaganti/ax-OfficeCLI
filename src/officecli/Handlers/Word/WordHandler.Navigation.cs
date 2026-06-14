@@ -2831,8 +2831,16 @@ public partial class WordHandler
                 node.Format["align"] = tp.TableJustification.Val.InnerText;
             // Indent
             // BUG-R4B(BUG1): decimal-tolerant width read (w:tblInd w:w="0.0").
+            // BUG-DUMP-R34-TBLIND: preserve the indent UNIT. A pct-typed tblInd
+            // (w:type="pct", value in fiftieths-of-a-percent) was read as a bare
+            // int and re-added as dxa twips, so a "2%" table indent (≈180 twips on
+            // a letter page) collapsed to 100 twips — shifting the whole table
+            // (and its bordered answer boxes) left. Encode pct as the same "X%"
+            // form table width uses, so Add/Set re-parse the unit.
             if (SafeWidth(tp.TableIndentation?.Width) is int tblIndW)
-                node.Format["indent"] = tblIndW;
+                node.Format["indent"] = tp.TableIndentation!.Type?.Value == TableWidthUnitValues.Pct
+                    ? FormatPctWidth(tblIndW)
+                    : (object)tblIndW;
             // Cell spacing
             if (SafeWidth(tp.TableCellSpacing?.Width) is int tblCsW)
                 node.Format["cellSpacing"] = tblCsW;

@@ -2305,7 +2305,12 @@ public partial class WordHandler
                     }
                     break;
                 case "indent":
-                    tblPr.TableIndentation = new TableIndentation { Width = ParseHelpers.SafeParseInt(value, "indent"), Type = TableWidthUnitValues.Dxa };
+                    // BUG-DUMP-R34-TBLIND: honour a pct-typed indent ("2%") so it
+                    // round-trips as <w:tblInd w:type="pct"> rather than collapsing
+                    // to dxa twips (which shifts the whole table horizontally).
+                    tblPr.TableIndentation = value.TrimEnd().EndsWith("%", StringComparison.Ordinal)
+                        ? new TableIndentation { Width = (int)Math.Round(ParseHelpers.SafeParseDouble(value.TrimEnd().TrimEnd('%'), "indent") * 50), Type = TableWidthUnitValues.Pct }
+                        : new TableIndentation { Width = ParseHelpers.SafeParseInt(value, "indent"), Type = TableWidthUnitValues.Dxa };
                     break;
                 case "cellspacing":
                     tblPr.TableCellSpacing = new TableCellSpacing { Width = ParseHelpers.SafeParseUint(value, "cellspacing").ToString(), Type = TableWidthUnitValues.Dxa };
