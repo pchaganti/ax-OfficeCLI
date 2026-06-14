@@ -1064,10 +1064,22 @@ public static partial class PptxBatchEmitter
         // Detect the first <p:bg ...> within the slide xml that precedes
         // <p:spTree>. The cSld parent contains an optional bg slot in schema
         // order (<p:cSld><p:bg?/><p:spTree/>...</p:cSld>), so anchoring at
-        // the earliest <p:bg appearing before </p:spTree> is unambiguous.
+        // the earliest <p:bg appearing before <p:spTree> is unambiguous.
+        //
+        // The search MUST be bounded to the region before <p:spTree>. The
+        // <p:timing> tree (after </p:spTree>) carries animation targets of the
+        // form <p:tgtEl><p:spTgt spid="N"><p:bg/></...>, and an unbounded
+        // IndexOf would latch onto that timing <p:bg/> on slides that animate
+        // the background but have no cSld-level <p:bg>. That emitted a spurious
+        // empty <p:bg/> prepend; <p:cSld> requires <p:bg> to carry <p:bgPr> or
+        // <p:bgRef>, so an empty <p:bg/> is schema-invalid and PowerPoint
+        // refuses the whole file (0x80070570 / could-not-open). Bounding to the
+        // pre-spTree window keeps only a genuine slide background.
         string? bgXml = null;
+        var spTreeOpen = xml.IndexOf("<p:spTree", StringComparison.Ordinal);
+        var bgSearchLimit = spTreeOpen >= 0 ? spTreeOpen : xml.Length;
         var bgIdx = xml.IndexOf("<p:bg", StringComparison.Ordinal);
-        if (bgIdx >= 0)
+        if (bgIdx >= 0 && bgIdx < bgSearchLimit)
         {
             // Guard: ensure this <p:bg is truly the cSld-level background and
             // not a substring match inside something like <p:bgClr=…>. The
