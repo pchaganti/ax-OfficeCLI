@@ -1483,42 +1483,42 @@ public static partial class PptxBatchEmitter
             // injection — the raw-set append below carries the source's
             // full graphicFrame (with real position/size/name/cNvPr id), so
             // letting add-part also inject a stub would produce a duplicate.
+            // Carry each diagram sub-part's verbatim (canonicalised) XML
+            // inline so add-part writes the content directly into the parts
+            // it creates. The legacy flow created empty seed parts and then
+            // issued four separate `raw-set` rows targeting the SOURCE's
+            // /ppt/diagrams/dataN.xml URIs — but the SDK allocates the new
+            // parts under /ppt/graphics/dataM.xml (its own base, M global),
+            // so FindPartByZipUri never resolved the raw-set target and the
+            // parts persisted EMPTY (blank/broken SmartArt). Inlining the
+            // content is URI-agnostic: the part is filled at creation, and
+            // the real AddNewPart relationship (pinned rId) keeps it from
+            // being pruned at save.
+            var saProps = new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["data"] = sa.DataRelId,
+                ["layout"] = sa.LayoutRelId,
+                ["colors"] = sa.ColorsRelId,
+                ["quickStyle"] = sa.QuickStyleRelId,
+                ["dataXml"] = CanonDiagramXml(sa.DataXml),
+                ["layoutXml"] = CanonDiagramXml(sa.LayoutXml),
+                ["colorsXml"] = CanonDiagramXml(sa.ColorsXml),
+                ["quickStyleXml"] = CanonDiagramXml(sa.QuickStyleXml),
+                ["skip-frame"] = "true",
+            };
+            // The DSP cached-drawing part (child of the data part, referenced
+            // by <dsp:dataModelExt relId="...">). Carry it + the pinned relId
+            // so the data XML's reference resolves — without it PowerPoint
+            // refuses the file (0x80070570).
+            if (sa.DrawingXml != null) saProps["drawingXml"] = CanonDiagramXml(sa.DrawingXml);
+            if (sa.DrawingRelId != null) saProps["drawingRelId"] = sa.DrawingRelId;
             items.Add(new BatchItem
             {
                 Command = "add-part",
                 Parent = slidePath,
                 Type = "smartart",
-                Props = new Dictionary<string, string>(StringComparer.Ordinal)
-                {
-                    ["data"] = sa.DataRelId,
-                    ["layout"] = sa.LayoutRelId,
-                    ["colors"] = sa.ColorsRelId,
-                    ["quickStyle"] = sa.QuickStyleRelId,
-                    ["skip-frame"] = "true",
-                },
+                Props = saProps,
             });
-
-            // Resolve each rId to its part URI for raw-set targeting.
-            // The post-replay file will have the same URIs because the
-            // SlidePart's part-name allocator is deterministic for a
-            // freshly created sub-part (e.g. /ppt/diagrams/data1.xml).
-            string? dUri = ppt.GetSmartArtPartUri(slideNum, sa.DataRelId);
-            string? lUri = ppt.GetSmartArtPartUri(slideNum, sa.LayoutRelId);
-            string? cUri = ppt.GetSmartArtPartUri(slideNum, sa.ColorsRelId);
-            string? qUri = ppt.GetSmartArtPartUri(slideNum, sa.QuickStyleRelId);
-            if (dUri == null || lUri == null || cUri == null || qUri == null)
-            {
-                ctx.Unsupported.Add(new UnsupportedWarning(
-                    Element: "smartArt", SlidePath: slidePath,
-                    Reason: "SmartArt diagram part URIs could not be resolved; graphicFrame appended without populated parts"));
-            }
-            else
-            {
-                EmitDiagramPart(dUri, "dgm:dataModel", sa.DataXml, items);
-                EmitDiagramPart(lUri, "dgm:layoutDef", sa.LayoutXml, items);
-                EmitDiagramPart(cUri, "dgm:colorsDef", sa.ColorsXml, items);
-                EmitDiagramPart(qUri, "dgm:styleDef", sa.QuickStyleXml, items);
-            }
 
             // Append the graphicFrame into /p:sld/p:cSld/p:spTree. The
             // slice carries the <dgm:relIds> with the source's rIds, which
@@ -1537,26 +1537,18 @@ public static partial class PptxBatchEmitter
         }
     }
 
-    private static void EmitDiagramPart(string partUri, string rootName,
-                                        string sliceXml, List<BatchItem> items)
-    {
-        // Canonicalize for round-trip stability: same canonicalizer as the
-        // slide slice path. The diagram parts only carry dgm: / a: ambient
-        // ns most of the time; NormalizeSlideRawSlice's ambient set covers
-        // a:/r:/mc: which is a superset. Extension prefixes specific to the
-        // part travel verbatim.
-        string canon;
-        try { canon = NormalizeSlideRawSlice(sliceXml); }
-        catch { canon = sliceXml; }
-        items.Add(new BatchItem
-        {
-            Command = "raw-set",
-            Part = partUri,
-            Xpath = "/" + rootName,
-            Action = "replace",
-            Xml = canon,
-        });
-    }
+    // Diagram sub-part XML is carried inline on the add-part smartart row and
+    // written DIRECTLY into the created part's stream (whole-part body, not a
+    // /p:sld slice). It must therefore stay self-contained: the source value
+    // is the part root's SDK-serialized OuterXml, which already declares every
+    // namespace it uses (dgm:, a:, r:, …) on its own root. We must NOT run it
+    // through NormalizeSlideRawSlice — that canonicalizer is built for slices
+    // that get re-parsed into a typed root at the /p:sld replay site and so it
+    // STRIPS the ambient a:/r:/p:/mc: decls from the root tag, which would
+    // leave a standalone diagram part with undeclared prefixes (MalformedXml).
+    // Round-trip byte-stability holds because the rebuilt part is read back
+    // via the same OuterXml path, yielding identical bytes on the next pass.
+    private static string CanonDiagramXml(string partXml) => partXml;
 
     // R48: slide-level <p:bg> raw passthrough. The bg slot sits inside
     // <p:cSld> BEFORE <p:spTree>, so the standard append-on-/p:sld helper

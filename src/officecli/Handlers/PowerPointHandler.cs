@@ -630,6 +630,23 @@ public partial class PowerPointHandler : IDocumentHandler
                 string? colorsRid   = properties != null && properties.TryGetValue("colors", out var cv) ? cv : null;
                 string? qsRid       = properties != null && properties.TryGetValue("quickStyle", out var qv) ? qv : null;
 
+                // Inline diagram part content. The dump emitter carries each
+                // sub-part's verbatim XML here so add-part writes it directly
+                // into the freshly-created part. This supersedes the legacy
+                // "create seed + separate raw-set replace" flow: the SDK
+                // allocates the diagram parts under /ppt/graphics/dataN.xml
+                // (its own naming base, N incrementing package-globally),
+                // NOT the source's /ppt/diagrams/data1.xml, so a raw-set
+                // pre-targeted at the source URI never resolved (FindPartByZipUri
+                // miss) and the parts persisted EMPTY → blank/broken SmartArt.
+                // Writing content at creation time is URI-agnostic and robust.
+                string? dataXml     = properties != null && properties.TryGetValue("dataXml", out var dxv) ? dxv : null;
+                string? layoutXml   = properties != null && properties.TryGetValue("layoutXml", out var lxv) ? lxv : null;
+                string? colorsXml   = properties != null && properties.TryGetValue("colorsXml", out var cxv) ? cxv : null;
+                string? qsXml       = properties != null && properties.TryGetValue("quickStyleXml", out var qxv) ? qxv : null;
+                string? drawingXml  = properties != null && properties.TryGetValue("drawingXml", out var drxv) ? drxv : null;
+                string? drawingRelId = properties != null && properties.TryGetValue("drawingRelId", out var drrv) ? drrv : null;
+
                 DiagramDataPart   dataPart   = !string.IsNullOrEmpty(dataRid)
                     ? saSlidePart.AddNewPart<DiagramDataPart>(dataRid)
                     : saSlidePart.AddNewPart<DiagramDataPart>();
@@ -643,17 +660,37 @@ public partial class PowerPointHandler : IDocumentHandler
                     ? saSlidePart.AddNewPart<DiagramStylePart>(qsRid)
                     : saSlidePart.AddNewPart<DiagramStylePart>();
 
-                // Minimal typed roots — raw-set replace immediately overwrites.
-                dataPart.DataModelRoot = new DocumentFormat.OpenXml.Drawing.Diagrams.DataModelRoot(
-                    new DocumentFormat.OpenXml.Drawing.Diagrams.PointList(),
-                    new DocumentFormat.OpenXml.Drawing.Diagrams.ConnectionList());
-                dataPart.DataModelRoot.Save(dataPart);
-                layoutPart.LayoutDefinition = new DocumentFormat.OpenXml.Drawing.Diagrams.LayoutDefinition();
-                layoutPart.LayoutDefinition.Save(layoutPart);
-                colorsPart.ColorsDefinition = new DocumentFormat.OpenXml.Drawing.Diagrams.ColorsDefinition();
-                colorsPart.ColorsDefinition.Save(colorsPart);
-                stylePart.StyleDefinition = new DocumentFormat.OpenXml.Drawing.Diagrams.StyleDefinition();
-                stylePart.StyleDefinition.Save(stylePart);
+                // Write the real content when supplied; else seed a minimal
+                // typed root (keeps direct CLI `add-part smartart` usable).
+                WriteDiagramPartXml(dataPart, dataXml, () =>
+                    new DocumentFormat.OpenXml.Drawing.Diagrams.DataModelRoot(
+                        new DocumentFormat.OpenXml.Drawing.Diagrams.PointList(),
+                        new DocumentFormat.OpenXml.Drawing.Diagrams.ConnectionList()));
+                WriteDiagramPartXml(layoutPart, layoutXml,
+                    () => new DocumentFormat.OpenXml.Drawing.Diagrams.LayoutDefinition());
+                WriteDiagramPartXml(colorsPart, colorsXml,
+                    () => new DocumentFormat.OpenXml.Drawing.Diagrams.ColorsDefinition());
+                WriteDiagramPartXml(stylePart, qsXml,
+                    () => new DocumentFormat.OpenXml.Drawing.Diagrams.StyleDefinition());
+
+                // The DSP cached-drawing part is referenced from the data XML
+                // via <dsp:dataModelExt relId="...">. That relId resolves
+                // against the SLIDE part's relationships (the drawing part is
+                // a slide-level part of type .../2007/relationships/diagramDrawing,
+                // sibling to the data/layout/colors/qs rels — NOT a child of
+                // the data part). Create it on saSlidePart with the pinned
+                // relId so the reference resolves; otherwise PowerPoint
+                // refuses the file (0x80070570).
+                if (!string.IsNullOrEmpty(drawingXml) && !string.IsNullOrEmpty(drawingRelId))
+                {
+                    var drawingPart = saSlidePart.AddNewPart<DiagramPersistLayoutPart>(
+                        "application/vnd.ms-office.drawingml.diagramDrawing+xml", drawingRelId);
+                    // drawingXml is always present on this branch; the seed
+                    // fallback is unreachable here but supplied for the typed
+                    // signature.
+                    WriteDiagramPartXml(drawingPart, drawingXml,
+                        () => new DocumentFormat.OpenXml.Drawing.Diagrams.DataModelRoot());
+                }
 
                 // Encode all four rIds in the RelId field — callers (batch
                 // emit / replay) need to know each part's id to write the
@@ -1420,6 +1457,33 @@ public partial class PowerPointHandler : IDocumentHandler
         }
     }
 
+    // Write verbatim XML into a freshly-created SmartArt diagram sub-part, or
+    // seed a minimal typed root when no content was supplied. Writing the raw
+    // bytes directly (not via the typed root) preserves the source's exact
+    // namespace declarations / extension prefixes that the dump emitter
+    // canonicalised, and — crucially — lands the content regardless of the
+    // SDK's part-naming base (the parts land under /ppt/graphics/, not the
+    // source's /ppt/diagrams/, so a URI-targeted raw-set could not reach them).
+    private static void WriteDiagramPartXml(
+        OpenXmlPart part, string? xml, Func<OpenXmlElement> seedFactory)
+    {
+        if (!string.IsNullOrEmpty(xml))
+        {
+            const string prolog = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n";
+            using var stream = part.GetStream(FileMode.Create, FileAccess.Write);
+            using var writer = new StreamWriter(stream, new System.Text.UTF8Encoding(false));
+            writer.Write(prolog);
+            writer.Write(xml);
+            return;
+        }
+        // Fallback: minimal typed root so direct CLI add-part stays usable.
+        var seed = seedFactory();
+        using var seedStream = part.GetStream(FileMode.Create, FileAccess.Write);
+        using var xw = System.Xml.XmlWriter.Create(seedStream,
+            new System.Xml.XmlWriterSettings { OmitXmlDeclaration = false, Encoding = new System.Text.UTF8Encoding(false) });
+        seed.WriteTo(xw);
+    }
+
     public List<ValidationError> Validate() => RawXmlHelper.ValidateDocument(_doc, _filePath);
 
     public void Save()
@@ -1693,7 +1757,9 @@ public partial class PowerPointHandler : IDocumentHandler
         string DataXml,
         string LayoutXml,
         string ColorsXml,
-        string QuickStyleXml);
+        string QuickStyleXml,
+        string? DrawingXml,
+        string? DrawingRelId);
 
     internal IReadOnlyList<SmartArtInfo> GetSmartArtsOnSlide(int slideIdx)
     {
@@ -1744,10 +1810,61 @@ public partial class PowerPointHandler : IDocumentHandler
             var qXml = xmlFor(qRid);
             if (dXml == null || lXml == null || cXml == null || qXml == null) continue;
 
+            // The data part references a 5th part — the DSP cached-drawing
+            // part — via <dsp:dataModelExt relId="..."> in the data XML. That
+            // relId resolves against the SLIDE part's relationships (the
+            // drawing part is a slide-level part of type
+            // .../2007/relationships/diagramDrawing, sibling to the
+            // data/layout/colors/qs rels — NOT a child of the data part).
+            // PowerPoint refuses the file if that relId dangles, so carry the
+            // drawing XML + the relId. Leave both null when absent (older /
+            // simpler SmartArt without a cached drawing) → keep behavior.
+            string? drawingXml = null, drawingRelId = null;
+            try
+            {
+                if (slidePart.GetPartById(dRid) is DiagramDataPart ddp)
+                {
+                    const string dspNs = "http://schemas.microsoft.com/office/drawing/2008/diagram";
+                    var ext = ddp.DataModelRoot?.Descendants().FirstOrDefault(e =>
+                        e.LocalName == "dataModelExt" && e.NamespaceUri == dspNs);
+                    if (ext != null)
+                    {
+                        foreach (var a in ext.GetAttributes())
+                            if (a.LocalName == "relId") { drawingRelId = a.Value; break; }
+                    }
+                    if (!string.IsNullOrEmpty(drawingRelId))
+                    {
+                        try
+                        {
+                            if (slidePart.GetPartById(drawingRelId) is DiagramPersistLayoutPart drawingPart)
+                            {
+                                using var s = drawingPart.GetStream(FileMode.Open, FileAccess.Read);
+                                using var r = new StreamReader(s);
+                                drawingXml = r.ReadToEnd();
+                                // Strip XML prolog so emit/replay re-adds it
+                                // uniformly (WriteDiagramPartXml re-prepends).
+                                int lt = drawingXml.IndexOf('<', StringComparison.Ordinal);
+                                int decl = drawingXml.IndexOf("<?xml", StringComparison.Ordinal);
+                                if (decl == 0)
+                                {
+                                    int end = drawingXml.IndexOf("?>", StringComparison.Ordinal);
+                                    if (end >= 0) drawingXml = drawingXml.Substring(end + 2).TrimStart();
+                                }
+                                else if (lt > 0) drawingXml = drawingXml.Substring(lt);
+                            }
+                        }
+                        catch { drawingXml = null; }
+                    }
+                }
+            }
+            catch { drawingXml = null; drawingRelId = null; }
+            if (drawingXml == null || drawingRelId == null) { drawingXml = null; drawingRelId = null; }
+
             result.Add(new SmartArtInfo(
                 GraphicFrameXml: gf.OuterXml,
                 DataRelId: dRid, LayoutRelId: lRid, ColorsRelId: cRid, QuickStyleRelId: qRid,
-                DataXml: dXml, LayoutXml: lXml, ColorsXml: cXml, QuickStyleXml: qXml));
+                DataXml: dXml, LayoutXml: lXml, ColorsXml: cXml, QuickStyleXml: qXml,
+                DrawingXml: drawingXml, DrawingRelId: drawingRelId));
         }
         return result;
     }
