@@ -413,6 +413,12 @@ public static partial class PptxBatchEmitter
                                   List<BatchItem> items, SlideEmitContext ctx)
     {
         var slidePath = slideNode.Path;
+        // Snapshot: every shape/picture/connector/raw-set row this slide emits
+        // is appended to `items` from here on, so items[sliceStart..] is this
+        // slide's emitted content — the source of truth for which cNvPr ids
+        // actually survive into the rebuilt slide (used to prune dangling
+        // <p:timing> targets that point at by-design-dropped shapes).
+        int sliceStart = items.Count;
         ProbeUnsupportedOnSlide(ppt, slidePath, ctx);
 
         // Detect exotic transition / timing content that the semantic emit
@@ -682,7 +688,22 @@ public static partial class PptxBatchEmitter
         if (exotic.HasExoticTransition && exotic.TransitionXml != null)
             EmitRawSlideSlice(slidePath, "p:transition", exotic.TransitionXml, items, ctx);
         if (exotic.HasExoticTiming && exotic.TimingXml != null)
-            EmitRawSlideSlice(slidePath, "p:timing", exotic.TimingXml, items, ctx);
+        {
+            // Strip animation subtrees that target a shape the rebuilt slide
+            // no longer carries. By-design drops (OLE objects whose payload or
+            // thumbnail won't resolve) remove the <p:graphicFrame> from the
+            // emitted spTree, but the verbatim <p:timing> passthrough still
+            // references the dropped shape's cNvPr id via <p:spTgt spid="N"/>.
+            // PowerPoint rejects a deck whose animation tree targets an absent
+            // shape ("could not open") even though validate / the SDK tolerate
+            // it. Prune the smallest self-contained timing subtree holding each
+            // dangling target so the surviving animation tree stays
+            // schema-valid; the dropped object simply isn't animated.
+            var emittedShapeIds = ComputeEmittedShapeIds(items, sliceStart);
+            var prunedTiming = PruneDanglingTimingTargets(exotic.TimingXml, emittedShapeIds);
+            if (prunedTiming != null)
+                EmitRawSlideSlice(slidePath, "p:timing", prunedTiming, items, ctx);
+        }
         if (exotic.ExtLstXml != null)
             EmitRawSlideSlice(slidePath, "p:extLst", exotic.ExtLstXml, items, ctx);
         if (exotic.TrailingTransitionXml != null)
@@ -1348,6 +1369,68 @@ public static partial class PptxBatchEmitter
         ("a16",  "http://schemas.microsoft.com/office/drawing/2014/main"),
         ("am3d", "http://schemas.microsoft.com/office/drawing/2017/model3d"),
     };
+
+    // Collect the cNvPr ids that this slide's emitted rows (items[start..])
+    // actually carry — i.e. the shapes that will exist in the rebuilt slide.
+    // Shapes emitted via raw-set slices carry <p:cNvPr id="N"> in their Xml;
+    // id-preserving typed adds (e.g. a placeholder that is an animation target)
+    // carry the id in Props["id"]. By-design-dropped shapes (OLE/3d/media whose
+    // payload can't round-trip) emit NO row, so their id is absent here — which
+    // is exactly how a dangling <p:timing> target is detected.
+    private static HashSet<uint> ComputeEmittedShapeIds(List<BatchItem> items, int start)
+    {
+        var ids = new HashSet<uint>();
+        var rx = new System.Text.RegularExpressions.Regex(
+            @"<(?:\w+:)?cNvPr\b[^>]*\bid=""(\d+)""",
+            System.Text.RegularExpressions.RegexOptions.Compiled);
+        for (int i = start; i < items.Count; i++)
+        {
+            var it = items[i];
+            if (!string.IsNullOrEmpty(it.Xml))
+                foreach (System.Text.RegularExpressions.Match m in rx.Matches(it.Xml))
+                    if (uint.TryParse(m.Groups[1].Value, out var v)) ids.Add(v);
+            if (it.Props != null && it.Props.TryGetValue("id", out var idProp)
+                && uint.TryParse(idProp, out var pv)) ids.Add(pv);
+        }
+        return ids;
+    }
+
+    // Prune <p:timing> animation steps whose target shape isn't in the rebuilt
+    // slide. A verbatim timing passthrough still references a dropped shape's
+    // cNvPr id via <p:spTgt spid="N"/>; PowerPoint rejects a deck whose
+    // animation tree targets an absent shape ("could not open" / 0x80070570)
+    // even though the SDK validator tolerates it. Remove the smallest enclosing
+    // <p:par> (an independent timing step) for each dangling target; if nothing
+    // dangles, return the input unchanged; if every animation step is pruned or
+    // the result won't re-parse, return null so the caller drops <p:timing>
+    // entirely (the slide simply has no animation — graceful degradation).
+    private static string? PruneDanglingTimingTargets(string timingXml, HashSet<uint> emittedIds)
+    {
+        System.Xml.Linq.XNamespace p = "http://schemas.openxmlformats.org/presentationml/2006/main";
+        System.Xml.Linq.XDocument doc;
+        try { doc = System.Xml.Linq.XDocument.Parse(EnsureAmbientXmlnsOnRootTag(timingXml)); }
+        catch { return timingXml; } // unparseable — leave verbatim (best effort, no worse than before)
+
+        bool removedAny = false;
+        foreach (var spTgt in doc.Descendants(p + "spTgt").ToList())
+        {
+            var spid = spTgt.Attribute("spid")?.Value;
+            if (spid == null || !uint.TryParse(spid, out var id)) continue;
+            if (emittedIds.Contains(id)) continue;              // target survives — keep
+            // Dangling: remove the nearest (innermost) <p:par> timing step.
+            var par = spTgt.Ancestors(p + "par").FirstOrDefault();
+            var toRemove = par ?? spTgt; // fall back to the bare target if no par wrapper
+            if (toRemove.Parent != null) { toRemove.Remove(); removedAny = true; }
+        }
+        if (!removedAny) return timingXml;
+        // If no animation behaviors survive, drop the whole timing tree.
+        if (!doc.Descendants(p + "spTgt").Any() && !doc.Descendants(p + "cBhvr").Any())
+            return null;
+        var outXml = doc.Root!.ToString(System.Xml.Linq.SaveOptions.DisableFormatting);
+        try { System.Xml.Linq.XDocument.Parse(EnsureAmbientXmlnsOnRootTag(outXml)); }
+        catch { return null; } // surgery left it malformed — drop timing rather than ship a bad slice
+        return outXml;
+    }
 
     private static string EnsureAmbientXmlnsOnRootTag(string xml)
     {
