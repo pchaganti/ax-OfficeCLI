@@ -960,6 +960,32 @@ public static partial class WordBatchEmitter
                 }
             }
         }
+        // Row-level content controls: a <w:sdt> (SdtRow) direct child of
+        // <w:tbl> whose sdtContent wraps a whole <w:tr> — Word's locked-row
+        // shape, used by government forms to make an entire row read-only.
+        // Navigation flattens these to plain rows (GetTableRowsFlattened) so
+        // their cells/text round-trip via the typed emit above, but the SDT
+        // wrapper and its <w:lock> would be lost. Patch each wrapped row back
+        // to its verbatim <w:sdt> block after all typed row/cell content has
+        // been applied. Replace in DESCENDING row order: replacing w:tr[N]
+        // with <w:sdt> removes it from the w:tr axis, shifting the index of
+        // every later w:tr. Mirrors the cell-wrapped pass above.
+        // CONSISTENCY(sdt-wrapped-table).
+        if (containerPath == "/body")
+        {
+            var wrappedRows = word.GetSdtWrappedRowsOfTable(sourcePath);
+            for (int wi = wrappedRows.Count - 1; wi >= 0; wi--)
+            {
+                items.Add(new BatchItem
+                {
+                    Command = "raw-set",
+                    Part = "/document",
+                    Xpath = $"(//w:tbl)[{tableOrdinal}]/w:tr[{wrappedRows[wi].RowOrdinal}]",
+                    Action = "replace",
+                    Xml = wrappedRows[wi].SdtXml,
+                });
+            }
+        }
         // BUG-DUMP-R26-7: clear the cell-XPath context once this table is fully
         // emitted so body/header/footer content AFTER the table (or a parent
         // cell's content after a nested table) doesn't inherit a stale cell

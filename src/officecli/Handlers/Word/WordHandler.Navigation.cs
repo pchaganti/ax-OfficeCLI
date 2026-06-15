@@ -1361,7 +1361,9 @@ public partial class WordHandler
                         })
                         .Cast<OpenXmlElement>(),
                     "tbl" => current.Elements<Table>().Cast<OpenXmlElement>(),
-                    "tr" => current.Elements<TableRow>().Cast<OpenXmlElement>(),
+                    "tr" => current is Table trHostTable
+                        ? GetTableRowsFlattened(trHostTable).Cast<OpenXmlElement>()
+                        : current.Elements<TableRow>().Cast<OpenXmlElement>(),
                     "tc" => current is TableRow tcHostRow
                         ? GetRowCellsFlattened(tcHostRow).Cast<OpenXmlElement>()
                         : current.Elements<TableCell>().Cast<OpenXmlElement>(),
@@ -2716,8 +2718,9 @@ public partial class WordHandler
     private DocumentNode TableToNode(Table table, DocumentNode node, string path, int depth)
     {
         node.Type = "table";
-        node.ChildCount = table.Elements<TableRow>().Count();
-        var firstRow = table.Elements<TableRow>().FirstOrDefault();
+        var flatRows = GetTableRowsFlattened(table);
+        node.ChildCount = flatRows.Count;
+        var firstRow = flatRows.FirstOrDefault();
         // Use grid column count (from TableGrid) instead of cell count for accurate column reporting
         var gridColCount = table.GetFirstChild<TableGrid>()?.Elements<GridColumn>().Count();
         // CONSISTENCY(format-stringy): user-facing numeric counts are
@@ -3071,7 +3074,7 @@ public partial class WordHandler
         if (depth > 0)
         {
             int rowIdx = 0;
-            foreach (var row in table.Elements<TableRow>())
+            foreach (var row in GetTableRowsFlattened(table))
             {
                 var rowNode = new DocumentNode
                 {
