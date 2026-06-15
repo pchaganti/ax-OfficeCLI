@@ -2217,18 +2217,20 @@ public partial class PowerPointHandler : IDocumentHandler
     }
 
     /// <summary>
-    /// Picture-bullet images on a slide: each <c>&lt;a:buBlip&gt;&lt;a:blip
-    /// r:embed="rIdN"&gt;</c> in the slide's shape tree (paragraph-level
-    /// <c>&lt;a:pPr&gt;</c> or shape-level <c>&lt;a:lstStyle&gt;</c>) uses an
-    /// image as the bullet glyph. The bullet markup round-trips verbatim via
-    /// bulletRaw / lstStyleRaw, keeping <c>r:embed="rIdN"</c>, but the slide
-    /// ImagePart it points at is NOT re-created by the typed `add picture` path
-    /// (which only covers <p:pic> shapes), so the rebuilt slide carried a
-    /// dangling relationship and the bullet glyph was lost. Surfaced as
-    /// (rId, content-type, base64) — the SOURCE rId pinned — so the emitter can
-    /// re-create each via an add-part image row BEFORE the shapes are added
+    /// Images a slide references from RAW-passthrough text/bullet contexts that
+    /// the typed emit never re-creates: picture-bullet glyphs
+    /// (<c>&lt;a:buBlip&gt;&lt;a:blip&gt;</c>) and image text-fills
+    /// (<c>&lt;a:defRPr&gt;/&lt;a:rPr&gt;/&lt;a:lvlNpPr&gt;…&lt;a:blipFill&gt;&lt;a:blip&gt;</c>,
+    /// where the glyph outlines are filled with an image). Both round-trip
+    /// verbatim via bulletRaw / lstStyleRaw / defRPrRaw keeping <c>r:embed="rIdN"</c>,
+    /// but the slide ImagePart was never re-emitted (the typed `add picture` path
+    /// only covers <p:pic>, and a shape's own <p:spPr> blipFill is handled by the
+    /// image=true carrier), so the rebuilt slide dangled. Surfaced as
+    /// (rId, content-type, base64) with the SOURCE rId pinned so the emitter
+    /// re-creates each via an add-part image row BEFORE shapes are added
     /// (claiming the source rId before AddPicture auto-assigns around it).
-    /// Mirrors the slide background-image carrier (<see cref="GetSlideImagePartsByRelId"/>).
+    /// Excludes <p:pic> main blips and shape <p:spPr> fills — those round-trip
+    /// elsewhere — so it never double-creates a typed-emitted image.
     /// </summary>
     internal IReadOnlyList<MasterImageInfo> GetSlideBulletImageParts(int slideIdx)
     {
@@ -2236,14 +2238,25 @@ public partial class PowerPointHandler : IDocumentHandler
         if (slideIdx < 1 || slideIdx > slideParts.Count) return Array.Empty<MasterImageInfo>();
         var spTree = GetSlide(slideParts[slideIdx - 1]).CommonSlideData?.ShapeTree;
         if (spTree == null) return Array.Empty<MasterImageInfo>();
-        const string aNs = "http://schemas.openxmlformats.org/drawingml/2006/main";
         var rids = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var el in spTree.Descendants())
+        foreach (var blip in spTree.Descendants<DocumentFormat.OpenXml.Drawing.Blip>())
         {
-            if (el.LocalName != "buBlip" || el.NamespaceUri != aNs) continue;
-            var blip = el.GetFirstChild<DocumentFormat.OpenXml.Drawing.Blip>();
-            var embed = blip?.Embed?.Value;
-            if (!string.IsNullOrEmpty(embed)) rids.Add(embed);
+            var embed = blip.Embed?.Value;
+            if (string.IsNullOrEmpty(embed)) continue;
+            var parent = blip.Parent;
+            if (parent == null) continue;
+            if (parent.LocalName == "buBlip")
+            {
+                rids.Add(embed); // picture-bullet glyph
+            }
+            else if (parent.LocalName == "blipFill")
+            {
+                var gp = parent.Parent?.LocalName;
+                // spPr → shape image-fill (image=true carrier handles it);
+                // pic → typed picture (add picture handles it). Anything else
+                // (defRPr / rPr / lvlNpPr / lstStyle text-fill) is raw-only.
+                if (gp != "spPr" && gp != "pic") rids.Add(embed);
+            }
         }
         return rids.Count == 0 ? Array.Empty<MasterImageInfo>() : GetSlideImagePartsByRelId(slideIdx, rids);
     }
