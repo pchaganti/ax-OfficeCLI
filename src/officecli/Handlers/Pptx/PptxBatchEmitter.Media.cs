@@ -34,6 +34,14 @@ public static partial class PptxBatchEmitter
         // already and are filtered out by GetPictureBlipPassthroughChildrenXml.
         var passthroughBlipChildren = ppt.GetPictureBlipPassthroughChildrenXml(picNode.Path);
 
+        // Companion binary parts the blip references from its extLst (HD Photo
+        // .wdp backup layer, SVG companion). The passthrough above re-appends the
+        // extLst verbatim with <... r:embed="rIdN">, so each companion part must
+        // be re-created with the SAME source rId or the rebuilt picture dangles
+        // (lost effects layer; strict consumers reject the deck). Captured here
+        // and emitted as add-part extpart rows below, after the picture add.
+        var blipCompanions = ppt.GetPictureBlipCompanionParts(picNode.Path);
+
         var binary = ppt.GetImageBinary(picNode.Path);
         if (binary.HasValue)
         {
@@ -104,6 +112,35 @@ public static partial class PptxBatchEmitter
                 Path = replayPath,
                 Props = deferredEffects,
             });
+        }
+
+        // Carry the blip's companion parts (HD Photo .wdp layer, SVG companion)
+        // BEFORE the extLst passthrough raw-set below re-introduces their
+        // r:embed references. The companion relationship is slide-level, so the
+        // host is /slide[N] (extracted from replayPath, which may be nested in a
+        // group). Pin the SOURCE rId + relationship type via add-part extpart.
+        if (blipCompanions.Count > 0
+            && System.Text.RegularExpressions.Regex.Match(replayPath, @"^/slide\[(\d+)\]")
+                is { Success: true } slideM)
+        {
+            var slideHostPath = $"/slide[{slideM.Groups[1].Value}]";
+            foreach (var comp in blipCompanions)
+            {
+                items.Add(new BatchItem
+                {
+                    Command = "add-part",
+                    Parent = slideHostPath,
+                    Type = "extpart",
+                    Props = new Dictionary<string, string>
+                    {
+                        ["rid"] = comp.RelId,
+                        ["rel-type"] = comp.RelType,
+                        ["content-type"] = comp.ContentType,
+                        ["ext"] = comp.TargetExt,
+                        ["data"] = comp.Base64Data,
+                    },
+                });
+            }
         }
 
         // CONSISTENCY(picture-clrchange-rawset): inject <a:clrChange> back

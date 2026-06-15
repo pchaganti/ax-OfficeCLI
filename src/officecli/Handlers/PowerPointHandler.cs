@@ -1527,6 +1527,74 @@ public partial class PowerPointHandler : IDocumentHandler
                 return (tagHost.GetIdOfPart(newTagPart), parentPartPath);
             }
 
+            case "extpart":
+            {
+                // Re-create an arbitrary binary part with a CUSTOM relationship
+                // type + pinned relationship id. Used to carry a picture's blip
+                // companion parts — the HD Photo backup layer (.wdp, rel type
+                // .../hdphoto) and SVG companion — that the typed `add picture`
+                // path doesn't reproduce. The blip's extLst is re-appended
+                // verbatim (passthrough), keeping <... r:embed="rIdN">, so the
+                // companion part must exist with the SAME rId or the rebuilt
+                // picture carries a dangling relationship (lost effects layer;
+                // strict consumers reject the package). Mirrors add-part image
+                // but preserves the source relationship type via AddExtendedPart.
+                if (properties == null
+                    || !properties.TryGetValue("data", out var epB64) || string.IsNullOrEmpty(epB64))
+                    throw new ArgumentException("add-part extpart requires property 'data' (base64 binary)");
+                if (!properties.TryGetValue("rid", out var epRid) || string.IsNullOrEmpty(epRid))
+                    throw new ArgumentException("add-part extpart requires property 'rid'");
+                if (!properties.TryGetValue("rel-type", out var epRelType) || string.IsNullOrEmpty(epRelType))
+                    throw new ArgumentException("add-part extpart requires property 'rel-type' (the relationship type URI)");
+                var epContentType = properties.TryGetValue("content-type", out var epct) && !string.IsNullOrEmpty(epct)
+                    ? epct : "application/octet-stream";
+                var epExt = properties.TryGetValue("ext", out var epe) && !string.IsNullOrEmpty(epe) ? epe : ".bin";
+                byte[] epBytes;
+                try { epBytes = Convert.FromBase64String(epB64); }
+                catch (FormatException) { throw new ArgumentException("add-part extpart: 'data' is not valid base64"); }
+
+                OpenXmlPartContainer epHost;
+                var epSmMatch = Regex.Match(parentPartPath, @"^/slideMaster\[(\d+)\]$");
+                var epSlMatch = epSmMatch.Success ? null : Regex.Match(parentPartPath, @"^/slideLayout\[(\d+)\]$");
+                var epSldMatch = (epSmMatch.Success || (epSlMatch?.Success ?? false))
+                    ? null : Regex.Match(parentPartPath, @"^/slide\[(\d+)\]$");
+                if (epSmMatch.Success)
+                {
+                    var i = int.Parse(epSmMatch.Groups[1].Value);
+                    var ps = presentationPart.SlideMasterParts.ToList();
+                    if (i > ps.Count) { GrowSlideMasterParts(i); ps = presentationPart.SlideMasterParts.ToList(); }
+                    if (i < 1 || i > ps.Count) throw new ArgumentException($"slideMaster index {i} out of range");
+                    epHost = ps[i - 1];
+                }
+                else if (epSlMatch != null && epSlMatch.Success)
+                {
+                    var i = int.Parse(epSlMatch.Groups[1].Value);
+                    var ps = presentationPart.SlideMasterParts.SelectMany(mm => mm.SlideLayoutParts).ToList();
+                    if (i > ps.Count) { GrowSlideLayoutParts(i); ps = presentationPart.SlideMasterParts.SelectMany(mm => mm.SlideLayoutParts).ToList(); }
+                    if (i < 1 || i > ps.Count) throw new ArgumentException($"slideLayout index {i} out of range");
+                    epHost = ps[i - 1];
+                }
+                else if (epSldMatch != null && epSldMatch.Success)
+                {
+                    var i = int.Parse(epSldMatch.Groups[1].Value);
+                    var ps = GetSlideParts().ToList();
+                    if (i < 1 || i > ps.Count) throw new ArgumentException($"slide index {i} out of range");
+                    epHost = ps[i - 1];
+                }
+                else
+                    throw new ArgumentException(
+                        "add-part extpart: parent must be /slide[N], /slideLayout[N], or /slideMaster[N]");
+
+                // Idempotent — if the rId is already taken on the host, skip.
+                if (epHost.Parts.Any(p => p.RelationshipId == epRid)
+                    || epHost.ExternalRelationships.Any(r => r.Id == epRid))
+                    return (epRid, parentPartPath);
+                var epPart = epHost.AddExtendedPart(epRelType, epContentType, epExt, epRid);
+                using (var epStream = new MemoryStream(epBytes))
+                    epPart.FeedData(epStream);
+                return (epRid, parentPartPath);
+            }
+
             case "theme":
             {
                 // Attach a DISTINCT theme part to a slideMaster / notesMaster with
@@ -2766,6 +2834,84 @@ public partial class PowerPointHandler : IDocumentHandler
                 && kid.NamespaceUri == "http://schemas.openxmlformats.org/drawingml/2006/main")
                 continue;
             result.Add(kid.OuterXml);
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Companion binary parts a picture's <a:blip> references from inside its
+    /// <a:extLst> — beyond the main <c>r:embed</c>. The common cases:
+    /// <list type="bullet">
+    /// <item>HD Photo backup layer (<c>&lt;a14:imgProps&gt;&lt;a14:imgLayer r:embed&gt;</c>
+    /// → a <c>.wdp</c> part, relationship type <c>.../2007/relationships/hdphoto</c>)
+    /// carrying advanced image effects.</item>
+    /// <item>SVG companion (<c>&lt;asvg:svgBlip r:embed&gt;</c> → the vector
+    /// original behind a raster fallback).</item>
+    /// </list>
+    /// The main image round-trips via <c>add picture</c> and the blip's extLst is
+    /// re-appended verbatim by <see cref="GetPictureBlipPassthroughChildrenXml"/>,
+    /// so the companion <c>r:embed="rIdN"</c> survives — but the part it points at
+    /// was never re-emitted, leaving a dangling relationship (lost image-effects
+    /// layer; stricter consumers reject the package). Surfaced as
+    /// (rId, relationship-type, content-type, target-ext, base64) so EmitPicture
+    /// can pin each via an <c>add-part extpart</c> row. Mirrors the master/layout
+    /// image carrier. Returns empty when the blip carries no companion references.
+    /// </summary>
+    public readonly record struct BlipCompanionInfo(
+        string RelId, string RelType, string ContentType, string TargetExt, string Base64Data);
+
+    public IReadOnlyList<BlipCompanionInfo> GetPictureBlipCompanionParts(string picturePath)
+    {
+        var empty = (IReadOnlyList<BlipCompanionInfo>)Array.Empty<BlipCompanionInfo>();
+        var m = Regex.Match(picturePath,
+            @"^/slide\[(\d+)\]/(?:.+/)?picture\[(?:@id=)?(\d+)\]$");
+        if (!m.Success) return empty;
+        var slideIdx = int.Parse(m.Groups[1].Value);
+        var idOrIdx = int.Parse(m.Groups[2].Value);
+        var byId = picturePath.Contains("@id=", StringComparison.Ordinal);
+        var parts = GetSlideParts().ToList();
+        if (slideIdx < 1 || slideIdx > parts.Count) return empty;
+        var slidePart = parts[slideIdx - 1];
+        var shapeTree = GetSlide(slidePart).CommonSlideData?.ShapeTree;
+        if (shapeTree == null) return empty;
+        var pictures = shapeTree.Descendants<Picture>().ToList();
+        Picture? pic = byId
+            ? pictures.FirstOrDefault(p =>
+                p.NonVisualPictureProperties?.NonVisualDrawingProperties?.Id?.Value
+                    == (uint)idOrIdx)
+            : (idOrIdx >= 1 && idOrIdx <= pictures.Count ? pictures[idOrIdx - 1] : null);
+        if (pic == null) return empty;
+        var blip = pic.BlipFill?.GetFirstChild<DocumentFormat.OpenXml.Drawing.Blip>();
+        if (blip == null) return empty;
+        var mainEmbed = blip.Embed?.Value;
+
+        const string relNs = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+        var result = new List<BlipCompanionInfo>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        // Walk every descendant of the blip (the extLst lives there) and collect
+        // r:embed / r:link / r:id references other than the main image.
+        foreach (var el in blip.Descendants())
+        {
+            foreach (var attr in el.GetAttributes())
+            {
+                if (attr.NamespaceUri != relNs) continue;
+                if (attr.LocalName is not ("embed" or "link" or "id")) continue;
+                var rid = attr.Value;
+                if (string.IsNullOrEmpty(rid) || rid == mainEmbed || !seen.Add(rid)) continue;
+                try
+                {
+                    var part = slidePart.GetPartById(rid);
+                    using var s = part.GetStream(FileMode.Open, FileAccess.Read);
+                    using var ms = new MemoryStream();
+                    s.CopyTo(ms);
+                    var ext = System.IO.Path.GetExtension(part.Uri.OriginalString);
+                    if (string.IsNullOrEmpty(ext)) ext = ".bin";
+                    result.Add(new BlipCompanionInfo(
+                        rid, part.RelationshipType, part.ContentType, ext,
+                        Convert.ToBase64String(ms.ToArray())));
+                }
+                catch { /* external / unresolvable — skip (dangling already) */ }
+            }
         }
         return result;
     }
