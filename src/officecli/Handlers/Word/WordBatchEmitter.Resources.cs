@@ -2221,24 +2221,35 @@ public static partial class WordBatchEmitter
                 // the cell's FIRST child, before any block content. Prepending
                 // the rich SDT to the cell landed it BEFORE <w:tcPr>
                 // (<w:tc><w:sdt/><w:tcPr/>…) → "unexpected child element tcPr"
-                // and an invalid file. The rebuilt cell always carries a tcPr
-                // (AddTable seeds the cell width), so for the empty-cell case
-                // target the cell's tcPr with `insertafter` — the SDT lands
-                // after tcPr and before the auto-seeded leading paragraph,
+                // and an invalid file. For the empty-cell case, anchor the SDT
+                // on the cell's auto-seeded leading paragraph with `insertbefore`
+                // — AddTable always seeds exactly one <w:p> per cell, and CT_Tc
+                // orders that <w:p> after any <w:tcPr>, so inserting before it
+                // lands the SDT after tcPr (if present) and ahead of the seed,
                 // preserving CT_Tc order and the source's "SDT is the cell's
-                // leading content" shape. The append case (cell already has
-                // emitted content) already lands after tcPr + that content.
+                // leading content" shape regardless of whether the cell has a
+                // tcPr. The append case (cell already has emitted content)
+                // already lands after tcPr + that content.
                 //
-                // BUG-DUMP-R28-4: the insert-after-tcPr placement is a TABLE-CELL
+                // BUG-DUMP-CELLSDT-NOTCPR: an earlier revision targeted the cell's
+                // <w:tcPr> with `insertafter`, assuming "the rebuilt cell always
+                // carries a tcPr (AddTable seeds the cell width)". That stopped
+                // being true once the grid width became canonical on <w:tblGrid>
+                // and AddTable began emitting bare cells (<w:tc><w:p/></w:tc> with
+                // no tcPr). A cell whose sole content is a rich block SDT then has
+                // no tcPr, so `{cellXPath}/w:tcPr` matched nothing and replay threw
+                // ("XPath matched no elements: …/w:tc[1]/w:tcPr"), dropping the SDT
+                // entirely (round-trip data loss). Anchoring on the always-present
+                // seed <w:p> instead is robust to tcPr presence.
+                //
+                // BUG-DUMP-R28-4: the insert-before-seed placement is a TABLE-CELL
                 // rule and must fire ONLY when the host xpath actually resolves to
                 // a <w:tc>. This helper is reused for header/footer-body block
                 // SDTs (EmitHeaderFooter passes the /w:hdr or /w:ftr root as the
-                // host xpath); a header/footer root has no <w:tcPr>, so the
-                // `{host}/w:tcPr` selector matched nothing and replay threw
-                // ("XPath matched no elements: /w:ftr/w:tcPr"), losing the footer
-                // SDT entirely. Gate on a genuine cell host (xpath ending in
-                // `…/w:tc` or `…/w:tc[N]`); a non-cell host (hdr/ftr root) keeps
-                // the pre-R27-4 plain prepend into the host root.
+                // host xpath); a header/footer root has no auto-seeded cell
+                // paragraph, so it keeps the plain prepend into the host root.
+                // Gate on a genuine cell host (xpath ending in `…/w:tc` or
+                // `…/w:tc[N]`).
                 bool hostIsCell = System.Text.RegularExpressions.Regex.IsMatch(
                     cellXPath, @"/w:tc(\[\d+\])?$");
                 if (cellHasContent)
@@ -2258,8 +2269,8 @@ public static partial class WordBatchEmitter
                     {
                         Command = "raw-set",
                         Part = rawPart,
-                        Xpath = $"{cellXPath}/w:tcPr",
-                        Action = "insertafter",
+                        Xpath = $"{cellXPath}/w:p[1]",
+                        Action = "insertbefore",
                         Xml = rawXml
                     });
                     // SDT now sits ahead of AddTable's auto-seed paragraph; the
