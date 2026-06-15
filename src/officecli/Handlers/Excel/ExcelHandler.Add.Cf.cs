@@ -131,6 +131,14 @@ public partial class ExcelHandler
         var sqref = ValidateSqref(properties.GetValueOrDefault("sqref") ?? properties.GetValueOrDefault("range") ?? properties.GetValueOrDefault("ref", cfPathRange), "ref");
         var minVal = properties.ContainsKey("min") ? properties["min"] : (string?)null;
         var maxVal = properties.ContainsKey("max") ? properties["max"] : (string?)null;
+        // The schema documents min/max as "numeric or 'auto'". 'auto' is the
+        // automatic-bound sentinel, NOT a literal value: emitting it as a
+        // numeric cfvo (<cfvo type="num" val="auto"/>) is malformed and Excel
+        // silently drops the whole data bar. Map it back to null so the cfvo
+        // builders below pick the type="min"/type="max" (and x14 AutoMin/AutoMax)
+        // branches — identical to the user omitting the bound entirely.
+        if (string.Equals(minVal, "auto", StringComparison.OrdinalIgnoreCase)) minVal = null;
+        if (string.Equals(maxVal, "auto", StringComparison.OrdinalIgnoreCase)) maxVal = null;
         var cfColor = properties.GetValueOrDefault("color", "638EC6");
         var normalizedColor = ParseHelpers.NormalizeArgbColor(cfColor);
 
