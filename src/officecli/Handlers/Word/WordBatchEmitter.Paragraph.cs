@@ -1538,67 +1538,38 @@ public static partial class WordBatchEmitter
         // co-located <w:t> text in the same run — survive the round-trip.
         // RunToNode stamps Format["_hasHyphen"].
         if (!run.Format.ContainsKey("_hasHyphen")) return false;
-        // Only the /body host has the addressable last() paragraph anchor the
-        // raw-set targets; a header/footer/cell-hosted hyphen has no body anchor.
-        // BUG-DUMP-R47-2: the prior code warned and returned true WITHOUT emitting
-        // anything — silently dropping the run's ENTIRE <w:t> text (the warning's
-        // "the run's text is preserved" was a lie). A footer run
-        // "<w:softHyphen/><w:t>336, 42 USC § …contact </w:t>" vanished whole,
-        // shortening the footer enough to shift body pagination. Emit the run
-        // through the standard text path instead: run.Text carries GetRunText's
-        // hyphen glyph (U+00AD soft / U+2011 non-breaking), so the visible text —
-        // and a literal-glyph hyphen — survive; only the structural element
-        // degrades to that glyph. paraTargetPath is the correct header/footer/cell
-        // paragraph anchor (EmitPlainOrHyperlinkRun also reproduces the sibling
-        // runs' noMarkRPrInherit/font props and any hyperlink wrapper).
-        if (parentPath != "/body")
-        {
-            // BUG-DUMP-HYPHEN-CELL: a header/footer/table-cell host has no body
-            // last() anchor for the raw-set append the /body path uses. Previously
-            // this degraded the structural hyphen to a literal U+2011/U+00AD glyph
-            // — but in a narrow table column the glyph wraps DIFFERENTLY than a
-            // <w:noBreakHyphen/> element, reflowing the cell and visibly diverging
-            // (frc QRP "Notes" column). Emit a typed `add r --prop hyphen=…` that
-            // routes through the normal parent resolution (works in any host);
-            // AddRun rebuilds the structural <w:noBreakHyphen/>/<w:softHyphen/>
-            // element, splitting `text` at the cached glyph in source order.
-            var hyRaw = word.RawElementXml(run.Path);
-            string hyKind = !string.IsNullOrEmpty(hyRaw) && hyRaw.Contains("softHyphen", StringComparison.Ordinal)
-                ? "soft" : "noBreak";
-            var hyProps = FilterEmittableProps(run.Format);
-            hyProps.Remove("_hasHyphen");
-            hyProps["hyphen"] = hyKind;
-            if (!string.IsNullOrEmpty(run.Text)) hyProps["text"] = run.Text!;
-            else hyProps.Remove("text");
-            var hyParent = ResolveHyperlinkParent(run, paraTargetPath, items);
-            items.Add(new BatchItem
-            {
-                Command = "add",
-                Parent = hyParent,
-                Type = "r",
-                Props = hyProps
-            });
-            return true;
-        }
-        var rawXml = word.RawElementXml(run.Path);
-        if (string.IsNullOrEmpty(rawXml)) return true; // nothing to emit
-        // Same external-rel guard as the other raw-set fallbacks — a dangling
-        // r:id/r:embed would not resolve in the rebuilt document.
-        if (HasExternalRelRef(rawXml!))
-        {
-            ctx?.Warnings.Add(new DocxUnsupportedWarning(
-                Element: "hyphen",
-                Path: run.Path,
-                Reason: "hyphen run carries an external relationship reference and could not be serialized verbatim for round-trip"));
-            return true;
-        }
+        // BUG-DUMP-HYPHEN-CELL + BUG-DUMP-HYPHEN-RESERIALIZE: emit a structural
+        // hyphen run (<w:noBreakHyphen/> / <w:softHyphen/>) as a typed
+        // `add r --prop hyphen=noBreak|soft` for EVERY host — body, header,
+        // footer, table cell. AddRun rebuilds the element via the SDK at apply
+        // time (splitting `text` at the cached glyph in source order), so it
+        // survives in any host.
+        //
+        // The OLD /body path used a raw-set append of the verbatim <w:r> against
+        // /w:body/w:p[last()]. That inserted the element correctly, but when a
+        // LATER `add r` in the SAME paragraph mutated p[last()], the SDK
+        // re-serialized the paragraph and silently converted the raw-injected
+        // <w:noBreakHyphen/> back to its U+2011 glyph (tester: 5/159 in a real
+        // FRC report degraded this way). The typed `add r hyphen=` path has no
+        // such re-serialization hazard — AddRun builds the element through the
+        // live DOM in document order, like any other run. Dropping the raw-set
+        // also removes the external-rel guard that path needed; a structural
+        // hyphen run carries no relationship reference.
+        string hyKind = run.Format.TryGetValue("_hasHyphen", out var hk)
+            && string.Equals(hk?.ToString(), "soft", StringComparison.OrdinalIgnoreCase)
+            ? "soft" : "noBreak";
+        var hyProps = FilterEmittableProps(run.Format);
+        hyProps.Remove("_hasHyphen");
+        hyProps["hyphen"] = hyKind;
+        if (!string.IsNullOrEmpty(run.Text)) hyProps["text"] = run.Text!;
+        else hyProps.Remove("text");
+        var hyParent = ResolveHyperlinkParent(run, paraTargetPath, items);
         items.Add(new BatchItem
         {
-            Command = "raw-set",
-            Part = "/document",
-            Xpath = "/w:document/w:body/w:p[last()]",
-            Action = "append",
-            Xml = rawXml!
+            Command = "add",
+            Parent = hyParent,
+            Type = "r",
+            Props = hyProps
         });
         return true;
     }
@@ -3840,6 +3811,20 @@ public static partial class WordBatchEmitter
                 rProps["text"] = "\t";
             else if (!string.IsNullOrEmpty(hlRuns[k].Text))
                 rProps["text"] = hlRuns[k].Text!;
+            // BUG-DUMP-HYPHEN-RESERIALIZE: a structural hyphen run
+            // (<w:noBreakHyphen/>/<w:softHyphen/>) INSIDE a hyperlink reaches the
+            // structured-hyperlink trailing-run emit, not TryEmitHyphenRun. Emit
+            // it with the hyphen= prop so AddRun rebuilds the element instead of
+            // persisting the U+2011/U+00AD glyph as literal <w:t> text (the glyph
+            // wraps differently and degrades the round-trip). Mirrors the
+            // host-agnostic hyphen emit; AddRun accepts a hyperlink parent.
+            // Read _hasHyphen from the ORIGINAL run Format — FilterEmittableProps
+            // (rProps) strips it via SkipKeys, so it's gone from rProps here.
+            if (hlRuns[k].Format.TryGetValue("_hasHyphen", out var khKindObj))
+            {
+                rProps["hyphen"] = string.Equals(khKindObj?.ToString(), "soft", StringComparison.OrdinalIgnoreCase)
+                    ? "soft" : "noBreak";
+            }
             items.Add(new BatchItem
             {
                 Command = "add",

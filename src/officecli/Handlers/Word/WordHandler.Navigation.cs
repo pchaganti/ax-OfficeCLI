@@ -1871,9 +1871,14 @@ public partial class WordHandler
         // TryEmitHyphenRun re-inserts the verbatim <w:r> (the hyphen element AND
         // any co-located <w:t> text) at its source position. node.Type/node.Text
         // are untouched — the flag only routes the emitter.
-        if (run.GetFirstChild<NoBreakHyphen>() != null
-            || run.GetFirstChild<SoftHyphen>() != null)
-            node.Format["_hasHyphen"] = true;
+        // Record the KIND ("soft"/"noBreak") so every emit site (TryEmitHyphenRun
+        // AND EmitStructuredHyperlink's trailing-run path) can rebuild the right
+        // structural element without re-probing the raw XML. _hasHyphen stays
+        // truthy (non-empty string) so the existing routing checks are unaffected.
+        if (run.GetFirstChild<SoftHyphen>() != null)
+            node.Format["_hasHyphen"] = "soft";
+        else if (run.GetFirstChild<NoBreakHyphen>() != null)
+            node.Format["_hasHyphen"] = "noBreak";
         // BUG-DUMP-R40-2: surface <w:annotationRef/> (the comment-reference mark
         // that opens every Word-authored comment body). GetRunText emits no
         // glyph for it, so the run looked empty and the typed `add comment`/`add
