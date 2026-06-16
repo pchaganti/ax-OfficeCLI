@@ -1944,11 +1944,18 @@ public partial class WordHandler
         var tpp = tblPr.GetFirstChild<TablePositionProperties>();
         if (tpp == null)
         {
-            tpp = new TablePositionProperties
-            {
-                VerticalAnchor = VerticalAnchorValues.Page,
-                HorizontalAnchor = HorizontalAnchorValues.Page
-            };
+            // BUG-DUMP-TBLPPR-HORZANCHOR: do NOT bake in default
+            // vertAnchor/horzAnchor=page. Both attributes are OPTIONAL in
+            // ST_TblPPr (Word's default is text/column-relative). Hard-defaulting
+            // them meant a dump→batch of a floating table whose source set only
+            // some tblp.* attrs (e.g. vertAnchor=text + leftFromText, no
+            // horzAnchor) gained a spurious horzAnchor="page" — which re-anchored
+            // the table to the page's left edge, so the following paragraph (a
+            // table's "Notes" caption) wrapped BESIDE the half-width table instead
+            // of flowing below it (visible layout corruption). Create the element
+            // empty; each anchor is set only when the caller explicitly provides
+            // tblp.horzAnchor / tblp.vertAnchor, matching the source faithfully.
+            tpp = new TablePositionProperties();
             // CONSISTENCY(tblpr-schema-order): tblpPr is rank 1.
             InsertTblPrChildInOrder(tblPr, tpp);
         }
