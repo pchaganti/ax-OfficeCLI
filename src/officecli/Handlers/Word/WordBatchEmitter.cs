@@ -193,6 +193,12 @@ public static partial class WordBatchEmitter
         EmitLatentStylesRaw(word, items);
         EmitThemeRaw(word, items, warnings);
         EmitSettingsRaw(word, items);
+        // BUG-DUMP-NOTESEP-CUSTOM: recreate a separator-only footnotes/endnotes
+        // part when its separator is CUSTOMIZED (PAGE field / "- N -" text). Runs
+        // after EmitSettingsRaw so the kept -1/0 footnotePr refs resolve against
+        // the part recreated here; no body-ref dependency (only fires when the
+        // doc has NO body notes — the case `add footnote` would not cover).
+        EmitNoteSeparatorsRaw(word, items);
         // BUG-DUMP-R42-3: round-trip word/fontTable.xml (font-face + altName
         // substitutions). No ordering dependency on body refs; emit alongside
         // the other raw resource parts.

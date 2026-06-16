@@ -227,6 +227,106 @@ public static partial class WordBatchEmitter
         }
     }
 
+    // A footnotes/endnotes part that holds ONLY the reserved separator (-1) and
+    // continuationSeparator (0) special notes is "default" — and droppable —
+    // when each separator's paragraph carries nothing but the bare separator
+    // glyph mark (<w:separator/> / <w:continuationSeparator/>). Word auto-manages
+    // that default, so a blank target recreates an equivalent on open.
+    //
+    // But a separator can be CUSTOMIZED: real templates push a PAGE/NUMPAGES
+    // field, "- N -" page-number text, or rule formatting into the separator
+    // note's runs. Dropping such a part loses authored content silently. This
+    // probe returns true when a notes part's separator/continuationSeparator
+    // notes carry ANY run content beyond the bare glyph mark — the signal that
+    // the whole part must be raw-emitted (and its settings footnotePr refs kept).
+    //
+    // Conservative by construction: only -1/0 special notes are inspected (body
+    // notes are round-tripped via `add footnote`/`add endnote` regardless), and
+    // any parse failure returns false (fall back to the existing drop path).
+    private static bool HasCustomNoteSeparator(string notesXml)
+    {
+        if (string.IsNullOrEmpty(notesXml) || !notesXml.StartsWith("<")) return false;
+        // Fast path: a default separator paragraph is just <w:separator/> /
+        // <w:continuationSeparator/>; any field / instrText / drawn text means
+        // there is custom content worth inspecting.
+        if (!notesXml.Contains("fldChar") && !notesXml.Contains("instrText")
+            && !notesXml.Contains("<w:t") && !notesXml.Contains("<w:drawing")
+            && !notesXml.Contains("<w:pict"))
+            return false;
+        try
+        {
+            var doc = System.Xml.Linq.XDocument.Parse(notesXml);
+            if (doc.Root == null) return false;
+            var wNs = (System.Xml.Linq.XNamespace)"http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+            foreach (var note in doc.Root.Elements())
+            {
+                if (note.Name.LocalName is not ("footnote" or "endnote")) continue;
+                var type = note.Attribute(wNs + "type")?.Value;
+                if (type is not ("separator" or "continuationSeparator")) continue;
+                // Any run carrying a field char, field instruction, drawn text,
+                // or drawing/picture is custom content the bare glyph mark lacks.
+                bool custom = note.Descendants(wNs + "fldChar").Any()
+                    || note.Descendants(wNs + "instrText").Any()
+                    || note.Descendants(wNs + "t").Any()
+                    || note.Descendants(wNs + "drawing").Any()
+                    || note.Descendants(wNs + "pict").Any();
+                if (custom) return true;
+            }
+            return false;
+        }
+        catch { return false; }
+    }
+
+    // Raw-emit word/footnotes.xml / word/endnotes.xml as a whole-part replace
+    // when the source carries a CUSTOMIZED separator (HasCustomNoteSeparator)
+    // but NO body-referenced notes — the only case the `add footnote`/`add
+    // endnote` path does not already recreate the part. The settings raw-set
+    // keeps the -1/0 footnotePr refs in this case (see EmitSettingsRaw), so the
+    // refs resolve against the part we recreate here. A doc with body notes
+    // recreates the part through Add (separators included) and skips this; a doc
+    // with a plain default separator drops the part as before.
+    //
+    // Apply side: `raw-set /footnotes` / `/endnotes` create-or-replace the part
+    // (WordHandler.RawSet, mirroring the /numbering and /theme branches).
+    private static string SafeRaw(WordHandler word, string zipUri)
+    {
+        try { return word.Raw(zipUri); }
+        catch { return ""; }
+    }
+
+    private static void EmitNoteSeparatorsRaw(WordHandler word, List<BatchItem> items)
+    {
+        EmitOneNoteSeparatorRaw(word, items, "footnote", "/word/footnotes.xml",
+            "/footnotes", "/w:footnotes");
+        EmitOneNoteSeparatorRaw(word, items, "endnote", "/word/endnotes.xml",
+            "/endnotes", "/w:endnotes");
+    }
+
+    private static void EmitOneNoteSeparatorRaw(
+        WordHandler word, List<BatchItem> items, string queryKind,
+        string zipUri, string semanticPart, string rootXpath)
+    {
+        // Body notes recreate the part via Add — skip (Query filters -1/0).
+        bool hasBody = false;
+        try { hasBody = word.Query(queryKind).Count > 0; } catch { }
+        if (hasBody) return;
+
+        string xml;
+        try { xml = word.Raw(zipUri); }
+        catch { return; } // source has no such part
+        xml = CanonicalizeRawXml(xml);
+        if (!HasCustomNoteSeparator(xml)) return; // plain default — drop as before
+
+        items.Add(new BatchItem
+        {
+            Command = "raw-set",
+            Part = semanticPart,
+            Xpath = rootXpath,
+            Action = "replace",
+            Xml = xml
+        });
+    }
+
     // <w:numPicBullet> defines a picture (image) list bullet; a level opts into
     // it with <w:lvlPicBulletId>. The picture lives in word/media/* referenced
     // by numbering.xml.rels (r:id inside the numPicBullet's VML/drawing). The
@@ -557,7 +657,16 @@ public static partial class WordBatchEmitter
         bool hasBodyFootnotes = false, hasBodyEndnotes = false;
         try { hasBodyFootnotes = word.Query("footnote").Count > 0; } catch { }
         try { hasBodyEndnotes = word.Query("endnote").Count > 0; } catch { }
-        xml = StripDanglingNoteSeparatorRefs(xml, hasBodyFootnotes, hasBodyEndnotes);
+        // BUG-DUMP-NOTESEP-CUSTOM: a separator-only notes part is recreated by
+        // EmitNoteSeparatorsRaw when its separator is CUSTOMIZED (PAGE field,
+        // "- N -" text, …). In that case the -1/0 footnotePr refs must survive
+        // the strip too, so they resolve against the raw-emitted part — same
+        // reasoning as the body-notes case, different recreation path.
+        bool keepFootnoteSeps = hasBodyFootnotes
+            || HasCustomNoteSeparator(SafeRaw(word, "/word/footnotes.xml"));
+        bool keepEndnoteSeps = hasBodyEndnotes
+            || HasCustomNoteSeparator(SafeRaw(word, "/word/endnotes.xml"));
+        xml = StripDanglingNoteSeparatorRefs(xml, keepFootnoteSeps, keepEndnoteSeps);
 
         items.Add(new BatchItem
         {

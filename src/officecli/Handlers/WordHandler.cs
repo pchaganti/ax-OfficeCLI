@@ -928,6 +928,8 @@ public partial class WordHandler : IDocumentHandler
             "/settings" => mainPart.DocumentSettingsPart?.Settings?.OuterXml ?? "(no settings)",
             "/numbering" => mainPart.NumberingDefinitionsPart?.Numbering?.OuterXml ?? "(no numbering)",
             "/comments" => mainPart.WordprocessingCommentsPart?.Comments?.OuterXml ?? "(no comments)",
+            "/footnotes" => mainPart.FootnotesPart?.Footnotes?.OuterXml ?? "(no footnotes)",
+            "/endnotes" => mainPart.EndnotesPart?.Endnotes?.OuterXml ?? "(no endnotes)",
             "/theme" => mainPart.ThemePart?.Theme?.OuterXml ?? "(no theme)",
             // BUG-DUMP-R42-3: word/fontTable.xml declares font faces +
             // altName substitutions (e.g. 方正小标宋简体 altName=方正舒体).
@@ -938,7 +940,7 @@ public partial class WordHandler : IDocumentHandler
             _ when partPath.StartsWith("/header") => GetHeaderRawXml(partPath),
             _ when partPath.StartsWith("/footer") => GetFooterRawXml(partPath),
             _ when partPath.StartsWith("/chart") => GetChartRawXml(partPath),
-            _ => throw new ArgumentException($"Unknown part: {partPath}. Available: /document, /styles, /settings, /numbering, /comments, /theme, /header[n], /footer[n], /chart[n]")
+            _ => throw new ArgumentException($"Unknown part: {partPath}. Available: /document, /styles, /settings, /numbering, /comments, /footnotes, /endnotes, /theme, /header[n], /footer[n], /chart[n]")
         };
     }
 
@@ -1025,6 +1027,36 @@ public partial class WordHandler : IDocumentHandler
         }
         else if (lowerPath is "/comments")
             rootElement = mainPart.WordprocessingCommentsPart?.Comments ?? throw new InvalidOperationException("No comments part");
+        else if (lowerPath is "/footnotes")
+        {
+            // CONSISTENCY(raw-set-create-missing-part): blank docs have no
+            // FootnotesPart; a dump→batch round-trip emits raw-set /footnotes
+            // replace ONLY when the source carries a CUSTOMIZED separator note
+            // (PAGE field / "- N -" text) and has no body notes — the gap the
+            // typed `add footnote` path does not cover (it recreates the part
+            // with DEFAULT separators only). Lazily create the part + an empty
+            // <w:footnotes> root so RawXmlHelper.Execute can match /w:footnotes
+            // and replace it with the dumped XML, which re-introduces the custom
+            // separator the kept settings footnotePr -1/0 refs resolve against.
+            var fnPart = mainPart.FootnotesPart ?? mainPart.AddNewPart<FootnotesPart>();
+            if (fnPart.Footnotes == null)
+            {
+                fnPart.Footnotes = new Footnotes();
+                fnPart.Footnotes.Save();
+            }
+            rootElement = fnPart.Footnotes;
+        }
+        else if (lowerPath is "/endnotes")
+        {
+            // CONSISTENCY(raw-set-create-missing-part): mirrors /footnotes.
+            var enPart = mainPart.EndnotesPart ?? mainPart.AddNewPart<EndnotesPart>();
+            if (enPart.Endnotes == null)
+            {
+                enPart.Endnotes = new Endnotes();
+                enPart.Endnotes.Save();
+            }
+            rootElement = enPart.Endnotes;
+        }
         else if (lowerPath is "/theme")
         {
             // BUG-DUMP-R37-5: a theme-LESS source must round-trip with NO theme
