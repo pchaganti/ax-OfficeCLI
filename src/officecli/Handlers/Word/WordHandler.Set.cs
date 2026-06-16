@@ -1265,38 +1265,33 @@ public partial class WordHandler
                 // CONSISTENCY(ind-chars): "Nlines" suffix routes through the
                 // hundredths-of-line attr (w:beforeLines), mirroring the
                 // dedicated `spaceBeforeLines=` key. P1-7.
-                // Always clear the other unit's attr — `<w:spacing>` lets
-                // before/beforeLines coexist with `lines` winning at render
-                // time, so a user-issued `spaceBefore=12pt` would silently
-                // lose to an inherited `beforeLines` if we kept it.
+                // BUG-DUMP-SPACING-BOTHUNITS: a paragraph may legitimately carry
+                // BOTH w:before (twips) AND w:beforeLines (hundredths-of-line) —
+                // Word stores both and the dump emits both as spaceBefore +
+                // spaceBeforeLines. The old within-axis clear (spaceBefore wipes
+                // BeforeLines) dropped one of the pair on replay: a `set` with
+                // both keys applied in sequence kept only the last writer, so a
+                // table cell's `<w:spacing w:before="144" w:beforeLines="60"/>`
+                // round-tripped as beforeLines-only — the cell shrank, the row
+                // got shorter, and the form reflowed. AddParagraph already keeps
+                // both (no clear); match it here. The "Nlines" suffix still routes
+                // to the lines attr but no longer nulls the twips sibling — both
+                // coexist exactly as the source had them.
                 if (TryParseLinesSuffix(value, out var sblHundredths))
-                {
                     spacingBefore.BeforeLines = int.Parse(sblHundredths, System.Globalization.CultureInfo.InvariantCulture);
-                    spacingBefore.Before = null;
-                }
                 else
-                {
                     spacingBefore.Before = SpacingConverter.ParseWordSpacing(value).ToString();
-                    spacingBefore.BeforeLines = null;
-                }
                 return true;
             case "spaceafter":
                 var spacingAfter = pProps.SpacingBetweenLines ?? (pProps.SpacingBetweenLines = new SpacingBetweenLines());
                 if (TryParseLinesSuffix(value, out var salHundredths))
-                {
                     spacingAfter.AfterLines = int.Parse(salHundredths, System.Globalization.CultureInfo.InvariantCulture);
-                    spacingAfter.After = null;
-                }
                 else
-                {
                     spacingAfter.After = SpacingConverter.ParseWordSpacing(value).ToString();
-                    spacingAfter.AfterLines = null;
-                }
                 return true;
             case "spacebeforelines":
                 var spacingBL = pProps.SpacingBetweenLines ?? (pProps.SpacingBetweenLines = new SpacingBetweenLines());
                 spacingBL.BeforeLines = ParseHelpers.SafeParseInt(value, "spaceBeforeLines");
-                spacingBL.Before = null;
                 return true;
             // BUG-DUMP-R44-4: auto-spacing on/off toggles (w:beforeAutospacing /
             // w:afterAutospacing). Mirror AddParagraph; round-trips the bool the
@@ -1312,7 +1307,6 @@ public partial class WordHandler
             case "spaceafterlines":
                 var spacingAL = pProps.SpacingBetweenLines ?? (pProps.SpacingBetweenLines = new SpacingBetweenLines());
                 spacingAL.AfterLines = ParseHelpers.SafeParseInt(value, "spaceAfterLines");
-                spacingAL.After = null;
                 return true;
             case "linespacing":
                 var spacingLine = pProps.SpacingBetweenLines ?? (pProps.SpacingBetweenLines = new SpacingBetweenLines());
