@@ -3696,6 +3696,15 @@ public static partial class WordBatchEmitter
             // plain `add r`, whose color parser must not see "inherit".
             if (!hlColorDropped && !rProps.ContainsKey("color")) rProps["color"] = "inherit";
             if (!hlUnderlineDropped && !rProps.ContainsKey("underline")) rProps["underline"] = "inherit";
+            // BUG-DUMP-HYPERLINK-EMPTYTEXT: the wrapper's display text comes from
+            // the source run's <w:t>. When that run is EMPTY, line 3600 above
+            // omits the `text` key (empty text isn't emitted) — and AddHyperlink's
+            // `GetValueOrDefault("text", url ?? anchor ?? "link")` then injects the
+            // URL/anchor as VISIBLE text (e.g. a 3-run hyperlink whose first run is
+            // <w:t></w:t> rebuilt as "ex191….htmInsider Trading…"). Emit an
+            // explicit empty `text` so the wrapper's first run stays empty and the
+            // real display text comes from the trailing structured `add r` runs.
+            if (!rProps.ContainsKey("text")) rProps["text"] = "";
             items.Add(new BatchItem
             {
                 Command = "add",
