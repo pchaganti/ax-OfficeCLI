@@ -486,8 +486,8 @@ public partial class PowerPointHandler
     /// Populate Format["background"] on a slide DocumentNode.
     /// Values mirror the input format: hex for solid, "C1-C2[-angle]" for gradient, "image" for blip.
     /// </summary>
-    private static void ReadSlideBackground(Slide slide, DocumentNode node)
-        => ReadBackground(slide.CommonSlideData, node);
+    private static void ReadSlideBackground(Slide slide, DocumentNode node, OpenXmlPart? part = null)
+        => ReadBackground(slide.CommonSlideData, node, part);
 
     /// <summary>
     /// Read per-slide header/footer visibility flags from <c>&lt;p:hf&gt;</c>.
@@ -557,7 +557,7 @@ public partial class PowerPointHandler
             node.Format["showDate"] = "true";
     }
 
-    internal static void ReadBackground(CommonSlideData? cSld, DocumentNode node)
+    internal static void ReadBackground(CommonSlideData? cSld, DocumentNode node, OpenXmlPart? part = null)
     {
         if (cSld?.Background == null) return;
 
@@ -660,9 +660,28 @@ public partial class PowerPointHandler
         }
         else if (blipFill != null)
         {
-            node.Format["background"] = "image";
-
             var blip = blipFill.GetFirstChild<Drawing.Blip>();
+
+            // R4-7: surface the embedded image's file name so the readback
+            // ("image:<file>") is round-trippable, instead of the bare
+            // non-round-trippable "image". Emit the suffixed form on a SEPARATE
+            // key (background.src) and keep Format["background"] == "image" so
+            // the long-standing bare-"image" contract (PptxMasterLayoutBackground
+            // / PptxSlideBackgroundR27 / OleTestTeam tests) is preserved.
+            node.Format["background"] = "image";
+            var embedId = blip?.Embed?.Value;
+            if (!string.IsNullOrEmpty(embedId) && part != null)
+            {
+                try
+                {
+                    var imgPart = part.GetPartById(embedId!);
+                    var fileName = System.IO.Path.GetFileName(imgPart.Uri.ToString());
+                    if (!string.IsNullOrEmpty(fileName))
+                        node.Format["background.src"] = $"image:{fileName}";
+                }
+                catch { /* dangling rel — no src surfaced */ }
+            }
+
             var alphaMod = blip?.GetFirstChild<Drawing.AlphaModulationFixed>();
             if (alphaMod?.Amount?.HasValue == true)
             {

@@ -104,7 +104,7 @@ public partial class PowerPointHandler
                 if (!string.IsNullOrEmpty(slideName)) slideNode.Format["name"] = slideName;
                 if (GetSlide(slidePart).Show?.Value == false)
                     slideNode.Format["hidden"] = true;
-                ReadSlideBackground(GetSlide(slidePart), slideNode);
+                ReadSlideBackground(GetSlide(slidePart), slideNode, slidePart);
                 ReadSlideTransition(slidePart, slideNode);
                 ReadSlideHeaderFooter(GetSlide(slidePart), slideNode);
 
@@ -163,7 +163,7 @@ public partial class PowerPointHandler
             var shapeCount = (shapeTree?.Elements<Shape>().Count() ?? 0)
                 + (shapeTree?.Elements<Picture>().Count() ?? 0);
             masterNode.Format["shapeCount"] = shapeCount;
-            ReadBackground(mp.SlideMaster?.CommonSlideData, masterNode);
+            ReadBackground(mp.SlideMaster?.CommonSlideData, masterNode, mp);
             // CONSISTENCY(master-direction): Set persists rtl into the master's
             // <p:txStyles>/bodyStyle/lvl1pPr@rtl. Mirror it back on Get so users
             // can verify their own write (was previously set-only — Get omitted
@@ -230,7 +230,7 @@ public partial class PowerPointHandler
             layoutNode.Format["name"] = layoutName;
             if (lp.SlideLayout?.Type?.HasValue == true)
                 layoutNode.Format["type"] = lp.SlideLayout.Type.InnerText;
-            ReadBackground(lp.SlideLayout?.CommonSlideData, layoutNode);
+            ReadBackground(lp.SlideLayout?.CommonSlideData, layoutNode, lp);
 
             // Populate child shapes — mirror what the slide Get branch does so
             // a layout-rooted Get exposes the same shape tree visible at
@@ -1180,7 +1180,7 @@ public partial class PowerPointHandler
             if (!string.IsNullOrEmpty(slideName)) slideNode.Format["name"] = slideName;
             if (slide.Show?.Value == false)
                 slideNode.Format["hidden"] = true;
-            ReadSlideBackground(slide, slideNode);
+            ReadSlideBackground(slide, slideNode, targetSlidePart);
             ReadSlideTransition(targetSlidePart, slideNode);
             ReadSlideHeaderFooter(slide, slideNode);
             if (targetSlidePart.NotesSlidePart != null)
@@ -1591,7 +1591,7 @@ public partial class PowerPointHandler
                 if (!string.IsNullOrEmpty(sldName)) slideNode.Format["name"] = sldName;
                 if (sld.Show?.Value == false)
                     slideNode.Format["hidden"] = true;
-                ReadSlideBackground(sld, slideNode);
+                ReadSlideBackground(sld, slideNode, sp);
                 ReadSlideTransition(sp, slideNode);
                 ReadSlideHeaderFooter(sld, slideNode);
                 if (sp.NotesSlidePart != null)
