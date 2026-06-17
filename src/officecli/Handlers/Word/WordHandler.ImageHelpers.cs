@@ -7,6 +7,7 @@ using DocumentFormat.OpenXml.Wordprocessing;
 using OfficeCli.Core;
 using A = DocumentFormat.OpenXml.Drawing;
 using DW = DocumentFormat.OpenXml.Drawing.Wordprocessing;
+using DW14 = DocumentFormat.OpenXml.Office2010.Word.Drawing;
 using PIC = DocumentFormat.OpenXml.Drawing.Pictures;
 
 namespace OfficeCli.Handlers;
@@ -142,7 +143,8 @@ public partial class WordHandler
         string? hAlign = null, string? vAlign = null, uint relativeHeight = 1U,
         (long L, long T, long R, long B)? effectExtent = null,
         (uint T, uint B, uint L, uint R)? wrapDist = null,
-        string? wrapPolygon = null)
+        string? wrapPolygon = null,
+        string? sizeRelH = null, string? sizeRelV = null)
     {
         OpenXmlElement wrapElement = wrap.ToLowerInvariant() switch
         {
@@ -234,7 +236,46 @@ public partial class WordHandler
             Locked = false
         };
 
+        // BUG-DUMP-NAR-WP14: re-attach the wp14 relative-sizing extensions
+        // (<wp14:sizeRelH>/<wp14:sizeRelV> with <wp14:pctWidth>/<wp14:pctHeight>).
+        // These are the last children of wp:anchor; without them a picture sized
+        // relative to the page falls back to its absolute extent and reflows.
+        // Prop form: "relativeFrom;pct" (e.g. "page;0").
+        AppendRelativeSize(anchor, sizeRelH, horizontal: true);
+        AppendRelativeSize(anchor, sizeRelV, horizontal: false);
+
         return new Run(new Drawing(anchor));
+    }
+
+    /// <summary>
+    /// Append a wp14 relative-size child (sizeRelH or sizeRelV) to an anchor from
+    /// a "relativeFrom;pct" prop. No-op when spec is null/blank or malformed.
+    /// </summary>
+    private static void AppendRelativeSize(DW.Anchor anchor, string? spec, bool horizontal)
+    {
+        if (string.IsNullOrWhiteSpace(spec)) return;
+        var parts = spec.Split(';');
+        if (parts.Length < 2) return;
+        var relFrom = parts[0].Trim();
+        var pct = parts[1].Trim();
+        if (horizontal)
+        {
+            var rw = new DW14.RelativeWidth(new DW14.PercentageWidth(pct))
+            {
+                ObjectId = new EnumValue<DW14.SizeRelativeHorizontallyValues>(
+                    new DW14.SizeRelativeHorizontallyValues(relFrom)),
+            };
+            anchor.AppendChild(rw);
+        }
+        else
+        {
+            var rh = new DW14.RelativeHeight(new DW14.PercentageHeight(pct))
+            {
+                RelativeFrom = new EnumValue<DW14.SizeRelativeVerticallyValues>(
+                    new DW14.SizeRelativeVerticallyValues(relFrom)),
+            };
+            anchor.AppendChild(rh);
+        }
     }
 
     private static DW.HorizontalRelativePositionValues ParseHorizontalRelative(string value) =>
@@ -434,6 +475,24 @@ public partial class WordHandler
             // z-plane. Surface the raw uint so the Add path round-trips it.
             if (anchorEl.RelativeHeight?.HasValue == true)
                 node.Format["relativeHeight"] = anchorEl.RelativeHeight.Value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+            // BUG-DUMP-NAR-WP14: capture the wp14 relative-sizing extensions so
+            // the Add path can re-attach them. Emitted as "relativeFrom;pct"
+            // (e.g. "page;0"). Without this, anchored pictures sized relative to
+            // the page lost the extension and re-rendered at absolute size,
+            // shifting layout and pagination.
+            var relW = anchorEl.GetFirstChild<DW14.RelativeWidth>();
+            if (relW != null)
+            {
+                var pctW = relW.GetFirstChild<DW14.PercentageWidth>()?.InnerText ?? "0";
+                node.Format["sizeRelH"] = $"{relW.ObjectId?.InnerText ?? "page"};{pctW}";
+            }
+            var relH = anchorEl.GetFirstChild<DW14.RelativeHeight>();
+            if (relH != null)
+            {
+                var pctH = relH.GetFirstChild<DW14.PercentageHeight>()?.InnerText ?? "0";
+                node.Format["sizeRelV"] = $"{relH.RelativeFrom?.InnerText ?? "page"};{pctH}";
+            }
 
             var hPos = anchorEl.GetFirstChild<DW.HorizontalPosition>();
             if (hPos != null)

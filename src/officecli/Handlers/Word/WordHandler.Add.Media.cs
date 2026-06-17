@@ -482,7 +482,14 @@ public partial class WordHandler
             // polygon hugging the image tighter than the default full square
             // shifted wrapped/below text by several px).
             var wrapPolygon = properties.GetValueOrDefault("wrap.polygon");
-            imgRun = CreateAnchorImageRun(relId, cxEmu, cyEmu, altText, wrapType, hPos, vPos, hRel, vRel, behind, imgDocPropId, pictureName, hAlign, vAlign, relHeight, effectExtent, wrapDist, wrapPolygon);
+            // BUG-DUMP-NAR-WP14: wp14 relative sizing (sizeRelH/sizeRelV =
+            // "relativeFrom;pct", e.g. "page;0"). The dump captures the anchor's
+            // <wp14:sizeRelH>/<wp14:sizeRelV> percentage-of-page sizing; without
+            // re-applying it the picture falls back to its absolute extent and
+            // reflows. Absent → null → no wp14 child emitted.
+            var sizeRelH = properties.GetValueOrDefault("sizeRelH");
+            var sizeRelV = properties.GetValueOrDefault("sizeRelV");
+            imgRun = CreateAnchorImageRun(relId, cxEmu, cyEmu, altText, wrapType, hPos, vPos, hRel, vRel, behind, imgDocPropId, pictureName, hAlign, vAlign, relHeight, effectExtent, wrapDist, wrapPolygon, sizeRelH, sizeRelV);
         }
         else
         {
