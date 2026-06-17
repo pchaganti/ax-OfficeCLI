@@ -1575,11 +1575,21 @@ public static partial class WordBatchEmitter
             // comment on round-trip. AddComment now accepts text="".
             // The first run's text + rPr ride on `add comment`; if there is no
             // first run (empty comment) fall back to empty text.
-            if (firstParaRuns.Count > 0)
+            // A leading tab/ptab run must NOT be swallowed as the seed text
+            // (its Text is empty, so the <w:tab/> would be lost) — leave it for
+            // the structural body-run pass below. Mirror EmitNoteReference.
+            int commentSeedSkip = 0;
+            if (firstParaRuns.Count > 0
+                && (firstParaRuns[0].Type == "run" || firstParaRuns[0].Type == "r"))
             {
                 var firstRun = firstParaRuns[0];
                 props["text"] = firstRun.Text ?? string.Empty;
                 MergeRunFormatProps(props, firstRun);
+                commentSeedSkip = 1;
+            }
+            else if (firstParaRuns.Count > 0)
+            {
+                props["text"] = "";
             }
             else
             {
@@ -1724,7 +1734,7 @@ public static partial class WordBatchEmitter
             // BUG-R13A: coalesce hyperlink runs so a hyperlink in the comment
             // body round-trips as a typed `add hyperlink` (was dropped as a
             // flat `add r` with unsupported url/isHyperlink props).
-            EmitContainerBodyRuns(firstParaRuns.Skip(1).ToList(),
+            EmitContainerBodyRuns(firstParaRuns.Skip(commentSeedSkip).ToList(),
                 $"{targetCommentPath}/p[1]", items);
 
             // Additional paragraphs (paragraph [1] is the `add comment` body).
@@ -2097,7 +2107,16 @@ public static partial class WordBatchEmitter
                 catch { /* malformed run XML — keep the rStyle-only fallback */ }
             }
         }
-        if (firstParaRuns.Count > 0)
+        // How many leading runs the `add <kind>` seed consumes. The seed run
+        // can only carry TEXT (it becomes the lone authored <w:t> run after the
+        // refmark); a leading tab/ptab run must NOT be swallowed here — its
+        // Text is empty, so consuming it flattens the <w:tab/> to nothing and
+        // de-indents every note that tabs after its reference mark (e.g. a
+        // footnote "<refmark><tab><hyperlink>"). Leave those for the structural
+        // body-run pass below.
+        int noteSeedSkip = 0;
+        if (firstParaRuns.Count > 0
+            && (firstParaRuns[0].Type == "run" || firstParaRuns[0].Type == "r"))
         {
             var firstRun = firstParaRuns[0];
             // Emit the FIRST content run's text VERBATIM. AddFootnote/AddEndnote
@@ -2108,6 +2127,14 @@ public static partial class WordBatchEmitter
             // leading space is preserved for the same reason.
             noteProps["text"] = firstRun.Text ?? string.Empty;
             MergeRunFormatProps(noteProps, firstRun);
+            noteSeedSkip = 1;
+        }
+        else if (firstParaRuns.Count > 0)
+        {
+            // First round-trippable run is a tab/ptab: seed empty text (just the
+            // refmark) and let EmitContainerBodyRuns emit it (and the rest) in
+            // order — it round-trips the tab as `add r text="\t"`.
+            noteProps["text"] = "";
         }
         else
         {
@@ -2163,7 +2190,7 @@ public static partial class WordBatchEmitter
         // BUG-R13A: coalesce hyperlink runs so a hyperlink inside a footnote/
         // endnote body round-trips as a typed `add hyperlink` (was dropped as a
         // flat `add r` carrying unsupported url/isHyperlink props).
-        EmitContainerBodyRuns(firstParaRuns.Skip(1).ToList(),
+        EmitContainerBodyRuns(firstParaRuns.Skip(noteSeedSkip).ToList(),
             $"{targetNotePath}/p[1]", items);
 
         // BUG-DUMP-R27-5: walk the remaining DIRECT block children in document
