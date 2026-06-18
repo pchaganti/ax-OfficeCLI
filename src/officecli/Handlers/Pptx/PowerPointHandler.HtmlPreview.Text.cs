@@ -15,7 +15,7 @@ public partial class PowerPointHandler
     // ==================== Text Rendering ====================
 
     private static void RenderTextBody(StringBuilder sb, OpenXmlElement textBody, Dictionary<string, string> themeColors,
-        Shape? placeholderShape = null, OpenXmlPart? placeholderPart = null)
+        Shape? placeholderShape = null, OpenXmlPart? placeholderPart = null, string? fontRefDefaultColor = null)
     {
         // Per-textbody auto-number counters, keyed by scheme type + paragraph level.
         // Resets when switching type/level. Paragraphs aren't wrapped in <ol>, so
@@ -62,6 +62,9 @@ public partial class PowerPointHandler
                 defaultRunColor = ResolvePlaceholderDefaultColor(placeholderShape, placeholderPart, themeColors, level);
                 inheritedLineSpacing = ResolvePlaceholderLineSpacing(placeholderShape, placeholderPart, level);
             }
+            // R11-3: style-matrix fontRef schemeClr is the FINAL fallback run color
+            // when no explicit run color and no inherited placeholder color is found.
+            defaultRunColor ??= fontRefDefaultColor;
             var paraStyles = new List<string>();
 
             var pProps = para.ParagraphProperties;

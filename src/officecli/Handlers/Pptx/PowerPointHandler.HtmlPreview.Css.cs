@@ -441,6 +441,127 @@ public partial class PowerPointHandler
         _ => "butt",
     };
 
+    // ==================== Style-matrix (p:style) resolution ====================
+    //
+    // A shape may carry a <p:style> with fillRef/lnRef/effectRef/fontRef that index
+    // into the theme's <a:fmtScheme> (FormatScheme). When the shape's own spPr has no
+    // explicit fill/outline/effect (or the run has no explicit color), these refs
+    // supply the value. Explicit spPr/run values always WIN; we only resolve a ref
+    // when the explicit value is absent.
+    //
+    // The FormatScheme is read fresh from the part chain each render (not cached) so
+    // SDK-injected effectStyleLst entries are seen after reopen.
+
+    /// <summary>
+    /// Resolve the theme FormatScheme for a shape's part:
+    /// SlidePart→SlideLayoutPart→SlideMasterPart→ThemePart→Theme→ThemeElements→FormatScheme.
+    /// Read directly from the part each call (no caching) so post-reopen theme edits are honored.
+    /// </summary>
+    private static Drawing.FormatScheme? ResolveFormatScheme(OpenXmlPart part)
+    {
+        var theme = part switch
+        {
+            SlidePart sp => sp.SlideLayoutPart?.SlideMasterPart?.ThemePart?.Theme,
+            SlideLayoutPart lp => lp.SlideMasterPart?.ThemePart?.Theme,
+            SlideMasterPart mp => mp.ThemePart?.Theme,
+            _ => null,
+        };
+        return theme?.ThemeElements?.FormatScheme;
+    }
+
+    /// <summary>
+    /// Resolve a style-matrix reference's <a:schemeClr> (the ref's own color slot,
+    /// e.g. fillRef/lnRef/fontRef child) to a "#RRGGBB"/rgba() string via the theme
+    /// color map, applying any lumMod/lumOff/tint/shade/alpha transforms.
+    /// </summary>
+    private static string? ResolveStyleRefSchemeColor(OpenXmlCompositeElement? styleRef, Dictionary<string, string> themeColors)
+    {
+        var schemeColor = styleRef?.GetFirstChild<Drawing.SchemeColor>();
+        if (schemeColor?.Val?.HasValue != true) return null;
+        var name = schemeColor.Val!.InnerText;
+        if (name == null || !themeColors.TryGetValue(name, out var hex)) return null;
+        return ApplyColorTransforms(hex, schemeColor);
+    }
+
+    /// <summary>
+    /// Style-matrix fill fallback: resolve <p:style>/<a:fillRef idx=N> against
+    /// FormatScheme.FillStyleList[N] (1-based), blending the fillRef's schemeClr into
+    /// the indexed fill style. Returns a "background:..." CSS string, or "" if none.
+    /// </summary>
+    private static string GetStyleFillRefCss(ShapeStyle? style, OpenXmlPart part, Dictionary<string, string> themeColors)
+    {
+        var fillRef = style?.FillReference;
+        var idx = fillRef?.Index?.Value ?? 0;
+        if (fillRef == null || idx == 0) return "";
+
+        var refColor = ResolveStyleRefSchemeColor(fillRef, themeColors);
+
+        var fmtScheme = ResolveFormatScheme(part);
+        var fillStyle = fmtScheme?.FillStyleList?.ChildElements
+            .OfType<OpenXmlElement>()
+            .ElementAtOrDefault((int)idx - 1);
+
+        // The indexed fill style entry is most commonly a <a:solidFill> referencing
+        // <a:schemeClr val="phClr"/> (the placeholder color = the fillRef's schemeClr).
+        // Emit the fillRef schemeClr directly — it is the resolved phClr.
+        if (fillStyle is Drawing.SolidFill && refColor != null)
+            return $"background:{refColor}";
+
+        // Gradient/other indexed fill: render via GradientToCss but substitute phClr.
+        if (fillStyle is Drawing.GradientFill gf)
+        {
+            var css = GradientToCss(gf, themeColors);
+            return string.IsNullOrEmpty(css) ? (refColor != null ? $"background:{refColor}" : "") : $"background:{css}";
+        }
+
+        // Unknown/no indexed style entry — fall back to the bare ref color.
+        return refColor != null ? $"background:{refColor}" : "";
+    }
+
+    /// <summary>
+    /// Style-matrix outline fallback: resolve <p:style>/<a:lnRef idx=N> against
+    /// FormatScheme.LineStyleList[N] (1-based), coloring it with the lnRef's schemeClr.
+    /// Returns a "border:..." CSS string, or "" if none.
+    /// </summary>
+    private static string GetStyleLineRefCss(ShapeStyle? style, OpenXmlPart part, Dictionary<string, string> themeColors)
+    {
+        var lnRef = style?.LineReference;
+        var idx = lnRef?.Index?.Value ?? 0;
+        if (lnRef == null || idx == 0) return "";
+
+        var refColor = ResolveStyleRefSchemeColor(lnRef, themeColors)
+            ?? (themeColors.TryGetValue("dk1", out var dk1) ? $"#{dk1}" : "#000000");
+
+        var fmtScheme = ResolveFormatScheme(part);
+        var lineStyle = fmtScheme?.LineStyleList?.ChildElements
+            .OfType<Drawing.Outline>()
+            .ElementAtOrDefault((int)idx - 1);
+
+        var widthPt = lineStyle?.Width?.HasValue == true ? lineStyle.Width!.Value / EmuConverter.EmuPerPointF : 1.0;
+        if (widthPt < 0.5) widthPt = 0.5;
+
+        return $"border:{widthPt:0.##}pt solid {refColor}";
+    }
+
+    /// <summary>
+    /// Style-matrix effect fallback: resolve <p:style>/<a:effectRef idx=N> against
+    /// FormatScheme.EffectStyleList[N] (1-based), reusing EffectListToShadowCss on the
+    /// indexed effect style's <a:effectLst>. Returns the shadow CSS, or "" if none.
+    /// </summary>
+    private static string GetStyleEffectRefCss(ShapeStyle? style, OpenXmlPart part, Dictionary<string, string> themeColors)
+    {
+        var effectRef = style?.EffectReference;
+        var idx = effectRef?.Index?.Value ?? 0;
+        if (effectRef == null || idx == 0) return "";
+
+        var fmtScheme = ResolveFormatScheme(part);
+        var effectStyle = fmtScheme?.EffectStyleList?.ChildElements
+            .OfType<Drawing.EffectStyle>()
+            .ElementAtOrDefault((int)idx - 1);
+        var effectList = effectStyle?.GetFirstChild<Drawing.EffectList>();
+        return EffectListToShadowCss(effectList, themeColors);
+    }
+
     private static string OutlineToCss(Drawing.Outline outline, Dictionary<string, string> themeColors)
     {
         var parsed = ParseOutline(outline, themeColors);

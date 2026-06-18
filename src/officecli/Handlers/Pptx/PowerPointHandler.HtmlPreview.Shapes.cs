@@ -139,6 +139,11 @@ public partial class PowerPointHandler
 
         // Fill
         var fillCss = GetShapeFillCss(shape.ShapeProperties, part, themeColors);
+        // Style-matrix fallback (R11-1): when spPr carries no fill element, resolve the
+        // shape's <p:style>/<a:fillRef> against the theme FormatScheme. Explicit spPr
+        // fill always wins — only consult fillRef when GetShapeFillCss returned "".
+        if (string.IsNullOrEmpty(fillCss))
+            fillCss = GetStyleFillRefCss(shape.ShapeStyle, part, themeColors);
         if (!string.IsNullOrEmpty(fillCss))
             styles.Add(fillCss);
 
@@ -172,6 +177,16 @@ public partial class PowerPointHandler
             styles.Add($"border:{parsedOutline.Value.widthPt:0.##}pt {solidStyle} {parsedOutline.Value.color}");
         }
         // Non-solid outlines rendered as SVG after the shape div
+
+        // Style-matrix fallback (R11-2): when spPr carries no <a:ln>, resolve the
+        // shape's <p:style>/<a:lnRef> against the theme FormatScheme.LineStyleList.
+        // Explicit spPr outline always wins — only consult lnRef when outline == null.
+        if (outline == null)
+        {
+            var lnRefCss = GetStyleLineRefCss(shape.ShapeStyle, part, themeColors);
+            if (!string.IsNullOrEmpty(lnRefCss))
+                styles.Add(lnRefCss);
+        }
 
         // Build transform chain (must be combined into one transform property)
         var transforms = new List<string>();
@@ -245,6 +260,11 @@ public partial class PowerPointHandler
         // Shadow + Glow → combine into single filter property
         var effectList = shape.ShapeProperties?.GetFirstChild<Drawing.EffectList>();
         var shadowCss = EffectListToShadowCss(effectList, themeColors);
+        // Style-matrix fallback (R11-4): when spPr carries no <a:effectLst>, resolve the
+        // shape's <p:style>/<a:effectRef> against the theme FormatScheme.EffectStyleList.
+        // Explicit spPr effects always win — only consult effectRef when none present.
+        if (string.IsNullOrEmpty(shadowCss) && effectList == null)
+            shadowCss = GetStyleEffectRefCss(shape.ShapeStyle, part, themeColors);
         var glowCss = EffectListToGlowCss(effectList, themeColors);
         // Merge multiple filter:drop-shadow into one filter property
         var filterParts = new List<string>();
@@ -525,7 +545,10 @@ public partial class PowerPointHandler
             if (!string.IsNullOrEmpty(columnStyle))
                 sb.Append($"<div class=\"text-columns\" style=\"display:block;width:100%;{columnStyle}\">");
 
-            RenderTextBody(sb, shape.TextBody, themeColors, shape, part);
+            // R11-3: pass the shape's <p:style>/<a:fontRef> schemeClr down as the
+            // final fallback run color (used only when no explicit/inherited color).
+            var fontRefDefaultColor = ResolveStyleRefSchemeColor(shape.ShapeStyle?.FontReference, themeColors);
+            RenderTextBody(sb, shape.TextBody, themeColors, shape, part, fontRefDefaultColor);
 
             if (!string.IsNullOrEmpty(columnStyle))
                 sb.Append("</div>");
