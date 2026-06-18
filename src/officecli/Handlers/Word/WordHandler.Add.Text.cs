@@ -1779,6 +1779,34 @@ public partial class WordHandler
 
             var mathPara = new M.Paragraph(oMath);
 
+            // BUG-DUMP-EQDISPLAY-PPR: re-apply the source wrapper paragraph's line
+            // spacing / before-after onto the rebuilt wrapper <w:p>. Call BEFORE any
+            // bidi PrependChild / mark-rPr append so CT_PPr schema order holds
+            // (bidi < spacing < jc < rPr). Without this a 1.5x display-equation
+            // line collapsed to single spacing, compressing the page on round-trip.
+            void ApplyEqWrapperSpacing(Paragraph wp)
+            {
+                if (properties == null) return;
+                SpacingBetweenLines? EnsureSp()
+                {
+                    var sp = wp.ParagraphProperties ??= new ParagraphProperties();
+                    return sp.SpacingBetweenLines ??= new SpacingBetweenLines();
+                }
+                if (properties.TryGetValue("lineSpacing", out var lsE) || properties.TryGetValue("linespacing", out lsE))
+                {
+                    var sbl = EnsureSp()!;
+                    var (tw, mult) = SpacingConverter.ParseWordLineSpacing(lsE);
+                    sbl.Line = tw.ToString();
+                    sbl.LineRule = mult ? LineSpacingRuleValues.Auto : LineSpacingRuleValues.Exact;
+                }
+                if (properties.TryGetValue("lineRule", out var lrE) || properties.TryGetValue("linerule", out lrE))
+                    EnsureSp()!.LineRule = ParseLineRule(lrE);
+                if (properties.TryGetValue("spaceBefore", out var sbE) || properties.TryGetValue("spacebefore", out sbE))
+                    EnsureSp()!.Before = SpacingConverter.ParseWordSpacing(sbE).ToString();
+                if (properties.TryGetValue("spaceAfter", out var saE) || properties.TryGetValue("spaceafter", out saE))
+                    EnsureSp()!.After = SpacingConverter.ParseWordSpacing(saE).ToString();
+            }
+
             // BUG-DUMP19-02: apply m:oMathParaPr/m:jc when caller passes `align`
             // so block-equation alignment round-trips. Schema requires
             // m:oMathParaPr to precede m:oMath inside m:oMathPara.
@@ -1813,6 +1841,7 @@ public partial class WordHandler
                 // Wrap m:oMathPara in w:p for schema validity
                 var wrapPara = new Paragraph(mathPara);
                 AssignParaId(wrapPara);
+                ApplyEqWrapperSpacing(wrapPara);
 
                 // CONSISTENCY(rtl-cascade): inherit pPr/bidi and paragraph-mark
                 // rPr/rtl from the host paragraph so the wrapper preserves the
@@ -1886,6 +1915,7 @@ public partial class WordHandler
                 // flatten to /oMathPara[N] the way Body does in NavigateToElement).
                 var wrapPara = new Paragraph(mathPara);
                 AssignParaId(wrapPara);
+                ApplyEqWrapperSpacing(wrapPara);
                 if (index.HasValue)
                 {
                     var children = insertTarget.ChildElements.ToList();

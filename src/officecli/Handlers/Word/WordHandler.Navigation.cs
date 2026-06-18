@@ -5401,10 +5401,35 @@ public partial class WordHandler
                     _ => jcVal // "left" | "center" | "right"
                 };
             }
+            // BUG-DUMP-EQDISPLAY-PPR: a display equation wrapped in <w:p> carries
+            // the paragraph's line spacing (e.g. line=360 / 1.5x) and before/after
+            // that set the equation line's height. The dump previously surfaced
+            // only mode/align/formula, so the wrapper paragraph's spacing was
+            // dropped on round-trip — the equation collapsed to single spacing,
+            // compressing the page and drifting later content across boundaries.
+            // Forward the wrapper pPr spacing so TryEmitDisplayEquation + AddEquation
+            // can re-apply it to the rebuilt wrapper paragraph.
+            if (element.Parent is Paragraph eqWrapP
+                && eqWrapP.ParagraphProperties?.SpacingBetweenLines is { } eqSp)
+            {
+                if (eqSp.Before?.Value != null)
+                    node.Format["spaceBefore"] = SpacingConverter.FormatWordSpacing(eqSp.Before.Value);
+                if (eqSp.After?.Value != null)
+                    node.Format["spaceAfter"] = SpacingConverter.FormatWordSpacing(eqSp.After.Value);
+                if (eqSp.Line?.Value != null)
+                    node.Format["lineSpacing"] = SpacingConverter.FormatWordLineSpacing(
+                        eqSp.Line.Value, eqSp.LineRule?.InnerText);
+                if (eqSp.LineRule?.HasValue == true)
+                    node.Format["lineRule"] = eqSp.LineRule.InnerText;
+            }
             // Extract LaTeX via FormulaParser
             var oMath = element.Descendants<M.OfficeMath>().FirstOrDefault();
             if (oMath != null)
             {
+                // BUG-DUMP-EQVERBATIM (display): carry the verbatim <m:oMath> so
+                // AddEquation rebuilds from it instead of the lossy LaTeX string,
+                // preserving every math-run <w:rPr> (rFonts="Cambria Math", sizes).
+                node.Format["xml"] = oMath.OuterXml;
                 try { node.Text = Core.FormulaParser.ToLatex(oMath); }
                 catch { node.Text = element.InnerText; }
             }
