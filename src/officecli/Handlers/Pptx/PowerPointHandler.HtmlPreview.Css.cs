@@ -1000,9 +1000,153 @@ public partial class PowerPointHandler
         return $"clip-path:polygon({string.Join(",", pts)})";
     }
 
+    // ---- R18 BUG B/D/E: sector / ring / segment geometry --------------------
+    // OOXML angle units are 60000ths of a degree, measured clockwise from the
+    // 3-o'clock direction. In a 0..100% clip-path box, +x is right and +y is
+    // down, so a point at angle θ on the unit circle maps to
+    // (50 + 50·cosθ, 50 + 50·sinθ). We sample the arc into enough points for a
+    // smooth silhouette, mirroring how custGeom beziers are flattened to
+    // clip-path polygons elsewhere in this file.
+    private static (double x, double y) ArcPointPct(double deg, double rx = 50, double ry = 50,
+        double cx = 50, double cy = 50)
+    {
+        var rad = deg * Math.PI / 180.0;
+        return (cx + rx * Math.Cos(rad), cy + ry * Math.Sin(rad));
+    }
+
+    private static IEnumerable<(double x, double y)> SampleArc(double startDeg, double endDeg,
+        double rx, double ry, double cx, double cy)
+    {
+        // Sweep clockwise (increasing angle) from start to end.
+        var sweep = endDeg - startDeg;
+        if (sweep <= 0) sweep += 360;
+        int steps = Math.Max(2, (int)Math.Ceiling(sweep / 6.0)); // ~6° per segment
+        for (int i = 0; i <= steps; i++)
+        {
+            var d = startDeg + sweep * i / steps;
+            yield return ArcPointPct(d, rx, ry, cx, cy);
+        }
+    }
+
+    private static string PtsToPolygon(IEnumerable<(double x, double y)> pts)
+    {
+        string P(double d) => d.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
+        return $"clip-path:polygon({string.Join(",", pts.Select(p => $"{P(p.x)}% {P(p.y)}%"))})";
+    }
+
+    /// <summary>pie: filled sector from adj1 (start) to adj2 (end angle).</summary>
+    private static string PieSectorPolygon(Drawing.PresetGeometry? presetGeom)
+    {
+        var a1 = ReadAdjValueCss(presetGeom, 0, 0) / 60000.0;
+        var a2 = ReadAdjValueCss(presetGeom, 1, 16200000) / 60000.0;
+        var pts = new List<(double, double)> { (50, 50) };
+        pts.AddRange(SampleArc(a1, a2, 50, 50, 50, 50));
+        return PtsToPolygon(pts);
+    }
+
+    /// <summary>arc: open sector outline (no center join) — approximate as a
+    /// thin sector wedge so the silhouette traces the arc band.</summary>
+    private static string ArcWedgePolygon(Drawing.PresetGeometry? presetGeom)
+    {
+        var a1 = ReadAdjValueCss(presetGeom, 0, 16200000) / 60000.0;
+        var a2 = ReadAdjValueCss(presetGeom, 1, 0) / 60000.0;
+        // Outer arc start→end, then inner arc end→start (thin band ~ full radius
+        // to 0.92 radius) so a stroke-less fill still reads as an arc curve.
+        var outer = SampleArc(a1, a2, 50, 50, 50, 50).ToList();
+        var inner = SampleArc(a1, a2, 46, 46, 50, 50).ToList();
+        inner.Reverse();
+        return PtsToPolygon(outer.Concat(inner));
+    }
+
+    /// <summary>chord: circular segment between an arc and its chord.</summary>
+    private static string ChordPolygon(Drawing.PresetGeometry? presetGeom)
+    {
+        var a1 = ReadAdjValueCss(presetGeom, 0, 2700000) / 60000.0;
+        var a2 = ReadAdjValueCss(presetGeom, 1, 16200000) / 60000.0;
+        // Just the arc points; the polygon auto-closes start→end with the chord.
+        return PtsToPolygon(SampleArc(a1, a2, 50, 50, 50, 50));
+    }
+
+    /// <summary>blockArc: thick ring segment — outer arc then inner arc back.
+    /// adj1 start, adj2 end (60000ths deg), adj3 inner radius fraction (x100000).</summary>
+    private static string BlockArcPolygon(Drawing.PresetGeometry? presetGeom)
+    {
+        var a1 = ReadAdjValueCss(presetGeom, 0, 10800000) / 60000.0;
+        var a2 = ReadAdjValueCss(presetGeom, 1, 0) / 60000.0;
+        var innerFrac = ReadAdjValueCss(presetGeom, 2, 25000) / 100000.0;
+        innerFrac = Math.Clamp(innerFrac, 0, 1);
+        var ir = 50 * innerFrac;
+        var outer = SampleArc(a1, a2, 50, 50, 50, 50).ToList();
+        var inner = SampleArc(a1, a2, ir, ir, 50, 50).ToList();
+        inner.Reverse();
+        return PtsToPolygon(outer.Concat(inner));
+    }
+
+    /// <summary>snipRoundRect: top-left corner ROUNDED (adj2), top-right corner
+    /// CHAMFERED/snipped (adj1); bottom-left and bottom-right square. Matches the
+    /// real-PowerPoint silhouette (ground truth). Approximate the round
+    /// corner with sample points and chamfer the snip with a single diagonal
+    /// vertex.</summary>
+    private static string SnipRoundRectPolygon(long widthEmu, long heightEmu,
+        Drawing.PresetGeometry? presetGeom)
+    {
+        long minSideEmu = Math.Min(widthEmu, heightEmu);
+        var a1 = ReadAdjValueCss(presetGeom, 0, 16667); // snip (top-right)
+        var a2 = ReadAdjValueCss(presetGeom, 1, 16667); // round (top-left)
+        double Pct(long adj, bool horizontal)
+        {
+            var sizeEmu = minSideEmu * adj / 100000.0;
+            var axis = horizontal ? widthEmu : heightEmu;
+            var pct = axis > 0 ? sizeEmu / axis * 100.0 : adj / 100000.0 * 100.0;
+            return Math.Clamp(pct, 0, 50);
+        }
+        var shx = Pct(a1, true);   // snip horizontal inset
+        var svy = Pct(a1, false);  // snip vertical inset
+        var rhx = Pct(a2, true);   // round horizontal radius
+        var rvy = Pct(a2, false);  // round vertical radius
+
+        var pts = new List<(double x, double y)>();
+        // top-left ROUNDED corner: quarter-circle (center at (rhx, rvy)) swept
+        // from the left edge (180°) round to the top edge (270°). These points
+        // sit in the top-left region — the silhouette's defining feature.
+        foreach (var p in SampleArc(180, 270, rhx, rvy, rhx, rvy))
+            pts.Add(p);
+        // top edge to start of top-right snip
+        pts.Add((100 - shx, 0));
+        // chamfer down the right edge (top-right snip)
+        pts.Add((100, svy));
+        // right edge down to bottom-right (square)
+        pts.Add((100, 100));
+        // bottom edge to bottom-left (square)
+        pts.Add((0, 100));
+        // left edge back up to the start of the top-left round
+        return PtsToPolygon(pts);
+    }
+
+    /// <summary>donut: full disc with a centered circular hole. OOXML adj1 is the
+    /// ring thickness as a fraction of the box (×100000), so the hole radius as a
+    /// percent of the box is holeRadiusPct = 50 - adj1/1000 (adj1=25000→25%,
+    /// 45000→5%, 10000→40%). Default adj1=25000 when absent.</summary>
+    private static string DonutCss(Drawing.PresetGeometry? presetGeom)
+    {
+        var adj1 = ReadAdjValueCss(presetGeom, 0, 25000);
+        var holePct = Math.Clamp(50.0 - adj1 / 1000.0, 0, 50);
+        string P(double d) => d.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
+        var stop = $"{P(holePct)}%";
+        return $"border-radius:50%;-webkit-mask-image:radial-gradient(circle,transparent {stop},black {stop});"
+             + $"mask-image:radial-gradient(circle,transparent {stop},black {stop})";
+    }
+
     private static string PresetGeometryToCss(string preset, long widthEmu, long heightEmu,
         Drawing.PresetGeometry? presetGeom)
     {
+        // R18: sector / ring / segment presets honoring avLst angles
+        if (preset == "pie") return PieSectorPolygon(presetGeom);
+        if (preset == "arc") return ArcWedgePolygon(presetGeom);
+        if (preset == "chord") return ChordPolygon(presetGeom);
+        if (preset == "blockArc") return BlockArcPolygon(presetGeom);
+        if (preset == "snipRoundRect") return SnipRoundRectPolygon(widthEmu, heightEmu, presetGeom);
+
         // Parametric arrows honoring avLst
         if (preset == "rightArrow")
             return RightArrowPolygon(widthEmu, heightEmu, presetGeom);
@@ -1176,11 +1320,11 @@ public partial class PowerPointHandler
 
             // Misc shapes
             "frame" => "clip-path:polygon(0 0,100% 0,100% 100%,0 100%,0 12%,12% 12%,12% 88%,88% 88%,88% 12%,0 12%)",
-            "donut" => "border-radius:50%;-webkit-mask-image:radial-gradient(circle,transparent 38%,black 38%);mask-image:radial-gradient(circle,transparent 38%,black 38%)",
+            "donut" => DonutCss(presetGeom),
             "noSmoking" => "border-radius:50%",
             "halfFrame" => "clip-path:polygon(0 0,100% 0,100% 15%,15% 15%,15% 100%,0 100%)",
             "corner" => "clip-path:polygon(0 0,50% 0,50% 50%,100% 50%,100% 100%,0 100%)",
-            "pie" or "arc" => "border-radius:50%",
+            // pie/arc/chord/blockArc/snipRoundRect handled above (parametric)
 
             // Ribbons/banners
             "ribbon" or "ribbon2" or "wave" or "doubleWave" => "",
