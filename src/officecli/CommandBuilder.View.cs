@@ -211,14 +211,19 @@ static partial class CommandBuilder
 
                     // The generic 4:3 viewport (1600×1200) letterboxes a single slide with
                     // canvas padding. When capturing one slide (not a multi-slide range or
-                    // grid) and the caller kept the default height, derive the height from
-                    // the slide aspect so the PNG matches the slide and is padding-free
-                    // (ViewAsHtml scales the slide up to fill + zeroes the headless page
-                    // padding). Keying off the ratio, not the slide's physical size, keeps
-                    // same-proportion decks at the same resolution. Multi-slide ranges stack
-                    // vertically and keep the tall viewport.
-                    if (pStart == pEnd && gridCols == 0 && screenshotHeight == 1200)
-                        screenshotHeight = Math.Max(1, (int)Math.Round(screenshotWidth * pptHandler.SlideAspectRatio()));
+                    // grid), size the viewport to the slide so the PNG is the slide,
+                    // padding-free (ViewAsHtml scales the slide to fill + zeroes the headless
+                    // page padding). Default dims -> the slide's 96-DPI native pixels;
+                    // a custom --screenshot-width -> that width with an aspect-matched height.
+                    // Multi-slide ranges stack vertically and keep the tall viewport.
+                    if (pStart == pEnd && gridCols == 0)
+                    {
+                        var (nativeW, nativeH) = pptHandler.GetSlideNativePixels();
+                        if (screenshotWidth == 1600 && screenshotHeight == 1200)
+                            (screenshotWidth, screenshotHeight) = (nativeW, nativeH);
+                        else if (screenshotHeight == 1200)
+                            screenshotHeight = Math.Max(1, (int)Math.Round(screenshotWidth * (double)nativeH / nativeW));
+                    }
                 }
                 else if (handler is OfficeCli.Handlers.ExcelHandler excelHandler)
                     html = excelHandler.ViewAsHtml();
