@@ -1220,10 +1220,17 @@ public class ResidentServer : IDisposable
                 if (renderMode != "html" && gridCols == 0 && OperatingSystem.IsWindows())
                 {
                     var ps = pStart ?? 1; var pe = pEnd ?? ps;
-                    _handler.Dispose();
+                    // A read-only handler holds only read access with FileShare.ReadWrite,
+                    // so the app can open the file for read concurrently — no dispose
+                    // needed. An editable handler holds a write handle that blocks the
+                    // app, so release it first (Dispose flushes pending edits) and reopen.
+                    if (_editable) _handler.Dispose();
                     try { directPng = OfficeCli.Core.PowerPointPngBackend.Render(_filePath, ps, pe, exportW, exportH); } catch { directPng = null; }
-                    _handler = OfficeCli.Handlers.DocumentHandlerFactory.Open(_filePath, _editable);
-                    pptShotHandler = (OfficeCli.Handlers.PowerPointHandler)_handler;
+                    if (_editable)
+                    {
+                        _handler = OfficeCli.Handlers.DocumentHandlerFactory.Open(_filePath, _editable);
+                        pptShotHandler = (OfficeCli.Handlers.PowerPointHandler)_handler;
+                    }
                 }
                 if (renderMode == "native" && directPng == null)
                 {
@@ -1249,10 +1256,15 @@ public class ResidentServer : IDisposable
                 var effectiveFilter = string.IsNullOrEmpty(pageFilter) ? "1" : pageFilter;
                 if (renderMode != "html" && OperatingSystem.IsWindows())
                 {
-                    _handler.Dispose();
+                    // See the pptx branch: only an editable handler must be released
+                    // (its write handle blocks Word); a read-only handler coexists.
+                    if (_editable) _handler.Dispose();
                     try { directPng = OfficeCli.Core.WordPdfBackend.Render(_filePath, effectiveFilter); } catch { directPng = null; }
-                    _handler = OfficeCli.Handlers.DocumentHandlerFactory.Open(_filePath, _editable);
-                    wordShotHandler = (OfficeCli.Handlers.WordHandler)_handler;
+                    if (_editable)
+                    {
+                        _handler = OfficeCli.Handlers.DocumentHandlerFactory.Open(_filePath, _editable);
+                        wordShotHandler = (OfficeCli.Handlers.WordHandler)_handler;
+                    }
                 }
                 if (renderMode == "native" && directPng == null)
                 {
