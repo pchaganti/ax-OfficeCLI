@@ -1060,6 +1060,15 @@ public partial class WordHandler
                      "lang", "lang.latin", "lang.val", "lang.ea", "lang.cs",
                      "caps", "smallCaps", "strike", "dstrike",
                      "outline", "shadow", "emboss", "imprint",
+                     // BUG-DUMP-HLINK-SUPERSCRIPT: the dump emits vertAlign in its
+                     // canonical bool form `superscript`/`subscript` (not the raw
+                     // `vertAlign` key), so a superscript/subscript hyperlink run —
+                     // e.g. a footnote URL set superscript to render small — had
+                     // its <w:vertAlign> dropped, the link re-rendered at full size
+                     // and a long URL wrapped to an extra line, inflating the
+                     // footnote and shifting every later page break. Route both
+                     // through ApplyRunFormatting (handles superscript/subscript).
+                     "superscript", "subscript",
                      "highlight", "vertAlign", "position", "kern",
                      // BUG-DUMP-HLINK-SNAPGRID: snapToGrid on a hyperlink run —
                      // on a docGrid doc, snapToGrid="0" keeps the link line off
