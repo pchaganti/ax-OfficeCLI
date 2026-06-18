@@ -2364,8 +2364,19 @@ public partial class PowerPointHandler
                             // here via fallback but the prop list they accept is a
                             // subset of shape's. Without the hint the error
                             // misleadingly cites x/y/width/height/etc.
+                            // Derive the valid-prop list dynamically from the pptx
+                            // shape schema (verb=set) so the hint never drifts from
+                            // the actually-supported props (font.latin, strike, adj,
+                            // lineSpacing, spaceBefore, cap, autoFit, …). The schema
+                            // is kept in sync with the handler via schema-verify
+                            // tooling, so this stays accurate without hand-editing a
+                            // literal string. Fall back to a short literal only if
+                            // the schema can't be loaded.
+                            var dynProps = OfficeCli.Help.SchemaHelpLoader.ListProperties("pptx", "shape", "set");
                             var msg = unsupportedContextHint
-                                ?? "valid shape props: text, bold, italic, underline, color, fill, size, font, gradient, line, opacity, align, valign, x, y, width, height, rotation, name, link, animation, formula, geometry, preset, shadow, glow, reflection, softEdge, pattern, flip, flipH, flipV";
+                                ?? (dynProps.Count > 0
+                                    ? "valid shape props: " + string.Join(", ", dynProps)
+                                    : "valid shape props: text, bold, italic, underline, color, fill, size, font, gradient, line, opacity, align, valign, x, y, width, height, rotation, name, link, animation, formula, geometry, preset, shadow, glow, reflection, softEdge, pattern, flip, flipH, flipV");
                             unsupported.Add($"{key} ({msg})");
                         }
                         else
