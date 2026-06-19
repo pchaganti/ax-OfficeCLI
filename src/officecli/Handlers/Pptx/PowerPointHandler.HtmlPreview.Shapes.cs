@@ -1309,12 +1309,22 @@ public partial class PowerPointHandler
             duotoneFilter = $"grayscale(1) sepia(1) saturate(3) hue-rotate({hue:0.#}deg)";
         }
 
+        // Grayscale — Set.Media writes a bare <a:grayscl/> under a:blip,
+        // converting the picture to luminance grayscale (Picture Format →
+        // Color → Recolor → Grayscale). Maps directly to CSS grayscale(1).
+        // grayscl is mutually exclusive with duotone/biLevel in practice;
+        // skip if duotone already supplies a richer (grayscale-inclusive)
+        // filter so we don't emit two conflicting filters.
+        var picGrayscl = picBlipForFx?.GetFirstChild<Drawing.Grayscale>();
+
         var filterParts = new List<string>();
         var boxShadowParts = new List<string>();
         if (picBiLevel != null)
             filterParts.Add("grayscale(1) contrast(1000%)");
         if (duotoneFilter != null)
             filterParts.Add(duotoneFilter);
+        if (picGrayscl != null && duotoneFilter == null && picBiLevel == null)
+            filterParts.Add("grayscale(1)");
         // CSS brightness(1) = no change; +N% brightness → brightness(1 + N/100).
         if (brightnessPct.HasValue && Math.Abs(brightnessPct.Value) > 0.01)
             filterParts.Add($"brightness({1 + brightnessPct.Value / 100.0:0.###})");

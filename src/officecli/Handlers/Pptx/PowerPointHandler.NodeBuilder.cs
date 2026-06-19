@@ -2676,6 +2676,14 @@ public partial class PowerPointHandler
                 node.Format["duotone"] = string.Join(",", duoStops);
         }
 
+        // R31 bt: surface <a:grayscl/> blip recolor as `recolor=grayscale`.
+        // Set.Media writes a bare <a:grayscl/> from `recolor=grayscale`, so the
+        // readback key/value must mirror that to round-trip. Without this the
+        // grayscale recolor (Picture Format → Color → Recolor → Grayscale) was
+        // silently dropped on Get / dump→replay and the image came back full-color.
+        if (picBlip?.GetFirstChild<Drawing.Grayscale>() != null)
+            node.Format["recolor"] = "grayscale";
+
         // Click-hyperlink on the picture (nvPicPr/cNvPr/a:hlinkClick).
         // CONSISTENCY(shape-picture-parity): pictures share the cNvPr
         // hyperlink slot with shapes; reuse the same reader.
