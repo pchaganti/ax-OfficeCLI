@@ -231,6 +231,43 @@ public partial class PowerPointHandler
                 .FirstOrDefault(e => e.LocalName == "buBlip");
             var hasBullet = bulletChar != null || bulletAuto != null || bulletBlip != null;
 
+            // R39: last-resort default bullet. When the slide→layout→master
+            // bullet-resolution chain yields NO bullet (no buChar/buAutoNum/
+            // buBlip) AND no explicit <a:buNone> anywhere in the chain, real
+            // PowerPoint falls back to its built-in application default text
+            // style, which bullets BODY/CONTENT outline placeholders (lvl1 = "•").
+            // The officecli blank deck has no <p:bodyStyle> and no
+            // <p:defaultTextStyle>, so the chain is empty and the bullet
+            // silently vanished in HTML preview while PowerPoint shows it.
+            //
+            // Scoping (regression guardrails): apply ONLY to body/content-family
+            // placeholders (IsBodyContentPlaceholder). Title/ctrTitle/subTitle,
+            // plain text boxes, and any paragraph that already resolved a bullet
+            // or buNone above are untouched — so R26 and every real template with
+            // a defined master bodyStyle bullet render byte-identically.
+            //
+            // To avoid firing when the chain DID define a buNone on a level pPr
+            // that the first-content `inheritedLvlPpr` happened to skip, do a
+            // dedicated bullet-specific walk: search the chain for the first
+            // level pPr that declares ANY bullet element. If that finds nothing,
+            // the chain is genuinely silent and the default applies.
+            if (!hasBullet && !buNone && !slideHasExplicitBullet
+                && placeholderShape != null && placeholderPart != null
+                && IsBodyContentPlaceholder(placeholderShape))
+            {
+                int lvl = pProps?.Level?.Value ?? 0;
+                var bulletDefiningPpr = ResolvePlaceholderLevelPpr(placeholderShape, placeholderPart, lvl,
+                    p => p.ChildElements.Any(e =>
+                        e.LocalName is "buChar" or "buAutoNum" or "buNone" or "buBlip"));
+                if (bulletDefiningPpr == null)
+                {
+                    // Genuinely nothing defined anywhere → synthesize PowerPoint's
+                    // built-in default outline bullet for this level.
+                    bulletChar = DefaultOutlineBulletChar(lvl);
+                    hasBullet = true;
+                }
+            }
+
             // Resolve auto-numbered glyph (e.g. "1.", "a.", "iv.") and track per-scheme counter.
             string? autoNumGlyph = null;
             if (bulletAuto != null)
@@ -910,6 +947,31 @@ public partial class PowerPointHandler
         var t = ph.Type.Value;
         return t == PlaceholderValues.Title || t == PlaceholderValues.CenteredTitle;
     }
+
+    // R39: True when the shape is a BODY/CONTENT-family placeholder — the only
+    // placeholder class PowerPoint bullets by its built-in application default
+    // text style. The body/content family is: explicit type="body", type="obj"
+    // (content placeholder), or a placeholder element present but with NO type
+    // attribute (OOXML defaults a typeless <p:ph> to type=body). Title /
+    // ctrTitle / subTitle placeholders have a buNone default style and must
+    // stay bulletless; plain shapes (no <p:ph> at all) are not placeholders and
+    // get no default bullet. When unsure, this returns false (conservative).
+    private static bool IsBodyContentPlaceholder(Shape? shape)
+    {
+        var ph = shape?.NonVisualShapeProperties?.ApplicationNonVisualDrawingProperties
+            ?.GetFirstChild<PlaceholderShape>();
+        if (ph == null) return false; // not a placeholder → no default bullet
+        if (ph.Type?.HasValue != true) return true; // typeless <p:ph> defaults to body
+        var t = ph.Type.Value;
+        return t == PlaceholderValues.Body || t == PlaceholderValues.Object;
+    }
+
+    // R39: PowerPoint's built-in application default text style bullets each
+    // outline level. lvl0/lvl1 is the critical "•". We mirror PowerPoint's
+    // alternating default glyph set for deeper levels (•, –, •, –, …) with the
+    // bullet font kept implicit (Arial-class) so the glyph renders cleanly.
+    private static string DefaultOutlineBulletChar(int level)
+        => (level % 2 == 0) ? "•" : "–"; // • for even levels, – for odd
 
     // Resolve the theme major/minor Latin typeface for the slide owning `part`.
     // Returns null when no theme is reachable (e.g. orphan text body, or a part
