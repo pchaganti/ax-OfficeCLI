@@ -823,7 +823,8 @@ public partial class PowerPointHandler
                 tint: ReadTransformVal(schemeEl!, "tint"),
                 shade: ReadTransformVal(schemeEl!, "shade"),
                 lumMod: ReadTransformVal(schemeEl!, "lumMod"),
-                lumOff: ReadTransformVal(schemeEl!, "lumOff"));
+                lumOff: ReadTransformVal(schemeEl!, "lumOff"),
+                satMod: ReadTransformVal(schemeEl!, "satMod"));
             var hex = transformed.StartsWith('#') ? transformed[1..] : transformed;
             var (r, g, b) = ColorMath.HexToRgb(hex);
             return $"rgba({r},{g},{b},{opacity:0.##})";
@@ -845,7 +846,8 @@ public partial class PowerPointHandler
             tint: ReadTransformVal(rgbEl, "tint"),
             shade: ReadTransformVal(rgbEl, "shade"),
             lumMod: ReadTransformVal(rgbEl, "lumMod"),
-            lumOff: ReadTransformVal(rgbEl, "lumOff"));
+            lumOff: ReadTransformVal(rgbEl, "lumOff"),
+            satMod: ReadTransformVal(rgbEl, "satMod"));
     }
 
     // ==================== CSS Helper: Glow ====================
@@ -1576,7 +1578,8 @@ public partial class PowerPointHandler
             shade: ReadTransformVal(colorEl, "shade"),
             lumMod: ReadTransformVal(colorEl, "lumMod"),
             lumOff: ReadTransformVal(colorEl, "lumOff"),
-            alpha: ReadTransformVal(colorEl, "alpha"));
+            alpha: ReadTransformVal(colorEl, "alpha"),
+            satMod: ReadTransformVal(colorEl, "satMod"));
     }
 
     private static int? ReadTransformVal(OpenXmlElement colorEl, string localName)
