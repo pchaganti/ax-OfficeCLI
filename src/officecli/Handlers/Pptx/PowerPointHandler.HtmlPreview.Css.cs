@@ -678,18 +678,33 @@ public partial class PowerPointHandler
         var angleDeg = linear?.Angle?.HasValue == true ? linear.Angle.Value / 60000.0 : 90.0;
         // OOXML angle 0° = top→bottom (same as CSS 180deg), so CSS angle = OOXML + 90°
         // Actually OOXML: 0 = right, 90 = bottom; CSS: 0 = up, 90 = right
+        // OOXML ang is clockwise from +x (east): 0=→, 90(5400000)=↓, measured in
+        // 60000ths of a degree. CSS linear-gradient(Ndeg) is clockwise from "to top"
+        // (0deg=up, 90deg=right, 180deg=down). So cssAngle = ooxmlAngle + 90:
+        //   ooxml 0°(east) → css 90deg(right) ✓
+        //   ooxml 90°(south) → css 180deg(down/to bottom) ✓
+        //   ooxml 45°(SE) → css 135deg(to bottom right) ✓
         var cssAngle = angleDeg + 90;
 
-        // scaled="1": the OOXML angle is measured relative to the shape's
-        // bounding box (corner-to-corner), NOT in absolute degrees. A fixed
-        // CSS angle ignores aspect ratio and lands off the corners on a
-        // non-square shape. CSS corner keywords (`to bottom right`, …) are
-        // aspect-aware by spec, so snap a scaled gradient to the corner
-        // matching its quadrant. Unscaled gradients keep the literal angle.
-        if (linear?.Scaled?.Value == true)
+        // scaled="1": the OOXML angle is measured in the shape's bounding-box
+        // diagonal space, NOT in absolute screen degrees. Dual-render vs real
+        // PowerPoint (R62):
+        //   • CARDINAL angles (0°/90°/180°/270° → horizontal/vertical) stay
+        //     axis-aligned regardless of aspect ratio — a 90° scaled gradient on
+        //     ANY box is a clean vertical (red top → blue bottom). The old code
+        //     snapped these to a CSS corner keyword, turning vertical into a
+        //     diagonal. WRONG. They must emit the precise CSS angle.
+        //   • TRUE DIAGONAL angles (45°/135°/... ) on a NON-SQUARE box run
+        //     corner-to-corner of the actual box (full saturation lands exactly
+        //     on the box corners), not along a fixed 135° screen line. CSS corner
+        //     keywords (`to bottom right`, …) are aspect-aware by spec and match
+        //     PowerPoint here; a fixed 135deg would miss the corners on a wide box.
+        // So: corner-snap ONLY genuine diagonals; emit the precise angle for
+        // cardinals (and for all unscaled gradients).
+        var aNorm = ((angleDeg % 360) + 360) % 360;
+        var isCardinal = Math.Abs(aNorm % 90) < 0.5 || Math.Abs(aNorm % 90 - 90) < 0.5;
+        if (linear?.Scaled?.Value == true && !isCardinal)
         {
-            // Normalize CSS angle into [0,360); pick the nearest of the four
-            // corner directions (45/135/225/315 → corners).
             var a = ((cssAngle % 360) + 360) % 360;
             var corner = a switch
             {
