@@ -890,7 +890,15 @@ public partial class PowerPointHandler
             if (rp.Baseline?.HasValue == true && rp.Baseline.Value != 0)
             {
                 double percent = rp.Baseline.Value / 1000.0;
-                styles.Add($"vertical-align:{percent:0.##}%;font-size:smaller");
+                // PowerPoint auto-scales any baseline-shifted run to ~65% of its
+                // computed size (Office super/subscript convention), regardless of
+                // whether sz= was explicit. Replace the full-size font-size emitted
+                // above with the reduced pt value so view-html matches real PPT.
+                int fsIdx = styles.FindIndex(s => s.StartsWith("font-size:"));
+                string reducedFontSize = $"font-size:{effFontPt * 0.65:0.##}pt";
+                if (fsIdx >= 0) styles[fsIdx] = reducedFontSize;
+                else styles.Add(reducedFontSize);
+                styles.Add($"vertical-align:{percent:0.##}%");
             }
         }
         // R7-2: run with no <a:rPr> at all — still inherit the cascade default color.
