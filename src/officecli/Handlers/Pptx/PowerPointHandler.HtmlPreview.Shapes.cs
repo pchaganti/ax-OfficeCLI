@@ -1627,7 +1627,13 @@ public partial class PowerPointHandler
 
         if (hasHead || hasTail)
         {
-            var baseArrowSize = Math.Max(3, lineWidth * 3);
+            // R37-A: marker dimensions are in strokeWidth units (SVG default
+            // markerUnits="strokeWidth"), so the rendered arrowhead size is
+            // markerWidth × strokeWidth. The base must therefore be a SMALL CONSTANT
+            // (NOT multiplied by lineWidth) — otherwise the effective size grows as
+            // O(lineWidth²). A "med" triangle in PowerPoint is ~3-4.5× the stroke width,
+            // so base ≈ 4 gives the right proportion and scales LINEARLY with the line.
+            var baseArrowSize = 4.0;
             // R4-5: scale the marker by the head/tail @w / @len size enum
             // (sm/med/lg) so a large arrowhead renders visibly bigger than the
             // default; previously arrowSize was uniform and ignored @w/@len.
@@ -2131,11 +2137,12 @@ public partial class PowerPointHandler
             "oval" => $"<circle cx=\"{h:0.#}\" cy=\"{h:0.#}\" r=\"{h:0.#}\" fill=\"{color}\"/>",
             // Concave/notched arrow: triangle with a notch cut into the back edge.
             "stealth" => $"<polygon points=\"0 0,{s:0.#} {h:0.#},0 {s:0.#},{h:0.#} {h:0.#}\" fill=\"{color}\"/>",
-            // Slimmer, more-pointed arrowhead (➜): narrower base than the wide triangle
-            // plus a shallow concave back edge, so it reads as a pointed open arrow rather
-            // than a wide solid wedge. Back vertices pulled inward (x=h/2) toward a center
-            // notch at (h,h); tip at the right (s,h). All coords stay within 0..s.
-            "arrow" => $"<polygon points=\"{h / 2:0.#} 0,{s:0.#} {h:0.#},{h / 2:0.#} {s:0.#},{h:0.#} {h:0.#}\" fill=\"{color}\"/>",
+            // R37-B: OOXML type="arrow" is an OPEN arrowhead — two strokes meeting at the
+            // tip (like ">"), NOT a filled area. Emit an open chevron via <polyline> with
+            // fill="none" and an explicit stroke (the marker's internal coordinate space does
+            // not inherit the outer line's stroke-width, so set it explicitly ≈ s/6).
+            // Back corners at (0,0) and (0,s), tip at the right (s,h).
+            "arrow" => $"<polyline points=\"0 0,{s:0.#} {h:0.#},0 {s:0.#}\" fill=\"none\" stroke=\"{color}\" stroke-width=\"{s / 6:0.##}\"/>",
             // triangle / default: wide right-pointing solid triangle (▶).
             _ => $"<polygon points=\"0 0,{s:0.#} {h:0.#},0 {s:0.#}\" fill=\"{color}\"/>",
         };
