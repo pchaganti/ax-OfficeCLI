@@ -578,6 +578,16 @@ public partial class PowerPointHandler
                     break;
             }
 
+            // Horizontal block centering: <a:bodyPr anchorCtr="1"/> centers the
+            // text BLOCK horizontally within the text frame, independent of each
+            // paragraph's algn. PowerPoint centers short left-aligned text in a wide
+            // shape. The `.shape-text` flex column stretches children full-width by
+            // default; add `align-items:center` AND the `anchor-ctr` class (whose CSS
+            // rule shrink-wraps the otherwise width:100% .para divs) so the block
+            // visibly centers like PowerPoint instead of staying left-flush.
+            bool anchorCtr = bodyPr?.AnchorCenter?.Value == true;
+            string anchorCtrStyle = anchorCtr ? "align-items:center;" : "";
+
             // wrap=none: suppress the .shape inherited `white-space:pre-wrap`
             // on the inner text container so the line extends horizontally
             // rather than wrapping inside the shape's width box.
@@ -597,10 +607,11 @@ public partial class PowerPointHandler
                     columnStyle += $"column-gap:{Units.EmuToPt(bodyPr.ColumnSpacing.Value):0.##}pt;";
             }
 
-            var textStyle = !string.IsNullOrEmpty(flipStyle) || !string.IsNullOrEmpty(clipPathCss) || !string.IsNullOrEmpty(rtlColStyle) || !string.IsNullOrEmpty(wrapNoneStyle) || !string.IsNullOrEmpty(vertStyle)
-                ? $" style=\"{flipStyle}{rtlColStyle}{vertStyle}{wrapNoneStyle}{(string.IsNullOrEmpty(clipPathCss) ? "" : "position:relative;")}\""
+            var textStyle = !string.IsNullOrEmpty(flipStyle) || !string.IsNullOrEmpty(clipPathCss) || !string.IsNullOrEmpty(rtlColStyle) || !string.IsNullOrEmpty(wrapNoneStyle) || !string.IsNullOrEmpty(vertStyle) || !string.IsNullOrEmpty(anchorCtrStyle)
+                ? $" style=\"{flipStyle}{rtlColStyle}{vertStyle}{wrapNoneStyle}{anchorCtrStyle}{(string.IsNullOrEmpty(clipPathCss) ? "" : "position:relative;")}\""
                 : "";
-            sb.Append($"<div class=\"shape-text valign-{valign}\"{textStyle}>");
+            var anchorCtrClass = anchorCtr ? " anchor-ctr" : "";
+            sb.Append($"<div class=\"shape-text valign-{valign}{anchorCtrClass}\"{textStyle}>");
 
             // Block-level column wrapper: column-count works here (normal block
             // formatting context), unlike on the flex .shape-text parent.
