@@ -111,7 +111,7 @@ internal partial class ChartSvgRenderer
         bool showDataLabels = false, string? valNumFmt = null, string? plotFillColor = null,
         List<(string Name, double Value, string Color, double WidthPt, string Dash)>? referenceLines = null,
         bool isWaterfall = false, List<ErrorBarInfo?>? errorBars = null,
-        bool labelAsPercent = false, string? dataLabelNumFmt = null)
+        bool labelAsPercent = false, string? dataLabelNumFmt = null, int? ooxmlOverlap = null)
     {
         var allValues = series.SelectMany(s => s.values).ToArray();
         if (allValues.Length == 0) return;
@@ -219,9 +219,21 @@ internal partial class ChartSvgRenderer
 
             var groupH = (double)ph / Math.Max(catCount, 1);
             var gapPct = (ooxmlGapWidth ?? 150) / 100.0;
-            double barH, gap;
+            // Overlap (clustered only): o>0 makes adjacent series bars overlap,
+            // o<0 inserts a gap between them. Default 0 (bars touch). overlap=0
+            // reproduces the prior layout exactly (effectiveSlots == serCount,
+            // pitch == barH). See ChartSvgRenderer header / PM formula.
+            var overlapPct = (ooxmlOverlap ?? 0) / 100.0;
+            double barH, gap, pitchH = 0;
             if (stacked) { barH = groupH / (1 + gapPct); gap = (groupH - barH) / 2; }
-            else { barH = groupH / (serCount + gapPct); gap = barH * gapPct / 2; }
+            else
+            {
+                var effectiveSlots = serCount - (serCount - 1) * overlapPct;
+                barH = groupH / (gapPct + effectiveSlots);
+                pitchH = barH * (1 - overlapPct);
+                var clusterH = barH + (serCount - 1) * pitchH;
+                gap = (groupH - clusterH) / 2;
+            }
 
             // Zero-baseline X coordinate within the plot (== plotOx when niceMin==0).
             var plotZeroX = plotOx + zeroFrac * plotPw;
@@ -287,7 +299,7 @@ internal partial class ChartSvgRenderer
                         // absolute magnitude (a negative width would clip to zero).
                         var barW = Math.Abs(val) / span * plotPw;
                         var bx = val >= 0 ? plotZeroX : plotZeroX - barW;
-                        var by = oy + c * groupH + gap + (serCount - 1 - s) * barH;
+                        var by = oy + c * groupH + gap + (serCount - 1 - s) * pitchH;
                         sb.AppendLine($"        <rect x=\"{bx:0.#}\" y=\"{by:0.#}\" width=\"{barW:0.#}\" height=\"{barH:0.#}\" fill=\"{colors[s % colors.Count]}\" opacity=\"{FillOpacity(s)}\"/>");
                         // Data label at the bar's end (grouped horizontal bars).
                         // Mirrors the stacked-branch and vertical-column label logic
@@ -355,7 +367,7 @@ internal partial class ChartSvgRenderer
                     {
                         var dataIdx = catCount - 1 - c;
                         var rawVal = dataIdx < series[s].values.Length ? series[s].values[dataIdx] : 0;
-                        var by = oy + c * groupH + gap + (serCount - 1 - s) * barH;
+                        var by = oy + c * groupH + gap + (serCount - 1 - s) * pitchH;
                         var cy = by + barH / 2;
                         var bxTip = plotOx + ((rawVal - niceMin) / span) * plotPw;
                         double plusErr = eb.ValueType == "percentage" ? Math.Abs(rawVal) * eb.Value / 100.0 : errAmount;
@@ -410,9 +422,19 @@ internal partial class ChartSvgRenderer
         {
             var groupW = (double)pw / Math.Max(catCount, 1);
             var gapPct = (ooxmlGapWidth ?? 150) / 100.0;
-            double barW, gap;
+            // Overlap (clustered only) — see horizontal branch / PM formula.
+            // overlap=0 reproduces the prior layout exactly (pitch == barW).
+            var overlapPct = (ooxmlOverlap ?? 0) / 100.0;
+            double barW, gap, pitchW = 0;
             if (stacked) { barW = groupW / (1 + gapPct); gap = (groupW - barW) / 2; }
-            else { barW = groupW / (serCount + gapPct); gap = barW * gapPct / 2; }
+            else
+            {
+                var effectiveSlots = serCount - (serCount - 1) * overlapPct;
+                barW = groupW / (gapPct + effectiveSlots);
+                pitchW = barW * (1 - overlapPct);
+                var clusterW = barW + (serCount - 1) * pitchW;
+                gap = (groupW - clusterW) / 2;
+            }
 
             // Zero-baseline Y coordinate within the plot (== oy+ph when niceMin==0).
             var plotZeroY = oy + ph - zeroFrac * ph;
@@ -516,7 +538,7 @@ internal partial class ChartSvgRenderer
                         // extends down. Always emit a non-negative height using the
                         // absolute magnitude (a negative height would clip to zero).
                         var bh = Math.Abs(val) / span * ph;
-                        var bx = ox + c * groupW + gap + s * barW;
+                        var bx = ox + c * groupW + gap + s * pitchW;
                         var by = val >= 0 ? plotZeroY - bh : plotZeroY;
                         sb.AppendLine($"        <rect x=\"{bx:0.#}\" y=\"{by:0.#}\" width=\"{barW:0.#}\" height=\"{bh:0.#}\" fill=\"{colors[s % colors.Count]}\" opacity=\"{FillOpacity(s)}\"/>");
                         if (showDataLabels)
@@ -552,7 +574,7 @@ internal partial class ChartSvgRenderer
                     for (int c = 0; c < catCount; c++)
                     {
                         var rawVal = c < series[s].values.Length ? series[s].values[c] : 0;
-                        var bx = ox + c * groupW + gap + s * barW + barW / 2;
+                        var bx = ox + c * groupW + gap + s * pitchW + barW / 2;
                         var byTop = oy + ph - ((rawVal - niceMin) / span) * ph;
                         double plusErr = eb.ValueType == "percentage" ? Math.Abs(rawVal) * eb.Value / 100.0 : errAmount;
                         double minusErr = plusErr;
@@ -2139,6 +2161,7 @@ internal partial class ChartSvgRenderer
         public double? AxisMin { get; set; }
         public double? MajorUnit { get; set; }
         public int? GapWidth { get; set; }
+        public int? Overlap { get; set; }
         public string? ValAxisTitle { get; set; }
         public int ValAxisTitleFontPx { get; set; } = 9;
         public bool ValAxisTitleBold { get; set; }
@@ -2541,6 +2564,15 @@ internal partial class ChartSvgRenderer
         {
             var gv = gapWidthEl.GetAttributes().FirstOrDefault(a => a.LocalName == "val").Value;
             if (gv != null && int.TryParse(gv, out var gw)) info.GapWidth = gw;
+        }
+
+        // Overlap (clustered bar/column: percentage two adjacent series bars
+        // overlap; 100 = fully overlapping, 0 = touching, negative = gap).
+        var overlapEl = plotArea.Descendants().FirstOrDefault(e => e.LocalName == "overlap");
+        if (overlapEl != null)
+        {
+            var ov = overlapEl.GetAttributes().FirstOrDefault(a => a.LocalName == "val").Value;
+            if (ov != null && int.TryParse(ov, out var ow)) info.Overlap = ow;
         }
 
         // Plot / chart fill
@@ -3087,6 +3119,13 @@ internal partial class ChartSvgRenderer
         {
             // Column/bar variants
             var isHorizontal = chartType.Contains("bar") && !chartType.Contains("column");
+            // Structural signal that <c:overlap> was read and applied to the
+            // clustered bar geometry. Emitted only when the element is present
+            // in the chart XML (info.Overlap.HasValue) so a default chart does
+            // not gain a spurious attribute. The geometry change lives in
+            // RenderBarChartSvg; this is the inspectable marker.
+            if (info.Overlap.HasValue)
+                sb.AppendLine($"    <g data-overlap=\"{info.Overlap.Value}\"></g>");
             // Horizontal bars have their own hLabelMargin inside, so reduce outer marginLeft
             var barMarginLeft = isHorizontal ? 5 : marginLeft;
             var barPlotW = isHorizontal ? svgW - barMarginLeft - marginRight : plotW;
@@ -3102,7 +3141,7 @@ internal partial class ChartSvgRenderer
                     isHorizontal ? info.PlotFillColor : null, info.ReferenceLines,
                     info.IsWaterfall, info.ErrorBars,
                     info.IsPercent && info.ShowDataLabelPercent && !info.ShowDataLabelVal,
-                    info.DataLabelsNumFmt);
+                    info.DataLabelsNumFmt, info.Overlap);
         }
 
         // Axis titles inside SVG — for horizontal bar charts, value axis is on bottom and category axis is on left
