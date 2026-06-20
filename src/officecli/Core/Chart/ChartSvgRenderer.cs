@@ -2303,6 +2303,14 @@ internal partial class ChartSvgRenderer
         public bool SecondaryValAxisTitleBold { get; set; }
         public string? PlotFillColor { get; set; }
         public string? ChartFillColor { get; set; }
+        /// <summary>Plot-area &lt;c:spPr&gt;&lt;a:ln&gt; outline color (hex, no #). Null = no border.</summary>
+        public string? PlotBorderColor { get; set; }
+        /// <summary>Plot-area outline width in EMU (a:ln/@w). Null defaults to PowerPoint's ~0.75pt.</summary>
+        public long? PlotBorderWidthEmu { get; set; }
+        /// <summary>Chart-area &lt;c:spPr&gt;&lt;a:ln&gt; outline color (hex, no #). Null = no border.</summary>
+        public string? ChartBorderColor { get; set; }
+        /// <summary>Chart-area outline width in EMU. Null defaults to PowerPoint's ~0.75pt.</summary>
+        public long? ChartBorderWidthEmu { get; set; }
         public bool HasLegend { get; set; }
         /// <summary>#7f: OOXML c:legendPos InnerText — "r" (right, ECMA-376
         /// CT_LegendPos default), "b" (bottom), "t" (top), "l" (left),
@@ -2725,8 +2733,12 @@ internal partial class ChartSvgRenderer
         // Plot / chart fill
         var plotSpPr = plotArea.Elements().FirstOrDefault(e => e.LocalName == "spPr");
         info.PlotFillColor = ExtractFillColor(plotSpPr);
+        info.PlotBorderColor = ExtractLineColor(plotSpPr);
+        info.PlotBorderWidthEmu = ExtractLineWidthEmu(plotSpPr);
         var chartSpPr = chart?.Parent?.Elements().FirstOrDefault(e => e.LocalName == "spPr");
         info.ChartFillColor = ExtractFillColor(chartSpPr);
+        info.ChartBorderColor = ExtractLineColor(chartSpPr);
+        info.ChartBorderWidthEmu = ExtractLineWidthEmu(chartSpPr);
 
         // Legend
         var legendEl = chart?.Elements().FirstOrDefault(e => e.LocalName == "legend");
@@ -3157,6 +3169,23 @@ internal partial class ChartSvgRenderer
         return HexOrNull(val);
     }
 
+    /// <summary>Read a:ln/@w (EMU) from an spPr. Null when no a:ln or no width
+    /// attribute (caller defaults to ~0.75pt for a present-but-widthless line).</summary>
+    private static long? ExtractLineWidthEmu(OpenXmlElement? spPr)
+    {
+        var ln = spPr?.Elements().FirstOrDefault(e => e.LocalName == "ln");
+        var w = ln?.GetAttributes().FirstOrDefault(a => a.LocalName == "w").Value;
+        return long.TryParse(w, out var emu) ? emu : (long?)null;
+    }
+
+    /// <summary>EMU outline width → SVG stroke px (1 EMU = 1/914400 in, pt = EMU/12700,
+    /// px ≈ pt * 4/3). Null width = PowerPoint's default ~0.75pt line.</summary>
+    private static double EmuToStrokePx(long? emu)
+    {
+        var pt = emu.HasValue ? emu.Value / 12700.0 : 0.75;
+        return pt * 4.0 / 3.0;
+    }
+
     // Hex-only stripper: reject non-hex so these chart-color getters can't
     // become XSS sinks when their return flows into SVG style/fill/stroke
     // attributes downstream in Excel/PPTX/Word previews.
@@ -3358,6 +3387,17 @@ internal partial class ChartSvgRenderer
                     info.IsWaterfall, info.ErrorBars,
                     info.IsPercent && info.ShowDataLabelPercent && !info.ShowDataLabelVal,
                     info.DataLabelsNumFmt, info.Overlap, info.IsReversed, info.PerPointColors);
+        }
+
+        // Plot-area border (<c:plotArea><c:spPr><a:ln>). Drawn AFTER the plot
+        // fill, gridlines, and series so the outline sits on top — matching how
+        // PowerPoint traces the plot rectangle. No a:ln => no border (default).
+        // Horizontal bar plots use a different geometry (handled inside
+        // RenderBarChartSvg) so skip them here, same as the plot fill.
+        if (info.PlotBorderColor != null && !isHorizBarType)
+        {
+            var pw = EmuToStrokePx(info.PlotBorderWidthEmu);
+            sb.AppendLine($"    <rect x=\"{marginLeft}\" y=\"{marginTop}\" width=\"{plotW}\" height=\"{plotH}\" fill=\"none\" stroke=\"{CssHexColor(info.PlotBorderColor)}\" stroke-width=\"{pw:0.##}\"/>");
         }
 
         // Axis titles inside SVG — for horizontal bar charts, value axis is on bottom and category axis is on left

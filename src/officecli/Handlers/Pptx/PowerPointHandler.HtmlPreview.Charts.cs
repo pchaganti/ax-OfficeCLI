@@ -123,6 +123,12 @@ public partial class PowerPointHandler
 
         // Container with chart background
         var bgStyle = info.ChartFillColor != null ? $"background:#{info.ChartFillColor};" : "background:transparent;";
+        // Chart-area border (<c:chartSpace><c:spPr><a:ln>). No a:ln => no border.
+        if (info.ChartBorderColor != null)
+        {
+            var cbW = info.ChartBorderWidthEmu.HasValue ? info.ChartBorderWidthEmu.Value / 12700.0 * 4.0 / 3.0 : 1.0;
+            bgStyle += $"border:{cbW:0.##}px solid {ChartSvgRenderer.CssHexColor(info.ChartBorderColor)};";
+        }
         sb.AppendLine($"    <div class=\"shape\"{dataPathAttr} style=\"left:{x}pt;top:{y}pt;width:{w}pt;height:{h}pt;{bgStyle}display:flex;flex-direction:column;overflow:hidden\">");
 
         // Title — honor the chart's own title run color when present (raw OOXML
