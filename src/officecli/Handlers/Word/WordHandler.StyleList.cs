@@ -983,8 +983,14 @@ public partial class WordHandler
         for (int lk = ilvl + 1; lk <= 8; lk++)
         {
             if (!ShouldRestartDeeperLevel(numId, ilvl, lk)) continue;
-            if (st.OlCountPerLevel.ContainsKey(lk)) st.OlCountPerLevel[lk] = 0;
-            if (st.MultiLevelCounters.ContainsKey(lk)) st.MultiLevelCounters[lk] = 0;
+            // Restart by REMOVING the counter, not zeroing it: the next advance
+            // then re-seeds via SeedOrderedStart, which honors the level's
+            // <w:start> / <w:startOverride>. Zeroing made GetValueOrDefault
+            // return the stored 0, so the level always restarted at 1 — wrong
+            // for any level whose start != 1 (e.g. start=5 restarted to 1, not
+            // 5). Verified vs real Word.
+            st.OlCountPerLevel.Remove(lk);
+            st.MultiLevelCounters.Remove(lk);
         }
         if (absId.HasValue)
         {
@@ -997,7 +1003,7 @@ public partial class WordHandler
             for (int lk = ilvl + 1; lk <= 8; lk++)
             {
                 if (!ShouldRestartDeeperLevel(numId, ilvl, lk)) continue;
-                if (byIlvl.ContainsKey(lk)) byIlvl[lk] = 0;
+                byIlvl.Remove(lk); // mirror the OlCountPerLevel restart: re-seed, don't zero
             }
         }
     }
