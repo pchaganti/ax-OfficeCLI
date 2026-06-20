@@ -267,6 +267,16 @@ internal partial class ChartSvgRenderer
                 var gx = TickX((double)t / nTicks);
                 sb.AppendLine($"        <line x1=\"{gx:0.#}\" y1=\"{oy}\" x2=\"{gx:0.#}\" y2=\"{oy + ph}\" stroke=\"{GridColor}\" stroke-width=\"0.5\"/>");
             }
+            // Category-axis major gridlines (horizontal) — at the category-slot
+            // boundaries. The category axis is vertical for horizontal bars, so
+            // the gridlines run horizontally across the plot width. Gated on
+            // <c:catAx><c:majorGridlines/> + category-axis visibility.
+            if (ShowCatGridlines && CatAxisVisible)
+            for (int i = 0; i <= catCount; i++)
+            {
+                var gy = oy + (double)ph * i / Math.Max(catCount, 1);
+                sb.AppendLine($"        <line x1=\"{plotOx}\" y1=\"{gy:0.#}\" x2=\"{plotOx + plotPw}\" y2=\"{gy:0.#}\" stroke=\"{GridColor}\" stroke-width=\"0.5\"/>");
+            }
             sb.AppendLine($"        <line x1=\"{plotOx}\" y1=\"{oy}\" x2=\"{plotOx}\" y2=\"{oy + ph}\" stroke=\"{AxisLineColor}\" stroke-width=\"1\"/>");
             sb.AppendLine($"        <line x1=\"{plotOx}\" y1=\"{oy + ph}\" x2=\"{plotOx + plotPw}\" y2=\"{oy + ph}\" stroke=\"{AxisLineColor}\" stroke-width=\"1\"/>");
             // Zero baseline when the domain straddles zero (negative data present).
@@ -487,6 +497,15 @@ internal partial class ChartSvgRenderer
                     var gy = TickY((t + (double)m / MinorGridlineCount) / nTicks);
                     sb.AppendLine($"        <line x1=\"{ox}\" y1=\"{gy:0.#}\" x2=\"{ox + pw}\" y2=\"{gy:0.#}\" stroke=\"{GridColor}\" stroke-width=\"0.25\" opacity=\"0.5\"/>");
                 }
+            // Category-axis major gridlines (vertical) — at the category-slot
+            // boundaries. Only when <c:catAx><c:majorGridlines/> was declared
+            // and the category axis is visible (PowerPoint draws none otherwise).
+            if (ShowCatGridlines && CatAxisVisible)
+            for (int i = 0; i <= catCount; i++)
+            {
+                var gx = ox + (double)pw * i / Math.Max(catCount, 1);
+                sb.AppendLine($"        <line x1=\"{gx:0.#}\" y1=\"{oy}\" x2=\"{gx:0.#}\" y2=\"{oy + ph}\" stroke=\"{GridColor}\" stroke-width=\"0.5\"/>");
+            }
             sb.AppendLine($"        <line x1=\"{ox}\" y1=\"{oy}\" x2=\"{ox}\" y2=\"{oy + ph}\" stroke=\"{AxisLineColor}\" stroke-width=\"1\"/>");
             sb.AppendLine($"        <line x1=\"{ox}\" y1=\"{oy + ph}\" x2=\"{ox + pw}\" y2=\"{oy + ph}\" stroke=\"{AxisLineColor}\" stroke-width=\"1\"/>");
             // Zero baseline when the domain straddles zero (negative data present).
@@ -1017,6 +1036,15 @@ internal partial class ChartSvgRenderer
             var gy = MapY(isLog ? Math.Pow(logBase!.Value, tickVal) : tickVal);
             sb.AppendLine($"        <line x1=\"{ox}\" y1=\"{gy:0.#}\" x2=\"{ox + pw}\" y2=\"{gy:0.#}\" stroke=\"{GridColor}\" stroke-width=\"0.5\" stroke-dasharray=\"none\"/>");
         }
+        // Category-axis major gridlines (vertical) — at the category-slot
+        // boundaries, only when <c:catAx><c:majorGridlines/> was declared and
+        // the category axis is visible (PowerPoint draws none otherwise).
+        if (ShowCatGridlines && CatAxisVisible)
+        for (int i = 0; i <= catCount; i++)
+        {
+            var gx = ox + (double)pw * i / Math.Max(catCount, 1);
+            sb.AppendLine($"        <line x1=\"{gx:0.#}\" y1=\"{oy}\" x2=\"{gx:0.#}\" y2=\"{oy + ph}\" stroke=\"{GridColor}\" stroke-width=\"0.5\"/>");
+        }
         sb.AppendLine($"        <line x1=\"{ox}\" y1=\"{oy}\" x2=\"{ox}\" y2=\"{oy + ph}\" stroke=\"{AxisLineColor}\" stroke-width=\"1\"/>");
         sb.AppendLine($"        <line x1=\"{ox}\" y1=\"{oy + ph}\" x2=\"{ox + pw}\" y2=\"{oy + ph}\" stroke=\"{AxisLineColor}\" stroke-width=\"1\"/>");
 
@@ -1479,6 +1507,15 @@ internal partial class ChartSvgRenderer
                 var gy = oy + ph - (double)ph * (t + (double)m / MinorGridlineCount) / tickCount;
                 sb.AppendLine($"        <line x1=\"{ox}\" y1=\"{gy:0.#}\" x2=\"{ox + pw}\" y2=\"{gy:0.#}\" stroke=\"{GridColor}\" stroke-width=\"0.25\" opacity=\"0.5\"/>");
             }
+        // Category-axis major gridlines (vertical) — at the category-slot
+        // boundaries, gated on <c:catAx><c:majorGridlines/> + category-axis
+        // visibility (PowerPoint draws none by default).
+        if (ShowCatGridlines && CatAxisVisible)
+        for (int i = 0; i <= catCount; i++)
+        {
+            var gx = ox + (double)pw * i / Math.Max(catCount, 1);
+            sb.AppendLine($"        <line x1=\"{gx:0.#}\" y1=\"{oy}\" x2=\"{gx:0.#}\" y2=\"{oy + ph}\" stroke=\"{GridColor}\" stroke-width=\"0.5\"/>");
+        }
         sb.AppendLine($"        <line x1=\"{ox}\" y1=\"{oy}\" x2=\"{ox}\" y2=\"{oy + ph}\" stroke=\"{AxisLineColor}\" stroke-width=\"1\"/>");
         sb.AppendLine($"        <line x1=\"{ox}\" y1=\"{oy + ph}\" x2=\"{ox + pw}\" y2=\"{oy + ph}\" stroke=\"{AxisLineColor}\" stroke-width=\"1\"/>");
 
