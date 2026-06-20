@@ -1317,7 +1317,19 @@ public partial class WordHandler
         container ??= _doc.MainDocumentPart?.Document?.Body;
         if (container == null) return null;
 
-        var lastPara = container.Elements<Paragraph>().LastOrDefault(p => !ReferenceEquals(p, targetPara));
+        // Continue from the paragraph IMMEDIATELY before the target (the
+        // documented "immediately preceding list" rule). When the target is
+        // already in the tree (Set path), that is its previous Paragraph
+        // sibling; when it is still detached (Add path, inserted only after
+        // ApplyListStyle runs), the container's last paragraph IS the
+        // predecessor. The old code always took the container's LAST paragraph,
+        // so `set listStyle=ordered` on a mid-document paragraph compared
+        // against the document's final paragraph instead of the real
+        // predecessor and minted a fresh numId per call (1,1,2 for three
+        // adjacent items set one-by-one, instead of 1,2,3).
+        var lastPara = targetPara?.Parent != null
+            ? targetPara.ElementsBefore().OfType<Paragraph>().LastOrDefault()
+            : container.Elements<Paragraph>().LastOrDefault(p => !ReferenceEquals(p, targetPara));
         if (lastPara == null) return null;
 
         var numProps = lastPara.ParagraphProperties?.NumberingProperties;
