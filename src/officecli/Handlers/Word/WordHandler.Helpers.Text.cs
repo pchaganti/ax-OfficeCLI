@@ -69,8 +69,37 @@ public partial class WordHandler
             // surfaces. Read-side only. Mirrors AppendHyperlinkText.
             else if (IsRunContainerWrapper(child))
                 AppendWrapperRunText(sb, child);
+            // Tracked-change run containers: <w:ins>/<w:moveTo> wrap runs that
+            // ARE part of the visible text (an insertion, or a move's
+            // destination), so — like a hyperlink/smartTag wrapper — their
+            // inner runs must contribute. The old loop only saw the
+            // paragraph's direct Run children, so a run wrapped in <w:ins>
+            // vanished from readback (get .text / view text returned ""),
+            // leaving a numbered insertion showing its marker with no text.
+            // <w:del>/<w:moveFrom> wrap REMOVED text and are intentionally not
+            // handled — view text reflects how the document reads once pending
+            // changes show through.
+            else if (child is InsertedRun || child is MoveToRun)
+                AppendRevisionRunText(sb, child);
         }
         return sb.ToString();
+    }
+
+    // Walk a <w:ins>/<w:moveTo> run container, recursing into nested runs /
+    // hyperlinks / smartTag wrappers / further tracked-change containers so the
+    // inserted (or moved-in) text surfaces. Mirrors AppendHyperlinkText.
+    private static void AppendRevisionRunText(StringBuilder sb, OpenXmlElement revision)
+    {
+        foreach (var rChild in revision.ChildElements)
+        {
+            if (rChild is Run rRun) sb.Append(GetRunText(rRun));
+            else if (rChild is Hyperlink rHl) AppendHyperlinkText(sb, rHl);
+            else if (rChild is InsertedRun || rChild is MoveToRun) AppendRevisionRunText(sb, rChild);
+            else if (IsRunContainerWrapper(rChild)) AppendWrapperRunText(sb, rChild);
+            else if (rChild.LocalName == "oMath" || rChild is M.OfficeMath)
+                sb.Append(string.Concat(rChild.Descendants<Text>().Select(t => t.Text))
+                    + string.Concat(rChild.Descendants<M.Text>().Select(t => t.Text)));
+        }
     }
 
     // BUG-DUMP-R35-2: a <w:smartTag>/<w:customXml> inline wrapper. These parse
@@ -95,6 +124,7 @@ public partial class WordHandler
         {
             if (wChild is Run wRun) sb.Append(GetRunText(wRun));
             else if (wChild is Hyperlink wHl) AppendHyperlinkText(sb, wHl);
+            else if (wChild is InsertedRun || wChild is MoveToRun) AppendRevisionRunText(sb, wChild);
             else if (IsRunContainerWrapper(wChild)) AppendWrapperRunText(sb, wChild);
             else if (wChild.LocalName == "oMath" || wChild is M.OfficeMath)
                 sb.Append(string.Concat(wChild.Descendants<Text>().Select(t => t.Text))
@@ -143,6 +173,7 @@ public partial class WordHandler
         {
             if (hChild is Run hRun) sb.Append(GetRunText(hRun));
             else if (hChild is Hyperlink nested) AppendHyperlinkText(sb, nested);
+            else if (hChild is InsertedRun || hChild is MoveToRun) AppendRevisionRunText(sb, hChild);
             else if (hChild.LocalName == "oMath" || hChild is M.OfficeMath)
                 sb.Append(string.Concat(hChild.Descendants<Text>().Select(t => t.Text))
                     + string.Concat(hChild.Descendants<M.Text>().Select(t => t.Text)));
@@ -163,6 +194,17 @@ public partial class WordHandler
                 sb.Append(FormulaParser.ToReadableText(child));
             else if (child is Hyperlink hyperlink)
                 sb.Append(string.Concat(hyperlink.Descendants<Text>().Select(t => t.Text)));
+            // <w:ins>/<w:moveTo> inserted/moved-in runs are visible text; render
+            // their content (math included) like the direct-child branches above.
+            else if (child is InsertedRun || child is MoveToRun)
+                foreach (var rc in child.ChildElements)
+                {
+                    if (rc is Run rr) sb.Append(GetRunText(rr));
+                    else if (rc.LocalName == "oMath" || rc is M.OfficeMath)
+                        sb.Append(FormulaParser.ToReadableText(rc));
+                    else if (rc is Hyperlink rh)
+                        sb.Append(string.Concat(rh.Descendants<Text>().Select(t => t.Text)));
+                }
         }
         return sb.ToString();
     }
