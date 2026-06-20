@@ -88,6 +88,11 @@ internal partial class ChartSvgRenderer
     public int DataLabelFontPx { get; set; } = 8;
     // <c:dLblPos> for bar/column labels: inEnd|outEnd|ctr|inBase. Synced from ChartInfo.
     public string DataLabelPos { get; set; } = "outEnd";
+    // Whether <c:dLblPos> was explicitly present in the XML. Pie/doughnut's OOXML
+    // default position is bestFit (on-segment), not outEnd — so when no explicit
+    // position is set, pie/doughnut labels must sit ON the ring (PowerPoint behavior),
+    // not outside. Bar/column keep their outEnd default. Synced from ChartInfo.
+    public bool HasExplicitDataLabelPos { get; set; }
     public int AxisTickCount { get; set; } = 4;
     // <c:firstSliceAng> for pie/doughnut: degrees clockwise the first slice's
     // start edge is rotated from 12 o'clock. Synced from ChartInfo. 0 = top.
@@ -1368,7 +1373,13 @@ internal partial class ChartSvgRenderer
             var labelAngle = -Math.PI / 2 + firstSliceOffset;
             // <c:dLblPos val="outEnd"> places labels just beyond the pie edge along
             // each slice bisector; inEnd/ctr/bestFit keep them inside the slice.
-            var labelOutside = DataLabelPos == "outEnd";
+            // OOXML's default pie/doughnut label position is bestFit (ON the
+            // segment), NOT outEnd. The "outEnd" default is bar/column-appropriate,
+            // so only treat outEnd as "outside" for pie/doughnut when the XML
+            // explicitly declared <c:dLblPos val="outEnd"/>. This matches PowerPoint,
+            // which draws default labels on the colored slices (readable even on a
+            // dark chart background) rather than outside in dark text.
+            var labelOutside = HasExplicitDataLabelPos && DataLabelPos == "outEnd";
             var labelR = labelOutside ? r * 1.12
                 : holeRatio > 0 ? r * (1 + holeRatio) / 2 : r * 0.65;
             for (int i = 0; i < values.Length; i++)
@@ -2296,6 +2307,8 @@ internal partial class ChartSvgRenderer
         // relative to the bar end. Default "outEnd" matches Office's grouped-bar
         // default; "inEnd" places it inside the bar near its end.
         public string DataLabelPos { get; set; } = "outEnd";
+        // True only when <c:dLblPos> is present in the XML (see renderer field).
+        public bool HasExplicitDataLabelPos { get; set; }
         public double HoleRatio { get; set; }
         // Pie/doughnut slice explosion as a fraction of radius per data point
         // (index = data point). Empty list = no explosion. Populated from the
@@ -2576,7 +2589,7 @@ internal partial class ChartSvgRenderer
             // past the bar tip; ignoring it made both positions identical.
             var dLblPosEl = dLbls.Elements().FirstOrDefault(e => e.LocalName == "dLblPos");
             var dLblPosVal = dLblPosEl?.GetAttributes().FirstOrDefault(a => a.LocalName == "val").Value;
-            if (!string.IsNullOrEmpty(dLblPosVal)) info.DataLabelPos = dLblPosVal!;
+            if (!string.IsNullOrEmpty(dLblPosVal)) { info.DataLabelPos = dLblPosVal!; info.HasExplicitDataLabelPos = true; }
             // <c:numFmt formatCode="#,##0"> inside dLbls formats the label text
             // (e.g. grouping separators). Independent of the value-axis numFmt.
             var dLblNumFmtEl = dLbls.Elements().FirstOrDefault(e => e.LocalName == "numFmt");
@@ -3329,6 +3342,7 @@ internal partial class ChartSvgRenderer
         if (info.AxisLineColor != null) AxisLineColor = CssHexColor(info.AxisLineColor);
         DataLabelFontPx = info.DataLabelFontPx;
         DataLabelPos = info.DataLabelPos;
+        HasExplicitDataLabelPos = info.HasExplicitDataLabelPos;
         FirstSliceAngle = info.FirstSliceAngle;
         SeriesFillOpacities = info.SeriesFillOpacities;
 
