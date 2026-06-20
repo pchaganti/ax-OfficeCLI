@@ -85,6 +85,11 @@ public static class WordNumFmtRenderer
                 return ToHeavenlyStems(n);
             case "ideographzodiac":
                 return ToEarthlyBranches(n);
+            // Sexagenary (干支) cycle: heavenly-stem + earthly-branch pair,
+            // 甲子 乙丑 丙寅 … (60-cycle). Distinct from ideographZodiac, which
+            // is the bare earthly branch. Verified via officeshot.
+            case "ideographzodiactraditional":
+                return ToSexagenary(n);
             case "decimalenclosedcircle":
             case "decimalenclosedcirclechinese":
                 return ToEnclosedCircle(n);
@@ -126,6 +131,27 @@ public static class WordNumFmtRenderer
                 return ToRussianAlpha(n, uppercase: false);
             case "russianupper":
                 return ToRussianAlpha(n, uppercase: true);
+            // Uppercase hexadecimal: 1..9, A..F, 10→"A", 16→"10". Word renders
+            // the counter as base-16 (n.ToString("X")). Verified via officeshot.
+            case "hex":
+                return n.ToString("X", CultureInfo.InvariantCulture);
+            // Footnote symbol cycle * † ‡ § (U+002A, U+2020, U+2021, U+00A7),
+            // doubling each glyph past the 4th (5→**, 6→††, …). ECMA-376
+            // §17.18.59 "chicago"; verified via officeshot.
+            case "chicago":
+                return ToChicago(n);
+            // Korean syllable enumeration 가 나 다 … (leading consonant + ㅏ,
+            // 14 glyphs), recycling past 14. Verified via officeshot.
+            case "ganada":
+                return ToRecycledTable(n, KoreanGanada);
+            // Parenthesized CJK ideograph ㈠ ㈡ … ㈩ (U+3220..U+3229, 1..10);
+            // past 10 Word falls back to plain decimal. Verified via officeshot.
+            case "ideographenclosedcircle":
+                return ToParenthesizedIdeograph(n);
+            // Number wrapped in spaced dashes: "- 1 -", "- 2 -". Verified via
+            // officeshot (spaces inside both dashes).
+            case "numberindash":
+                return $"- {n.ToString(CultureInfo.InvariantCulture)} -";
             case "none": return "";
             case "bullet": return "\u2022";
             default: return n.ToString(CultureInfo.InvariantCulture);
@@ -319,6 +345,35 @@ public static class WordNumFmtRenderer
 
     private static string ToHeavenlyStems(int n) => HeavenlyStems[(n - 1) % 10];
     private static string ToEarthlyBranches(int n) => EarthlyBranches[(n - 1) % 12];
+
+    /// <summary>Sexagenary 干支 pair: heavenly-stem (10-cycle) + earthly-branch
+    /// (12-cycle), e.g. 甲子 乙丑 … — a 60-element cycle.</summary>
+    private static string ToSexagenary(int n)
+    {
+        if (n < 1) n = 1;
+        return HeavenlyStems[(n - 1) % 10] + EarthlyBranches[(n - 1) % 12];
+    }
+
+    // Footnote symbol cycle (ECMA-376 §17.18.59 "chicago"): *, †, ‡, § then
+    // doubled (**, ††, …), tripled, … as the index passes each table multiple.
+    private static readonly char[] ChicagoSymbols = { '*', '†', '‡', '§' };
+
+    private static string ToChicago(int n)
+    {
+        if (n < 1) n = 1;
+        var glyph = ChicagoSymbols[(n - 1) % ChicagoSymbols.Length];
+        var repeat = Math.Min(((n - 1) / ChicagoSymbols.Length) + 1, 64);
+        return new string(glyph, repeat);
+    }
+
+    // Parenthesized CJK ideograph one..ten — U+3220..U+3229 (一..十). Word
+    // renders ideographEnclosedCircle with these single glyphs for 1..10 and
+    // falls back to plain decimal beyond 10.
+    private static string ToParenthesizedIdeograph(int n)
+    {
+        if (n >= 1 && n <= 10) return ((char)(0x3220 + n - 1)).ToString();
+        return n.ToString(CultureInfo.InvariantCulture);
+    }
 
     private static string ToEnclosedCircle(int n)
     {
@@ -535,6 +590,13 @@ public static class WordNumFmtRenderer
     private static readonly char[] KoreanChosung =
     {
         'ㄱ','ㄴ','ㄷ','ㄹ','ㅁ','ㅂ','ㅅ','ㅇ','ㅈ','ㅊ','ㅋ','ㅌ','ㅍ','ㅎ'
+    };
+
+    // Korean syllable enumeration (ganada): leading-consonant + vowel ㅏ —
+    // 가 나 다 라 마 바 사 아 자 차 카 타 파 하 (14, Hangul Syllables block).
+    private static readonly char[] KoreanGanada =
+    {
+        '가','나','다','라','마','바','사','아','자','차','카','타','파','하'
     };
 
     /// <summary>Single-symbol enumeration that recycles to repeated glyphs past
