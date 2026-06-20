@@ -4201,7 +4201,18 @@ public partial class WordHandler
         // the dotted form here too. The firstRun-fallback markRp branch is
         // narrowed (below) to fire only when NO runs exist at all, so the
         // two forms stay mutually exclusive (no DOUBLE).
-        var hasAnyRun = para.Elements<Run>().Any();
+        // BUG-DUMP-MARKRPR-HYPERLINK: count runs nested in hyperlinks/SDTs/
+        // smartTags too, not just direct-child runs. A cell paragraph whose
+        // sole content is a hyperlink (a language-link cell, "EN"/"SP", …) has
+        // NO direct <w:r> child, so hasAnyRun was false and the dotted markRPr.*
+        // block below was skipped — yet the firstRun-fallback also can't carry
+        // it (firstRun is null but the bare-key path is gated on !hasAnyRun via
+        // a still-direct-children check), so the ¶-mark <w:rPr> (the font/size
+        // that sets the cell line height) was dropped entirely on round-trip,
+        // collapsing the line and drifting the table. Descendants<Run> makes the
+        // dotted form fire so the mark rPr round-trips; the bare-key fallback
+        // (gated on its own !hasAnyRun below) stays off, so no DOUBLE emit.
+        var hasAnyRun = para.Descendants<Run>().Any();
         if (pmrpForDump != null && (hasTextRun || hasAnyRun))
         {
             var b = pmrpForDump.GetFirstChild<Bold>();
