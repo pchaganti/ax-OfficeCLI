@@ -1585,6 +1585,12 @@ public partial class WordHandler
             "align", "alignment", "spacebefore", "spaceBefore",
             "spaceafter", "spaceAfter", "linespacing", "lineSpacing",
             "spacebeforelines", "spaceBeforeLines", "spaceafterlines", "spaceAfterLines",
+            // auto-spacing toggles consumed in the explicit dispatch above; the
+            // dump emits them on styles whose pPr carries <w:spacing
+            // w:beforeAutospacing/@w:afterAutospacing>, so without listing them
+            // the per-key sweep flagged every such style's round-trip.
+            "spacebeforeauto", "spaceBeforeAuto", "beforeautospacing",
+            "spaceafterauto", "spaceAfterAuto", "afterautospacing",
             "lineRule", "linerule",
             "font", "size", "bold", "italic", "color",
             "direction", "dir", "bidi",
