@@ -1009,24 +1009,26 @@ public partial class WordHandler
     }
 
     /// <summary>
-    /// ECMA-376 §17.9.6 &lt;w:lvlRestart&gt;: a deeper level restarts its counter
-    /// whenever a level numbered R (1-based) <em>or any shallower (lower-numbered)
-    /// level</em> increments. So when the level at <paramref name="ilvl"/> (0-based)
-    /// increments, deeper level <paramref name="deeperIlvl"/> restarts iff its
-    /// lvlRestart value R satisfies (ilvl+1) &gt;= R.
-    ///   • R absent → default R = 1: any shallower level increment restarts it
-    ///     (preserves the historic always-restart-on-parent-tick outline default).
+    /// ECMA-376 §17.9.6 &lt;w:lvlRestart&gt;: the current level restarts whenever the
+    /// level numbered R (1-based) <em>or any level above it (lower index = shallower)</em>
+    /// is used. So when the level at <paramref name="ilvl"/> (0-based) increments,
+    /// deeper level <paramref name="deeperIlvl"/> restarts iff its lvlRestart value
+    /// R satisfies (ilvl+1) &lt;= R — i.e. the incrementing level is R or shallower.
+    ///   • R absent → default R = deeperIlvl (its own 0-based index): restarts on
+    ///     every STRICTLY shallower level (the standard outline default). This is
+    ///     mathematically identical to the historic "(ilvl+1) &gt;= 1" default, so
+    ///     plain multi-level lists are unaffected; only explicit lvlRestart values
+    ///     change behavior.
     ///   • R == 0   → never restart.
-    /// Verified against real Word: lvlRestart="2" on a 3rd level + sequence
-    /// 0,2,2,0,2 (the 2nd level never used) yields 1,1,2,2,3 — the deepest level
-    /// continues because only level 1 (1-based) ever incremented and 1 &lt; 2.
+    /// (lvlRestart="1" therefore restarts ONLY when the top level (ilvl=0) ticks,
+    /// NOT when an intermediate level ticks — matching real Word.)
     /// </summary>
     private bool ShouldRestartDeeperLevel(int numId, int ilvl, int deeperIlvl)
     {
         var restart = GetLevel(numId, deeperIlvl)?.GetFirstChild<LevelRestart>()?.Val?.Value;
-        var r = restart ?? 1;
-        if (r == 0) return false;               // val="0": never restart
-        return (ilvl + 1) >= r;
+        if (restart == 0) return false;          // val="0": never restart
+        var r = restart ?? deeperIlvl;           // default: restart on any strictly shallower level
+        return (ilvl + 1) <= r;
     }
 
     /// <summary>
