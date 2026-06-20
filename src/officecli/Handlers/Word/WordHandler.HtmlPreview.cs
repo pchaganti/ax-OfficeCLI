@@ -2349,10 +2349,20 @@ public partial class WordHandler
                         var lvlText = GetLevelText(hn.NumId, hn.Ilvl);
                         if (!string.IsNullOrEmpty(lvlText))
                         {
-                            var numStr = System.Text.RegularExpressions.Regex.Replace(lvlText, @"%(\d)", m =>
+                            // Only %1..%9 are valid Word level placeholders.
+                            // Match the RenderOrderedMarker hardening: restrict
+                            // to %1-%9 (so %0 / %x stays literal) and emit ""
+                            // for a placeholder whose fmt resolves to "bullet"
+                            // or an undefined level — otherwise a heading number
+                            // gets polluted with a • glyph and diverges from
+                            // view text. See WordHandler.StyleList.cs
+                            // RenderOrderedMarker.
+                            var numStr = System.Text.RegularExpressions.Regex.Replace(lvlText, @"%([1-9])", m =>
                             {
                                 var lk = int.Parse(m.Groups[1].Value) - 1;
                                 var lvlFmt = GetNumberingFormat(hn.NumId, lk);
+                                if (lvlFmt.Equals("bullet", StringComparison.OrdinalIgnoreCase))
+                                    return "";
                                 var counter = headingCounters.GetValueOrDefault(lk, 0);
                                 return OfficeCli.Core.WordNumFmtRenderer.Render(counter, lvlFmt);
                             });
