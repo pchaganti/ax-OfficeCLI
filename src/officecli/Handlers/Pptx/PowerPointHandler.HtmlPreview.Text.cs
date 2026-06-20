@@ -15,7 +15,8 @@ public partial class PowerPointHandler
     // ==================== Text Rendering ====================
 
     private static void RenderTextBody(StringBuilder sb, OpenXmlElement textBody, Dictionary<string, string> themeColors,
-        Shape? placeholderShape = null, OpenXmlPart? placeholderPart = null, string? fontRefDefaultColor = null)
+        Shape? placeholderShape = null, OpenXmlPart? placeholderPart = null, string? fontRefDefaultColor = null,
+        int? slideNumber = null)
     {
         // Per-textbody auto-number counters, keyed by scheme type + paragraph level.
         // Resets when switching type/level. Paragraphs aren't wrapped in <ol>, so
@@ -437,7 +438,12 @@ public partial class PowerPointHandler
             // sz, default 18pt). Without a placeholder, an empty-text run div
             // collapses to zero height and the blank line disappears. Emit a
             // sized &nbsp; so the line occupies its proper height.
-            bool hasVisibleText = runs.Any(r => !string.IsNullOrEmpty(r.Text?.Text));
+            // A field (<a:fld>) with non-empty effective text (cached <a:t> or a
+            // recomputed slidenum) is visible too — a field-only paragraph must
+            // not be treated as an empty/blank line and get the &nbsp; placeholder.
+            bool hasVisibleField = para.Elements<Drawing.Field>()
+                .Any(f => !string.IsNullOrEmpty(ResolveFieldText(f, slideNumber)));
+            bool hasVisibleText = runs.Any(r => !string.IsNullOrEmpty(r.Text?.Text)) || hasVisibleField;
             if (!hasVisibleText && !hasMath)
             {
                 // Empty paragraph (blank line) — size the &nbsp; to the effective
@@ -473,12 +479,46 @@ public partial class PowerPointHandler
                         sb.Append("<br>");
                         tabCtx.ResetColumn();
                     }
+                    else if (child is Drawing.Field fld)
+                    {
+                        // <a:fld> (slide number, date, …). PowerPoint paints the
+                        // field's text using the field's own run properties, so
+                        // build a throwaway Drawing.Run from the field's <a:rPr>
+                        // (cloned) + the EFFECTIVE field text and route it through
+                        // RenderRun — the field then inherits the field's font /
+                        // size / color exactly like a real run. slidenum is
+                        // recomputed to the actual 1-based slide position when known
+                        // (matching PowerPoint); other fields emit their cached <a:t>.
+                        var fldText = ResolveFieldText(fld, slideNumber);
+                        if (string.IsNullOrEmpty(fldText)) continue;
+                        var fldRun = new Drawing.Run();
+                        var fldRpr = fld.GetFirstChild<Drawing.RunProperties>();
+                        if (fldRpr != null)
+                            fldRun.RunProperties = (Drawing.RunProperties)fldRpr.CloneNode(true);
+                        fldRun.Text = new Drawing.Text(fldText);
+                        RenderRun(sb, fldRun, themeColors, defaultFontSizeHundredths, placeholderPart, themeFontFallback, fontScale, defaultRunColor, inhBold, inhItalic, tabCtx);
+                    }
                 }
             }
 
             sb.AppendLine("</div>");
             isFirstPara = false;
         }
+    }
+
+    // Effective display text for an <a:fld> in the HTML preview. For
+    // type="slidenum" we prefer the ACTUAL 1-based slide number when the
+    // renderer threaded it (PowerPoint recomputes slidenum to the real slide
+    // position), falling back to the cached <a:t> when unknown. All other field
+    // types (datetime*, etc.) emit their cached <a:t> verbatim. Mirrors
+    // GetShapeText's field handling for the non-render extractor.
+    private static string ResolveFieldText(Drawing.Field fld, int? slideNumber)
+    {
+        var cached = string.Concat(fld.Elements<Drawing.Text>().Select(t => t.Text));
+        var fldType = fld.Type?.Value ?? "";
+        if (fldType == "slidenum" && slideNumber.HasValue)
+            return slideNumber.Value.ToString();
+        return cached;
     }
 
     // R35: per-paragraph tab-stop tracking for the HTML preview. Holds the

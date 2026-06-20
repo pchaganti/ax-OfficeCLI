@@ -20,7 +20,7 @@ public partial class PowerPointHandler
     /// </summary>
     private static void RenderShape(StringBuilder sb, Shape shape, OpenXmlPart part,
         Dictionary<string, string> themeColors, (long x, long y, long cx, long cy)? overridePos = null,
-        string? dataPath = null, bool suppressText = false)
+        string? dataPath = null, bool suppressText = false, int? slideNumber = null)
     {
         // prst="line" auto-shapes are line-segment geometry; render as SVG
         // through the connector pipeline so they don't degrade to a div with
@@ -736,7 +736,7 @@ public partial class PowerPointHandler
             // R11-3: pass the shape's <p:style>/<a:fontRef> schemeClr down as the
             // final fallback run color (used only when no explicit/inherited color).
             var fontRefDefaultColor = ResolveStyleRefSchemeColor(shape.ShapeStyle?.FontReference, themeColors);
-            RenderTextBody(sb, shape.TextBody, themeColors, shape, part, fontRefDefaultColor);
+            RenderTextBody(sb, shape.TextBody, themeColors, shape, part, fontRefDefaultColor, slideNumber);
 
             if (!string.IsNullOrEmpty(columnStyle))
                 sb.Append("</div>");

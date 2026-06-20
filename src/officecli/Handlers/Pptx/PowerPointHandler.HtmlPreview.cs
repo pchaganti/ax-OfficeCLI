@@ -654,7 +654,7 @@ public partial class PowerPointHandler
             {
                 case Shape shape:
                     shapeIdx++;
-                    RenderShape(sb, shape, slidePart, themeColors, dataPath: PathFor("shape", shape, shapeIdx));
+                    RenderShape(sb, shape, slidePart, themeColors, dataPath: PathFor("shape", shape, shapeIdx), slideNumber: slideNum);
                     break;
                 case Picture pic:
                     picIdx++;
