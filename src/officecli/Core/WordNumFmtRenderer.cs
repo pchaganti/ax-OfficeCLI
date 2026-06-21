@@ -349,8 +349,14 @@ public static class WordNumFmtRenderer
     private static readonly string[] EarthlyBranches =
         { "子", "丑", "寅", "卯", "辰", "巳", "午", "未", "申", "酉", "戌", "亥" };
 
-    private static string ToHeavenlyStems(int n) => HeavenlyStems[(n - 1) % 10];
-    private static string ToEarthlyBranches(int n) => EarthlyBranches[(n - 1) % 12];
+    // Finite glyph sets: the 10 heavenly stems / 12 earthly branches enumerate
+    // 甲..癸 / 子..亥 then fall back to plain decimal once the value exceeds the
+    // set — Word does NOT cycle the glyphs back to 甲/子. Matches the decimal
+    // fallback of ToParenthesizedIdeograph and the enclosed-glyph renderers.
+    private static string ToHeavenlyStems(int n) =>
+        n >= 1 && n <= 10 ? HeavenlyStems[n - 1] : n.ToString(CultureInfo.InvariantCulture);
+    private static string ToEarthlyBranches(int n) =>
+        n >= 1 && n <= 12 ? EarthlyBranches[n - 1] : n.ToString(CultureInfo.InvariantCulture);
 
     /// <summary>Sexagenary 干支 pair: heavenly-stem (10-cycle) + earthly-branch
     /// (12-cycle), e.g. 甲子 乙丑 … — a 60-element cycle.</summary>
@@ -383,22 +389,22 @@ public static class WordNumFmtRenderer
 
     private static string ToEnclosedCircle(int n)
     {
-        // ① .. ⑳ = U+2460..U+2473 (1..20)
+        // ① .. ⑳ = U+2460..U+2473 (1..20). Word's circled-number glyph set stops
+        // at 20; beyond it the marker is plain decimal (not the U+325x/U+32Bx
+        // extended enclosed glyphs, and not "(n)").
         if (n >= 1 && n <= 20) return ((char)(0x2460 + n - 1)).ToString();
-        // 21..35 at U+3251..U+325F (Word uses similar enclosed glyphs); fallback to (n)
-        if (n >= 21 && n <= 35) return ((char)(0x3251 + n - 21)).ToString();
-        if (n >= 36 && n <= 50) return ((char)(0x32B1 + n - 36)).ToString();
-        return $"({n})";
+        return n.ToString(CultureInfo.InvariantCulture);
     }
 
     // Parenthesized digit glyphs ⑴⑵⑶ … U+2474..U+2487 cover 1..20 (U+2474 is
-    // "PARENTHESIZED DIGIT ONE"). Real Word renders decimalEnclosedParen with
-    // these single glyphs, consistent with decimalEnclosedCircle (①) and
-    // decimalEnclosedFullstop (⒈). Beyond 20 fall back to "(n)".
+    // "PARENTHESIZED DIGIT ONE"). Word renders decimalEnclosedParen with these
+    // single glyphs, consistent with decimalEnclosedCircle (①) and
+    // decimalEnclosedFullstop (⒈). Beyond 20 the marker is plain decimal — any
+    // trailing punctuation seen in a list comes from the level's lvlText.
     private static string ToEnclosedParen(int n)
     {
         if (n >= 1 && n <= 20) return ((char)(0x2473 + n)).ToString();
-        return $"({n})";
+        return n.ToString(CultureInfo.InvariantCulture);
     }
 
     private static string ToFullWidthDigits(int n)
@@ -497,14 +503,14 @@ public static class WordNumFmtRenderer
     }
 
     // Enclosed digit-with-full-stop glyphs ⒈⒉⒊ … U+2488..U+249B cover 1..20
-    // (U+2488 is literally named "DIGIT ONE FULL STOP"). Real Word renders
-    // decimalEnclosedFullstop with these single glyphs (the trailing literal
-    // "." some lists show comes from the level's lvlText, not the marker).
-    // Verified via officeshot (fams.docx). Beyond 20 fall back to "n.".
+    // (U+2488 is literally named "DIGIT ONE FULL STOP"; the period is intrinsic
+    // to the glyph). Word renders decimalEnclosedFullstop with these single
+    // glyphs. Beyond 20 the marker is the bare decimal number — it carries no
+    // intrinsic period, so any trailing "." comes from the level's lvlText.
     private static string ToEnclosedFullStop(int n)
     {
         if (n >= 1 && n <= 20) return ((char)(0x2487 + n)).ToString();
-        return $"{n}.";
+        return n.ToString(CultureInfo.InvariantCulture);
     }
 
     /// <summary>Japanese legal uses modern formal kanji 壱弐参肆伍陸漆捌玖拾.</summary>
