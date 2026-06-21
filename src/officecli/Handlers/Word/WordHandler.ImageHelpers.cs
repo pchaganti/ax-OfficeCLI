@@ -705,8 +705,30 @@ public partial class WordHandler
             " xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\"" +
             " xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"" +
             " xmlns:a14=\"http://schemas.microsoft.com/office/drawing/2010/main\"";
-        var withNs = new System.Text.RegularExpressions.Regex("<pic:spPr")
-            .Replace(spPrXml, "<pic:spPr" + NsDecls, 1);
+        // BUG-DUMP-R72-SPPR-IDEMPOTENT: dump→batch is not a fixpoint for the
+        // verbatim picture spPr. On the first round-trip the captured fragment
+        // (cut from document.xml) has no xmlns:pic/a/r/a14 of its own, so blindly
+        // prepending NsDecls is fine. But the SDK serializes the rebuilt spPr WITH
+        // those decls, so a *second* dump captures a fragment that already carries
+        // them; prepending again yields a duplicate xmlns:pic attribute — invalid
+        // XML — and `new PIC.ShapeProperties(withNs)` throws, the catch swallows it,
+        // and the picture silently falls back to the generic rebuilt spPr (losing
+        // bwMode, xfrm flip flags, custom content extent, noFill, …). Strip the four
+        // decls we are about to add from the ROOT open tag first so re-stamping is
+        // duplicate-safe and the round-trip converges. Other prefixes the content
+        // genuinely needs (a16, adec, …) are left untouched.
+        var rootTag = new System.Text.RegularExpressions.Regex(@"^(\s*<pic:spPr)([^>]*?)(/?>)");
+        var withNs = rootTag.Replace(spPrXml, m =>
+        {
+            var attrs = System.Text.RegularExpressions.Regex.Replace(
+                m.Groups[2].Value,
+                " xmlns:(?:pic|a|r|a14)=\"[^\"]*\"", string.Empty);
+            return m.Groups[1].Value + NsDecls + attrs + m.Groups[3].Value;
+        }, 1);
+        // Fallback for the (defensive) case the root-tag anchor did not match.
+        if (!withNs.Contains(" xmlns:pic="))
+            withNs = new System.Text.RegularExpressions.Regex("<pic:spPr")
+                .Replace(spPrXml, "<pic:spPr" + NsDecls, 1);
         PIC.ShapeProperties fresh;
         try { fresh = new PIC.ShapeProperties(withNs); }
         catch { return; }
