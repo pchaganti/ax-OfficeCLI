@@ -618,10 +618,7 @@ public partial class WordHandler
                 var inst = numbering?.Elements<NumberingInstance>()
                     .FirstOrDefault(n => n.NumberID?.Value == numId);
                 var absId = inst?.AbstractNumId?.Val?.Value;
-                var abs = absId != null
-                    ? numbering!.Elements<AbstractNum>()
-                        .FirstOrDefault(a => a.AbstractNumberId?.Value == absId.Value)
-                    : null;
+                var abs = FindAbstractNum(numbering, absId);
                 var lvl = abs?.Elements<Level>()
                     .FirstOrDefault(l => l.LevelIndex?.Value == ilvl);
                 var lvlBidi = lvl?.PreviousParagraphProperties?.GetFirstChild<BiDi>();
@@ -962,8 +959,7 @@ public partial class WordHandler
         if (lvlOverride?.GetFirstChild<Level>() is Level emb)
             return emb.StartNumberingValue?.Val?.Value ?? 1;
         var absId = inst?.AbstractNumId?.Val?.Value;
-        var abs = numbering?.Elements<AbstractNum>()
-            .FirstOrDefault(a => a.AbstractNumberId?.Value == absId);
+        var abs = FindAbstractNum(numbering, absId);
         var lvl = abs?.Elements<Level>()
             .FirstOrDefault(l => l.LevelIndex?.Value == ilvl);
         return lvl?.StartNumberingValue?.Val?.Value ?? 1;
@@ -1145,8 +1141,7 @@ public partial class WordHandler
             .FirstOrDefault(n => n.NumberID?.Value == numId);
         var absId = inst?.AbstractNumId?.Val?.Value;
         if (absId == null) return null;
-        var abs = numbering!.Elements<AbstractNum>()
-            .FirstOrDefault(a => a.AbstractNumberId?.Value == absId);
+        var abs = FindAbstractNum(numbering, absId);
         return abs?.Elements<Level>().FirstOrDefault(l => l.LevelIndex?.Value == ilvl);
     }
 
@@ -1310,8 +1305,7 @@ public partial class WordHandler
             .FirstOrDefault(n => n.NumberID?.Value == numId);
         var abstractNumId = numInstance?.AbstractNumId?.Val?.Value;
         if (abstractNumId == null) return null;
-        var abstractNum = numbering.Elements<AbstractNum>()
-            .FirstOrDefault(a => a.AbstractNumberId?.Value == abstractNumId);
+        var abstractNum = FindAbstractNum(numbering, abstractNumId);
         var level = abstractNum?.Elements<Level>()
             .FirstOrDefault(l => l.LevelIndex?.Value == ilvl);
 
@@ -1393,10 +1387,27 @@ public partial class WordHandler
 
         var abstractNumId = numInstance.AbstractNumId?.Val?.Value;
         if (abstractNumId == null) return null;
-        var abstractNum = numbering.Elements<AbstractNum>()
-            .FirstOrDefault(a => a.AbstractNumberId?.Value == abstractNumId);
+        var abstractNum = FindAbstractNum(numbering, abstractNumId);
         return abstractNum?.Elements<Level>()
             .FirstOrDefault(l => l.LevelIndex?.Value == ilvl);
+    }
+
+    // Resolve an abstractNumId to its AbstractNum, following a <w:numStyleLink>
+    // indirection. An abstractNum that only links to a numbering style
+    // (numStyleLink="X") has no level definitions of its own — it borrows them
+    // from the abstractNum carrying the matching <w:styleLink w:val="X"/>. Word
+    // resolves list-gallery "list styles" this way; without following the link
+    // every marker for such a list fell back to a bullet glyph.
+    private static AbstractNum? FindAbstractNum(Numbering? numbering, int? abstractNumId)
+    {
+        if (numbering == null || abstractNumId == null) return null;
+        var abs = numbering.Elements<AbstractNum>()
+            .FirstOrDefault(a => a.AbstractNumberId?.Value == abstractNumId);
+        if (abs == null) return null;
+        var link = abs.GetFirstChild<NumberingStyleLink>()?.Val?.Value;
+        if (string.IsNullOrEmpty(link)) return abs;
+        return numbering.Elements<AbstractNum>()
+            .FirstOrDefault(a => a.GetFirstChild<StyleLink>()?.Val?.Value == link) ?? abs;
     }
 
     private int? GetStartValue(int numId, int ilvl)
@@ -1421,8 +1432,7 @@ public partial class WordHandler
         var abstractNumId = numInstance.AbstractNumId?.Val?.Value;
         if (abstractNumId == null) return null;
 
-        var abstractNum = numbering.Elements<AbstractNum>()
-            .FirstOrDefault(a => a.AbstractNumberId?.Value == abstractNumId);
+        var abstractNum = FindAbstractNum(numbering, abstractNumId);
         var level = abstractNum?.Elements<Level>()
             .FirstOrDefault(l => l.LevelIndex?.Value == ilvl);
 
