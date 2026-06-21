@@ -2074,6 +2074,36 @@ public partial class PowerPointHandler
         return $"clip-path:polygon(0 100%,{X(x2)}% 0,{X(x3)}% 0,100% 100%)";
     }
 
+    // plaque: a rectangle whose four corners are scooped inward by concave quarter-circle
+    // arcs (centered at the OUTER corners, radius = ss*adj/100000, default adj 16667). Was
+    // missing from the switch (rendered as a plain rectangle). At large adj the scoops nearly
+    // meet, yielding a 4-pointed concave star. Each arc sampled into 7 points; verified
+    // against real PowerPoint (default + adj=40000).
+    private static string PlaquePolygon(long widthEmu, long heightEmu, Drawing.PresetGeometry? presetGeom)
+    {
+        double w = widthEmu, h = heightEmu, ss = Math.Min(w, h);
+        var adj = Math.Clamp(ReadAdjValueCss(presetGeom, 0, 16667), 0, 50000);
+        double r = ss * adj / 100000.0;
+        var ci = System.Globalization.CultureInfo.InvariantCulture;
+        string X(double v) => (v / w * 100).ToString("0.##", ci);
+        string Y(double v) => (v / h * 100).ToString("0.##", ci);
+        var pts = new System.Collections.Generic.List<string>();
+        const int N = 6;
+        void Arc(double cx, double cy, double a0, double a1)
+        {
+            for (int i = 0; i <= N; i++)
+            {
+                double a = (a0 + (a1 - a0) * i / N) * Math.PI / 180.0;
+                pts.Add($"{X(cx + r * Math.Cos(a))}% {Y(cy + r * Math.Sin(a))}%");
+            }
+        }
+        Arc(0, 0, 90, 0);      // top-left scoop
+        Arc(w, 0, 180, 90);    // top-right scoop
+        Arc(w, h, 270, 180);   // bottom-right scoop
+        Arc(0, h, 360, 270);   // bottom-left scoop
+        return "clip-path:polygon(" + string.Join(",", pts) + ")";
+    }
+
     private static string PresetGeometryToCss(string preset, long widthEmu, long heightEmu,
         Drawing.PresetGeometry? presetGeom)
     {
@@ -2183,6 +2213,8 @@ public partial class PowerPointHandler
             return LeftRightUpArrowPolygon(widthEmu, heightEmu, presetGeom);
         if (preset == "nonIsoscelesTrapezoid" && widthEmu > 0 && heightEmu > 0)
             return NonIsoscelesTrapezoidPolygon(widthEmu, heightEmu, presetGeom);
+        if (preset == "plaque" && widthEmu > 0 && heightEmu > 0)
+            return PlaquePolygon(widthEmu, heightEmu, presetGeom);
         // corner (L-shape): adj1 = bottom (horizontal) arm height %, adj2 = left
         // (vertical) arm width %; both default 50000. Inner corner at (adj2, 100-adj1).
         // The old hardcoded 50/50 ignored both, so a thin-armed L looked fat.
