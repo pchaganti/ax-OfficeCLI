@@ -2124,6 +2124,36 @@ public partial class PowerPointHandler
         return "clip-path:polygon(" + string.Join(",", pts) + ")";
     }
 
+    // teardrop: the box-inscribed ellipse with its upper-right quarter pulled into a point
+    // toward the top-right. adj (default 100000, range 0..200000) sets the tail length: the
+    // tail tip is at (hc + wd2*adj/100000, vc - hd2*adj/100000) — at the corner for the
+    // default, beyond the box past 100000, no tail at 0. Built from 3 ellipse quarters plus
+    // two quadratic beziers for the tail. Was missing (rendered as a rectangle). Verified
+    // against real PowerPoint (default + adj=50000).
+    private static string TeardropPolygon(long widthEmu, long heightEmu, Drawing.PresetGeometry? presetGeom)
+    {
+        double w = widthEmu, h = heightEmu, hc = w / 2, vc = h / 2, wd2 = w / 2, hd2 = h / 2;
+        var adj = Math.Clamp(ReadAdjValueCss(presetGeom, 0, 100000), 0, 200000);
+        double dx1 = wd2 * adj / 100000.0, dy1 = hd2 * adj / 100000.0;
+        double x1 = hc + dx1, y1 = vc - dy1;        // tail tip
+        double x2 = (hc + x1) / 2, y2 = (vc + y1) / 2;
+        var ci = System.Globalization.CultureInfo.InvariantCulture;
+        string X(double v) => (v / w * 100).ToString("0.##", ci);
+        string Y(double v) => (v / h * 100).ToString("0.##", ci);
+        var pts = new System.Collections.Generic.List<string>();
+        void Pt(double x, double y) => pts.Add($"{X(x)}% {Y(y)}%");
+        const int N = 8;
+        void Arc(double a0, double a1) { for (int i = 0; i <= N; i++) { double a = (a0 + (a1 - a0) * i / N) * Math.PI / 180.0; Pt(hc + wd2 * Math.Cos(a), vc + hd2 * Math.Sin(a)); } }
+        void Quad(double px0, double py0, double cx, double cy, double px1, double py1)
+        { for (int i = 1; i <= N; i++) { double t = (double)i / N, u = 1 - t; Pt(u * u * px0 + 2 * u * t * cx + t * t * px1, u * u * py0 + 2 * u * t * cy + t * t * py1); } }
+        Arc(180, 270);                       // upper-left quarter: (0,vc) -> (hc,0)
+        Quad(hc, 0, x2, 0, x1, y1);          // top-mid -> tail tip
+        Quad(x1, y1, w, y2, w, vc);          // tail tip -> right-mid
+        Arc(0, 90);                          // lower-right quarter: (w,vc) -> (hc,h)
+        Arc(90, 180);                        // lower-left quarter: (hc,h) -> (0,vc)
+        return "clip-path:polygon(" + string.Join(",", pts) + ")";
+    }
+
     private static string PresetGeometryToCss(string preset, long widthEmu, long heightEmu,
         Drawing.PresetGeometry? presetGeom)
     {
@@ -2237,6 +2267,8 @@ public partial class PowerPointHandler
             return PlaquePolygon(widthEmu, heightEmu, presetGeom);
         if (preset == "pieWedge")
             return PieWedgeCss();
+        if (preset == "teardrop" && widthEmu > 0 && heightEmu > 0)
+            return TeardropPolygon(widthEmu, heightEmu, presetGeom);
         // corner (L-shape): adj1 = bottom (horizontal) arm height %, adj2 = left
         // (vertical) arm width %; both default 50000. Inner corner at (adj2, 100-adj1).
         // The old hardcoded 50/50 ignored both, so a thin-armed L looked fat.
