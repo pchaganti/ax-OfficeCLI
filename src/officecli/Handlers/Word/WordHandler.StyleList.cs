@@ -986,7 +986,29 @@ public partial class WordHandler
         for (int j = 0; j < ilvl; j++)
         {
             if (st.OlCountPerLevel.ContainsKey(j)) continue;
-            var sj = SeedOrderedStart(st, numId, absId, j, autoInit: true) + 1;
+            int sj;
+            // A shallower level missing from OlCountPerLevel is one of two things:
+            //   (a) never visited at all (jump-to-deeper within a list) → it must
+            //       APPEAR as its start value, so seed-below + 1 = start.
+            //   (b) already visited under a sibling num sharing this abstractNum,
+            //       then dropped when the numId switch cleared the in-run counters
+            //       (GetListPrefix). Its running count survives in
+            //       AbsNumLevelCounters; the parent did NOT advance merely because
+            //       a deeper item appeared first under the new num, so RESTORE that
+            //       value verbatim (no +1). Adding +1 here over-counted every
+            //       subsequent marker (parent shown one level too high) — e.g. a
+            //       0,0,0,1 / switch / 1,0,0,1,0 walk rendered the post-switch
+            //       parent as d,e,f instead of Word's c,d,e.
+            if (absId.HasValue
+                && st.AbsNumLevelCounters.TryGetValue(absId.Value, out var carried)
+                && carried.TryGetValue(j, out var run) && run > 0)
+            {
+                sj = run;
+            }
+            else
+            {
+                sj = SeedOrderedStart(st, numId, absId, j, autoInit: true) + 1;
+            }
             st.OlCountPerLevel[j] = sj;
             st.MultiLevelCounters[j] = sj;
             if (absId.HasValue)
