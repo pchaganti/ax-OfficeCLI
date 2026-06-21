@@ -900,7 +900,11 @@ public partial class PowerPointHandler
                 if (effCap.Value == Drawing.TextCapsValues.All)
                     styles.Add("text-transform:uppercase");
                 else if (effCap.Value == Drawing.TextCapsValues.Small)
-                    styles.Add("font-variant-caps:all-small-caps");
+                    // small caps: lowercase letters render as smaller capitals, but
+                    // ORIGINALLY-uppercase letters stay full size. That is CSS
+                    // `small-caps` — NOT `all-small-caps` (which would also shrink the
+                    // already-uppercase letters, diverging from PowerPoint).
+                    styles.Add("font-variant-caps:small-caps");
             }
 
             // Color
