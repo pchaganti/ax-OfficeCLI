@@ -86,6 +86,10 @@ internal partial class ChartSvgRenderer
     public int ValFontPx { get; set; } = 9;
     public int CatFontPx { get; set; } = 9;
     public int DataLabelFontPx { get; set; } = 8;
+    // Value-axis display-units divisor (<c:dispUnits><c:builtInUnit>). Applied to
+    // value-axis tick labels only (not data labels). 1.0 = no scaling. Synced from
+    // ChartInfo. See FmtValAxis.
+    public double ValAxisUnitDivisor { get; set; } = 1.0;
     // <c:dLblPos> for bar/column labels: inEnd|outEnd|ctr|inBase. Synced from ChartInfo.
     public string DataLabelPos { get; set; } = "outEnd";
     // Whether <c:dLblPos> was explicitly present in the XML. Pie/doughnut's OOXML
@@ -531,7 +535,7 @@ internal partial class ChartSvgRenderer
             {
                 var val = niceMin + tickStep * t;
                 if (val > niceMax + 1e-9) continue; // BUG1(R25): no label past axisMax
-                var label = percentStacked ? $"{(int)val}%" : FormatAxisValue(val, valNumFmt);
+                var label = percentStacked ? $"{(int)val}%" : FmtValAxis(val, valNumFmt);
                 var tx = TickX((double)t / nTicks);
                 // Horizontal bars: value axis is HORIZONTAL at the bottom (y=oy+ph).
                 if (TickMarkVisible(ValMajorTickMark))
@@ -814,7 +818,7 @@ internal partial class ChartSvgRenderer
                 // tick can land above axisMax (e.g. 450 > 400); real PowerPoint
                 // omits any label past the axis top. Skip it.
                 if (val > niceMax + 1e-9) continue;
-                var label = percentStacked ? $"{(int)val}%" : FormatAxisValue(val, valNumFmt);
+                var label = percentStacked ? $"{(int)val}%" : FmtValAxis(val, valNumFmt);
                 var ty = TickY((double)t / nTicks);
                 // Vertical columns: value axis is VERTICAL on the left (x=ox).
                 if (TickMarkVisible(ValMajorTickMark))
@@ -1380,13 +1384,13 @@ internal partial class ChartSvgRenderer
             {
                 var exp = niceMin + t;
                 tickVal = Math.Pow(logBase!.Value, exp);
-                label = FormatAxisValue(tickVal, valNumFmt);
+                label = FmtValAxis(tickVal, valNumFmt);
             }
             else
             {
                 tickVal = niceMin + tickStep * t;
                 if (tickVal > niceMax + 1e-9) continue; // no label past axisMax
-                label = FormatAxisValue(tickVal, valNumFmt);
+                label = FmtValAxis(tickVal, valNumFmt);
             }
             var ty = MapY(tickVal);
             if (ValAxisVisible && TickMarkVisible(ValMajorTickMark))
@@ -1839,7 +1843,7 @@ internal partial class ChartSvgRenderer
             var val = niceMin + tickInterval * t;
             if (val > niceMax + 1e-9) continue; // BUG1(R25): no label past axisMax
             var label = percent ? (val % 1 == 0 ? $"{(int)val}" : $"{val:0.#}")
-                : FormatAxisValue(val, valNumFmt);
+                : FmtValAxis(val, valNumFmt);
             var ty = oy + ph - (double)ph * t / tickCount;
             if (TickMarkVisible(ValMajorTickMark))
                 EmitVAxisTick(sb, ox, ty, ValMajorTickMark!);
@@ -2349,7 +2353,7 @@ internal partial class ChartSvgRenderer
         for (int t = 0; t <= AxisTickCount; t++)
         {
             var val = priNiceMax * t / AxisTickCount;
-            var label = FormatAxisValue(val);
+            var label = FmtValAxis(val);
             sb.AppendLine($"        <text x=\"{ox - 4}\" y=\"{oy + ph - (double)ph * t / AxisTickCount:0.#}\" fill=\"{AxisColor}\" font-size=\"{ValFontPx}\" text-anchor=\"end\" dominant-baseline=\"middle\">{label}</text>");
         }
         // Secondary Y-axis labels (right side, lighter color). R16-5: these used
@@ -2366,6 +2370,13 @@ internal partial class ChartSvgRenderer
             }
         }
     }
+
+    /// <summary>Format a VALUE-AXIS tick label, applying the display-units divisor
+    /// (<c:dispUnits>) before formatting so a "millions" axis shows 1,2,3 instead
+    /// of 1M,2M,3M. Data-label / category-label sites keep calling FormatAxisValue
+    /// with the raw value (display units affect the axis only).</summary>
+    private string FmtValAxis(double val, string? numFmt = null)
+        => FormatAxisValue(ValAxisUnitDivisor != 1.0 ? val / ValAxisUnitDivisor : val, numFmt);
 
     private static string FormatAxisValue(double val, string? numFmt = null)
     {
@@ -2648,6 +2659,14 @@ internal partial class ChartSvgRenderer
         /// CatAxisLabelRotationDeg). Null = no rotation.</summary>
         public int? ValAxisLabelRotationDeg { get; set; }
         public string? ValNumFmt { get; set; }
+        /// <summary>Value-axis display units (&lt;c:dispUnits&gt;&lt;c:builtInUnit&gt;):
+        /// the divisor PowerPoint applies to every value-axis tick label (e.g.
+        /// millions → 1e6, so 1,000,000 shows as "1"). 1.0 = no scaling.</summary>
+        public double ValueAxisUnitDivisor { get; set; } = 1.0;
+        /// <summary>The rotated annotation drawn beside the value axis when display
+        /// units are set and &lt;c:dispUnitsLbl&gt; is present (e.g. "Millions").
+        /// Null = no label.</summary>
+        public string? ValueAxisUnitLabel { get; set; }
         /// <summary>Format code from &lt;c:dLbls&gt;&lt;c:numFmt&gt; — applied to data
         /// labels (overrides the value-axis ValNumFmt for label text).</summary>
         public string? DataLabelsNumFmt { get; set; }
@@ -2964,6 +2983,37 @@ internal partial class ChartSvgRenderer
             var majorUnit = valAxis.Elements().FirstOrDefault(e => e.LocalName == "majorUnit");
             if (majorUnit != null && double.TryParse(majorUnit.GetAttributes().FirstOrDefault(a => a.LocalName == "val").Value, out var mu))
                 info.MajorUnit = mu;
+
+            // Display units (<c:dispUnits><c:builtInUnit val="millions"/>): PowerPoint
+            // divides every value-axis tick by the unit and (when <c:dispUnitsLbl> is
+            // present) draws a rotated unit-name annotation beside the axis.
+            var dispUnits = valAxis.Elements().FirstOrDefault(e => e.LocalName == "dispUnits");
+            if (dispUnits != null)
+            {
+                var builtIn = dispUnits.Elements().FirstOrDefault(e => e.LocalName == "builtInUnit")?
+                    .GetAttributes().FirstOrDefault(a => a.LocalName == "val").Value;
+                var (div, name) = builtIn switch
+                {
+                    "hundreds" => (1e2, "Hundreds"),
+                    "thousands" => (1e3, "Thousands"),
+                    "tenThousands" => (1e4, "Ten Thousands"),
+                    "hundredThousands" => (1e5, "Hundred Thousands"),
+                    "millions" => (1e6, "Millions"),
+                    "tenMillions" => (1e7, "Ten Millions"),
+                    "hundredMillions" => (1e8, "Hundred Millions"),
+                    "billions" => (1e9, "Billions"),
+                    "trillions" => (1e12, "Trillions"),
+                    _ => (1.0, null as string),
+                };
+                if (div != 1.0)
+                {
+                    info.ValueAxisUnitDivisor = div;
+                    // The annotation is shown only when <c:dispUnitsLbl> is present
+                    // (PowerPoint's "Show display units label on chart" toggle).
+                    if (dispUnits.Elements().Any(e => e.LocalName == "dispUnitsLbl"))
+                        info.ValueAxisUnitLabel = name;
+                }
+            }
 
             // Log scale
             var logBaseEl = scaling?.Elements().FirstOrDefault(e => e.LocalName == "logBase");
@@ -3661,6 +3711,7 @@ internal partial class ChartSvgRenderer
         FirstSliceAngle = info.FirstSliceAngle;
         SeriesFillOpacities = info.SeriesFillOpacities;
         InvertIfNegative = info.InvertIfNegative;
+        ValAxisUnitDivisor = info.ValueAxisUnitDivisor;
 
         // Increase right margin for long axis labels (e.g. "$1,000,000")
         if (!string.IsNullOrEmpty(info.ValNumFmt) && marginRight < 30)
@@ -3845,6 +3896,24 @@ internal partial class ChartSvgRenderer
         // Combo charts (non-XY): the secondary value axis title sits on the right.
         if (!isXY && !string.IsNullOrEmpty(info.SecondaryValAxisTitle))
             sb.AppendLine($"    <text x=\"{svgW - 10}\" y=\"{svgH / 2}\" fill=\"{SecondaryAxisColor}\" font-size=\"{info.SecondaryValAxisTitleFontPx}\"{(info.SecondaryValAxisTitleBold ? " font-weight=\"bold\"" : "")} text-anchor=\"middle\" dominant-baseline=\"middle\" transform=\"rotate(90,{svgW - 10},{svgH / 2})\">{HtmlEncode(info.SecondaryValAxisTitle)}</text>");
+
+        // Display-units annotation (<c:dispUnits><c:dispUnitsLbl>, e.g. "Millions").
+        // PowerPoint draws it beside the value axis. For a vertical value axis it
+        // sits rotated -90° just inboard of the axis title; for a horizontal-bar /
+        // XY value axis (which runs along the bottom) it sits centered below.
+        if (!string.IsNullOrEmpty(info.ValueAxisUnitLabel))
+        {
+            if (isHorizBar || isXY)
+            {
+                var uy = svgH - (string.IsNullOrEmpty(bottomTitle) ? 4 : 14);
+                sb.AppendLine($"    <text x=\"{svgW / 2}\" y=\"{uy}\" fill=\"{AxisColor}\" font-size=\"{ValFontPx}\" text-anchor=\"middle\">{HtmlEncode(info.ValueAxisUnitLabel)}</text>");
+            }
+            else
+            {
+                var ux = string.IsNullOrEmpty(leftTitle) ? 12 : 26;
+                sb.AppendLine($"    <text x=\"{ux}\" y=\"{svgH / 2}\" fill=\"{AxisColor}\" font-size=\"{ValFontPx}\" text-anchor=\"middle\" dominant-baseline=\"middle\" transform=\"rotate(-90,{ux},{svgH / 2})\">{HtmlEncode(info.ValueAxisUnitLabel)}</text>");
+            }
+        }
     }
 
     /// <summary>Render chart legend HTML (outside the svg tag).</summary>
@@ -4119,7 +4188,7 @@ internal partial class ChartSvgRenderer
             for (int t = 0; t <= tickCount; t++)
             {
                 var val = minVal + majorUnit * t;
-                var label = FormatAxisValue(val, valNumFmt);
+                var label = FmtValAxis(val, valNumFmt);
                 sb.AppendLine($"        <text x=\"{plotOx + (double)plotPw * t / tickCount:0.#}\" y=\"{oy + ph + 16}\" fill=\"{AxisColor}\" font-size=\"{ValFontPx}\" text-anchor=\"middle\">{label}</text>");
             }
         }
@@ -4205,7 +4274,7 @@ internal partial class ChartSvgRenderer
             for (int t = 0; t <= tickCount; t++)
             {
                 var val = minVal + majorUnit * t;
-                var label = FormatAxisValue(val, valNumFmt);
+                var label = FmtValAxis(val, valNumFmt);
                 var ty = oy + ph - ((val - minVal) / range) * ph;
                 sb.AppendLine($"        <text x=\"{ox - 4}\" y=\"{ty:0.#}\" fill=\"{AxisColor}\" font-size=\"{ValFontPx}\" text-anchor=\"end\" dominant-baseline=\"middle\">{label}</text>");
             }
