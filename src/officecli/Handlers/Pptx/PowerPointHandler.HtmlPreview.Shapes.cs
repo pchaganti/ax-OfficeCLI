@@ -1882,16 +1882,24 @@ public partial class PowerPointHandler
             // default; previously arrowSize was uniform and ignored @w/@len.
             // ST_LineEndWidth/Length default is "med" → ×1.0.
             static double TokenScale(string? s) => s switch { "sm" => 0.6, "lg" => 1.6, _ => 1.0 };
-            static double ArrowSizeScale(OpenXmlElement? end)
+            // @w (ST_LineEndWidth) = arrowhead width PERPENDICULAR to the line;
+            // @len (ST_LineEndLength) = arrowhead length ALONG the line. They are
+            // independent — a "w=lg len=sm" head is wide but short. Return both
+            // scales so the marker can be a rectangle, not a Math.Max square.
+            static (double lenScale, double wScale) ArrowSizeScales(OpenXmlElement? end)
             {
-                if (end == null) return 1.0;
+                if (end == null) return (1.0, 1.0);
                 var attrs = end.GetAttributes();
                 var w = attrs.FirstOrDefault(a => a.LocalName == "w").Value;
                 var l = attrs.FirstOrDefault(a => a.LocalName == "len").Value;
-                return Math.Max(TokenScale(w), TokenScale(l));
+                return (TokenScale(l), TokenScale(w));
             }
-            var headArrowSize = baseArrowSize * ArrowSizeScale(headEnd);
-            var tailArrowSize = baseArrowSize * ArrowSizeScale(tailEnd);
+            var (headLenScale, headWScale) = ArrowSizeScales(headEnd);
+            var (tailLenScale, tailWScale) = ArrowSizeScales(tailEnd);
+            var headLen = baseArrowSize * headLenScale;
+            var headW = baseArrowSize * headWScale;
+            var tailLen = baseArrowSize * tailLenScale;
+            var tailW = baseArrowSize * tailWScale;
             var defs = new StringBuilder();
             defs.Append("<defs>");
             // BUG1(marker-id-collision): marker ids are document-global in HTML even when each
@@ -1907,13 +1915,13 @@ public partial class PowerPointHandler
             if (hasHead)
             {
                 var hid = $"ah{markerSeq}";
-                defs.Append($"<marker id=\"{hid}\" markerWidth=\"{headArrowSize:0.#}\" markerHeight=\"{headArrowSize:0.#}\" refX=\"{headArrowSize:0.#}\" refY=\"{headArrowSize / 2:0.#}\" orient=\"auto-start-reverse\">{ArrowMarkerGeometry(headEnd!.Type!.InnerText ?? "triangle", headArrowSize, safeColor)}</marker>");
+                defs.Append($"<marker id=\"{hid}\" markerWidth=\"{headLen:0.#}\" markerHeight=\"{headW:0.#}\" refX=\"{headLen:0.#}\" refY=\"{headW / 2:0.#}\" orient=\"auto-start-reverse\">{ArrowMarkerGeometry(headEnd!.Type!.InnerText ?? "triangle", headLen, headW, safeColor)}</marker>");
                 markerStartAttr = $" marker-start=\"url(#{hid})\"";
             }
             if (hasTail)
             {
                 var tid = $"at{markerSeq}";
-                defs.Append($"<marker id=\"{tid}\" markerWidth=\"{tailArrowSize:0.#}\" markerHeight=\"{tailArrowSize:0.#}\" refX=\"{tailArrowSize:0.#}\" refY=\"{tailArrowSize / 2:0.#}\" orient=\"auto\">{ArrowMarkerGeometry(tailEnd!.Type!.InnerText ?? "triangle", tailArrowSize, safeColor)}</marker>");
+                defs.Append($"<marker id=\"{tid}\" markerWidth=\"{tailLen:0.#}\" markerHeight=\"{tailW:0.#}\" refX=\"{tailLen:0.#}\" refY=\"{tailW / 2:0.#}\" orient=\"auto\">{ArrowMarkerGeometry(tailEnd!.Type!.InnerText ?? "triangle", tailLen, tailW, safeColor)}</marker>");
                 markerEndAttr = $" marker-end=\"url(#{tid})\"";
             }
             defs.Append("</defs>");
@@ -2366,28 +2374,33 @@ public partial class PowerPointHandler
     private static int _markerCounter;
 
     // Build the SVG geometry for an arrowhead marker of the given OOXML end type.
-    // Coordinate space: viewBox 0..arrowSize, line enters from the left, tip at the right
-    // (refX=arrowSize, refY=arrowSize/2). marker-start flips this via orient.
-    private static string ArrowMarkerGeometry(string endType, double arrowSize, string color)
+    // Coordinate space: 0..len along the line (x), 0..width perpendicular (y); line
+    // enters from the left, tip at the right (refX=len, refY=width/2). The two
+    // dimensions are independent so @w (width) and @len (length) render with the
+    // correct aspect ratio — a wide-but-short arrowhead is NOT an equilateral one.
+    // marker-start flips this via orient.
+    private static string ArrowMarkerGeometry(string endType, double len, double width, string color)
     {
-        var s = arrowSize;
-        var h = arrowSize / 2;
+        var s = len;            // extent along the line (x)
+        var w = width;          // extent perpendicular (y)
+        var h = width / 2;      // perpendicular centre
+        var m = len / 2;        // mid along the line
         return endType switch
         {
             // Rhombus centered on the tip: left, top, right, bottom vertices.
-            "diamond" => $"<polygon points=\"0 {h:0.#},{h:0.#} 0,{s:0.#} {h:0.#},{h:0.#} {s:0.#}\" fill=\"{color}\"/>",
-            // Filled circle sitting at the line end.
-            "oval" => $"<circle cx=\"{h:0.#}\" cy=\"{h:0.#}\" r=\"{h:0.#}\" fill=\"{color}\"/>",
+            "diamond" => $"<polygon points=\"0 {h:0.#},{m:0.#} 0,{s:0.#} {h:0.#},{m:0.#} {w:0.#}\" fill=\"{color}\"/>",
+            // Filled ellipse sitting at the line end (circle when len==width).
+            "oval" => $"<ellipse cx=\"{m:0.#}\" cy=\"{h:0.#}\" rx=\"{m:0.#}\" ry=\"{h:0.#}\" fill=\"{color}\"/>",
             // Concave/notched arrow: triangle with a notch cut into the back edge.
-            "stealth" => $"<polygon points=\"0 0,{s:0.#} {h:0.#},0 {s:0.#},{h:0.#} {h:0.#}\" fill=\"{color}\"/>",
+            "stealth" => $"<polygon points=\"0 0,{s:0.#} {h:0.#},0 {w:0.#},{m:0.#} {h:0.#}\" fill=\"{color}\"/>",
             // R37-B: OOXML type="arrow" is an OPEN arrowhead — two strokes meeting at the
             // tip (like ">"), NOT a filled area. Emit an open chevron via <polyline> with
             // fill="none" and an explicit stroke (the marker's internal coordinate space does
-            // not inherit the outer line's stroke-width, so set it explicitly ≈ s/6).
-            // Back corners at (0,0) and (0,s), tip at the right (s,h).
-            "arrow" => $"<polyline points=\"0 0,{s:0.#} {h:0.#},0 {s:0.#}\" fill=\"none\" stroke=\"{color}\" stroke-width=\"{s / 6:0.##}\"/>",
-            // triangle / default: wide right-pointing solid triangle (▶).
-            _ => $"<polygon points=\"0 0,{s:0.#} {h:0.#},0 {s:0.#}\" fill=\"{color}\"/>",
+            // not inherit the outer line's stroke-width, so set it explicitly ≈ width/6).
+            // Back corners at (0,0) and (0,w), tip at the right (s,h).
+            "arrow" => $"<polyline points=\"0 0,{s:0.#} {h:0.#},0 {w:0.#}\" fill=\"none\" stroke=\"{color}\" stroke-width=\"{w / 6:0.##}\"/>",
+            // triangle / default: right-pointing solid triangle (▶).
+            _ => $"<polygon points=\"0 0,{s:0.#} {h:0.#},0 {w:0.#}\" fill=\"{color}\"/>",
         };
     }
 
