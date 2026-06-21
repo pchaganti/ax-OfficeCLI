@@ -650,6 +650,22 @@ public partial class WordHandler : IDocumentHandler
         return set;
     }
 
+    // BUG-DUMP-R72-FF-BOOKMARK-COUNT: per-name occurrence count of source body
+    // bookmarks. The form-field noBookmark decision is count-aware, not boolean:
+    // a doc with one <w:bookmarkStart name="Check1"> but 26 checkbox fields all
+    // named "Check1" must recreate exactly ONE Check1 bookmark, not 26. The set
+    // form (GetAllBookmarkNames) can't tell "1 field had it" from "all 26 did".
+    internal Dictionary<string, int> GetAllBookmarkNameCounts()
+    {
+        var counts = new Dictionary<string, int>(StringComparer.Ordinal);
+        var body = _doc.MainDocumentPart?.Document?.Body;
+        if (body == null) return counts;
+        foreach (var bs in body.Descendants<BookmarkStart>())
+            if (bs.Name?.Value is { Length: > 0 } nm)
+                counts[nm] = counts.TryGetValue(nm, out var c) ? c + 1 : 1;
+        return counts;
+    }
+
     internal ActiveXEmitData? GetActiveXEmitData(string runPath)
     {
         OpenXmlElement? element;

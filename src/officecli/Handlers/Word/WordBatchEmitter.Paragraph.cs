@@ -156,24 +156,39 @@ public static partial class WordBatchEmitter
                     && e.Format.TryGetValue("name", out var bnm) && bnm != null)
                 .Select(e => e.Format["name"]!.ToString() ?? "")
                 .ToHashSet(StringComparer.Ordinal);
-            // BUG-DUMP-FF-ROWLEVEL-BOOKMARK: a form field's wrapping bookmark may
-            // sit at ROW level (a direct <w:tr> child between cells) instead of as
-            // a sibling of the field run — the same-paragraph set above can't see
-            // it, and the table emitter drops between-cell bookmarks, so without
-            // this the field is pinned noBookmark and AddFormField skips the
-            // bookmark → every form-field bookmark vanishes → Word refuses to open
-            // the rebuilt file. Consult the document-wide source bookmark names so
-            // a row-level wrapping bookmark still counts as "present" (AddFormField
-            // recreates it inside the cell). A field whose source had NO bookmark
-            // anywhere stays bookmark-less (BUG-DUMP-FFCHECKBOX-BOOKMARK).
-            var docBookmarkNames = ctx?.AllSourceBookmarkNames(word) ?? bookmarkNamesPresent;
+            // BUG-DUMP-FF-ROWLEVEL-BOOKMARK / BUG-DUMP-R72-FF-BOOKMARK-COUNT: a
+            // form field's wrapping bookmark may sit at ROW level (a <w:tr> child
+            // between cells) — invisible to the same-paragraph set, and dropped by
+            // the table emitter — so pinning noBookmark purely on the same-paragraph
+            // check would erase every row-level bookmark. The earlier fix consulted
+            // a document-wide NAME SET ("does any bookmark with this name exist?"),
+            // but that over-fires when many fields share one name: a doc with ONE
+            // <w:bookmarkStart name="Check1"> and 26 checkbox fields all named
+            // "Check1" then recreated 26 Check1 bookmarks (+a uniquify cascade).
+            // Use a count-aware BUDGET instead: each name may hand out only as many
+            // wrapping bookmarks as the source actually had. A same-paragraph match
+            // is a real bookmark, so it always recreates AND reserves one budget
+            // unit; a field with no same-paragraph bookmark keeps one only while the
+            // remaining budget (row-level / other-paragraph source bookmarks) lasts;
+            // an unnamed field — which cannot carry a named bookmark — and a field
+            // whose budget is exhausted are pinned noBookmark.
             foreach (var ffSynth in fieldEntries.Where(e => e.Type == "formfield"
                          && e.Format.TryGetValue("ffName", out _)))
             {
                 var ffn = ffSynth.Format["ffName"]?.ToString() ?? "";
-                if (!string.IsNullOrEmpty(ffn)
-                    && !bookmarkNamesPresent.Contains(ffn)
-                    && !docBookmarkNames.Contains(ffn))
+                if (string.IsNullOrEmpty(ffn))
+                {
+                    ffSynth.Format["_noBookmark"] = true;
+                    continue;
+                }
+                if (bookmarkNamesPresent.Contains(ffn))
+                {
+                    // Real same-paragraph wrapping bookmark: always recreate, but
+                    // reserve its budget so a later same-named field can't reuse it.
+                    ctx?.ConsumeBookmarkBudget(word, ffn);
+                    continue;
+                }
+                if (ctx == null || !ctx.ConsumeBookmarkBudget(word, ffn))
                     ffSynth.Format["_noBookmark"] = true;
             }
             if (ctx != null)

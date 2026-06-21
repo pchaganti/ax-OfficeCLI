@@ -575,6 +575,24 @@ public static partial class WordBatchEmitter
         private HashSet<string>? _allSourceBookmarkNames;
         public HashSet<string> AllSourceBookmarkNames(WordHandler word)
             => _allSourceBookmarkNames ??= word.GetAllBookmarkNames();
+
+        // BUG-DUMP-R72-FF-BOOKMARK-COUNT: mutable per-name budget of how many
+        // source bookmarks of each name remain to be claimed by a form field.
+        // Each field that keeps its wrapping bookmark consumes one unit; once a
+        // name's budget hits zero, every further same-named field is pinned
+        // noBookmark so the rebuilt bookmark count matches the source instead of
+        // fabricating one bookmark per field. Lazily seeded from the source body.
+        private Dictionary<string, int>? _bookmarkBudget;
+        public bool ConsumeBookmarkBudget(WordHandler word, string name)
+        {
+            _bookmarkBudget ??= word.GetAllBookmarkNameCounts();
+            if (_bookmarkBudget.TryGetValue(name, out var c) && c > 0)
+            {
+                _bookmarkBudget[name] = c - 1;
+                return true;
+            }
+            return false;
+        }
     }
 
     private static void EmitBody(WordHandler word, List<BatchItem> items,
