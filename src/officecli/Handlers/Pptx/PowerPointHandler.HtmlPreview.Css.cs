@@ -1948,6 +1948,35 @@ public partial class PowerPointHandler
              + $"{P(hc, h)},{P(x1, y4)},{P(x2, y4)},{P(x2, y3)},0 {Y(y3)}%)";
     }
 
+    // quadArrowCallout: a central rectangular body with arrows pointing all four ways.
+    // Was missing from the switch (rendered as a plain rectangle). adj1=shaft half-
+    // width, adj2=arrowhead half-width, adj3=arrowhead depth, adj4=body half-size (note
+    // its pin lower-bound is a1, not 0). 32 straight-edge vertices, single connected.
+    // Verified against real PowerPoint (default + non-default).
+    private static string QuadArrowCalloutPolygon(long widthEmu, long heightEmu, Drawing.PresetGeometry? presetGeom)
+    {
+        double w = widthEmu, h = heightEmu, ss = Math.Min(w, h);
+        var a2 = Math.Clamp(ReadAdjValueCss(presetGeom, 1, 18515), 0, 50000);
+        var a1 = Math.Clamp(ReadAdjValueCss(presetGeom, 0, 18515), 0, a2 * 2);
+        var a3 = Math.Clamp(ReadAdjValueCss(presetGeom, 2, 18515), 0, 50000 - a2);
+        double maxAdj4 = 100000 - a3 * 2;
+        var a4 = Math.Clamp(ReadAdjValueCss(presetGeom, 3, 48123), a1, maxAdj4);
+        double hc = w / 2, vc = h / 2;
+        double dx2 = ss * a2 / 100000.0, dx3 = ss * a1 / 200000.0, ah = ss * a3 / 100000.0;
+        double dx1 = w * a4 / 200000.0, dy1 = h * a4 / 200000.0;
+        double x8 = w - ah, x2 = hc - dx1, x7 = hc + dx1, x3 = hc - dx2, x6 = hc + dx2, x4 = hc - dx3, x5 = hc + dx3;
+        double y8 = h - ah, y2 = vc - dy1, y7 = vc + dy1, y3 = vc - dx2, y6 = vc + dx2, y4 = vc - dx3, y5 = vc + dx3;
+        var ci = System.Globalization.CultureInfo.InvariantCulture;
+        string X(double v) => (v / w * 100).ToString("0.##", ci);
+        string Y(double v) => (v / h * 100).ToString("0.##", ci);
+        string P(double x, double y) => $"{X(x)}% {Y(y)}%";
+        return "clip-path:polygon("
+             + $"0 {Y(vc)}%,{P(ah, y3)},{P(ah, y4)},{P(x2, y4)},{P(x2, y2)},{P(x4, y2)},{P(x4, ah)},{P(x3, ah)},"
+             + $"{P(hc, 0)},{P(x6, ah)},{P(x5, ah)},{P(x5, y2)},{P(x7, y2)},{P(x7, y4)},{P(x8, y4)},{P(x8, y3)},"
+             + $"{P(w, vc)},{P(x8, y6)},{P(x8, y5)},{P(x7, y5)},{P(x7, y7)},{P(x5, y7)},{P(x5, y8)},{P(x6, y8)},"
+             + $"{P(hc, h)},{P(x3, y8)},{P(x4, y8)},{P(x4, y7)},{P(x2, y7)},{P(x2, y5)},{P(ah, y5)},{P(ah, y6)})";
+    }
+
     private static string PresetGeometryToCss(string preset, long widthEmu, long heightEmu,
         Drawing.PresetGeometry? presetGeom)
     {
@@ -2038,6 +2067,8 @@ public partial class PowerPointHandler
             return LeftRightArrowCalloutPolygon(widthEmu, heightEmu, presetGeom);
         if (preset == "upDownArrowCallout" && widthEmu > 0 && heightEmu > 0)
             return UpDownArrowCalloutPolygon(widthEmu, heightEmu, presetGeom);
+        if (preset == "quadArrowCallout" && widthEmu > 0 && heightEmu > 0)
+            return QuadArrowCalloutPolygon(widthEmu, heightEmu, presetGeom);
         // corner (L-shape): adj1 = bottom (horizontal) arm height %, adj2 = left
         // (vertical) arm width %; both default 50000. Inner corner at (adj2, 100-adj1).
         // The old hardcoded 50/50 ignored both, so a thin-armed L looked fat.
