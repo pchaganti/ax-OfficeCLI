@@ -1930,7 +1930,9 @@ internal partial class ChartSvgRenderer
 
     public void RenderRadarChartSvg(StringBuilder sb, List<(string name, double[] values)> series,
         string[] categories, List<string> colors, int svgW, int svgH, int catLabelFontSize = 0,
-        string radarStyle = "filled")
+        string radarStyle = "filled",
+        bool showDataLabels = false, bool showVal = true, bool showSerName = false,
+        bool showCatName = false, string? dataLabelNumFmt = null)
     {
         var catCount = Math.Max(categories.Length, series.Max(s => s.values.Length));
         if (catCount < 3) return;
@@ -1987,6 +1989,26 @@ internal partial class ChartSvgRenderer
                         var parts = pt.Split(',');
                         sb.AppendLine($"        <circle cx=\"{parts[0]}\" cy=\"{parts[1]}\" r=\"{markerR}\" fill=\"{serColor}\"/>");
                     }
+                }
+                // Data labels at each vertex (parity with bar/line/area/pie). Placed
+                // just outside the vertex along its radial direction so they clear the
+                // marker and polygon edge.
+                if (showDataLabels)
+                for (int c = 0; c < series[s].values.Length && c < catCount; c++)
+                {
+                    var angle = -Math.PI / 2 + 2 * Math.PI * c / catCount;
+                    var rawVal = series[s].values[c];
+                    var rad = rawVal / maxVal * r;
+                    var lx = cx + (rad + 10) * Math.Cos(angle);
+                    var ly = cy + (rad + 10) * Math.Sin(angle);
+                    var valuePart = !string.IsNullOrEmpty(dataLabelNumFmt) ? FormatAxisValue(rawVal, dataLabelNumFmt)
+                        : rawVal % 1 == 0 ? $"{(int)rawVal}" : $"{rawVal:0.#}";
+                    var lparts = new List<string>();
+                    if (showSerName) lparts.Add(series[s].name);
+                    if (showCatName && c < categories.Length) lparts.Add(categories[c]);
+                    if (showVal) lparts.Add(valuePart);
+                    var vlabel = string.Join(", ", lparts);
+                    sb.AppendLine($"        <text class=\"chart-data-label\" x=\"{lx:0.#}\" y=\"{ly:0.#}\" fill=\"{ValueColor}\" font-size=\"{DataLabelFontPx}\" text-anchor=\"middle\" dominant-baseline=\"middle\">{HtmlEncode(vlabel)}</text>");
                 }
             }
         }
@@ -3922,7 +3944,9 @@ internal partial class ChartSvgRenderer
         }
         else if (chartType.Contains("radar"))
         {
-            RenderRadarChartSvg(sb, info.Series, info.Categories, info.Colors, svgW, svgH, CatFontPx, info.RadarStyle);
+            RenderRadarChartSvg(sb, info.Series, info.Categories, info.Colors, svgW, svgH, CatFontPx, info.RadarStyle,
+                info.ShowDataLabels, info.ShowDataLabelVal, info.ShowDataLabelSerName,
+                info.ShowDataLabelCatName, info.DataLabelsNumFmt);
         }
         else if (chartType == "bubble")
         {
