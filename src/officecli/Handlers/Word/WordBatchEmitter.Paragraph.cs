@@ -1067,6 +1067,15 @@ public static partial class WordBatchEmitter
                 && (c.Format.TryGetValue("instruction", out var iv)
                     && iv?.ToString()?.TrimStart().StartsWith("TOC", StringComparison.OrdinalIgnoreCase) == true));
         if (instrChild == null) return false;
+        // BUG-DUMP-TOC-COLOCATED-PICTURE: the typed `add toc` fast path emits ONLY
+        // the TOC field and returns, so any OTHER content co-located in the same
+        // paragraph is dropped. The canonical case is a background/letterhead
+        // picture anchored on the TOC's first paragraph (a behindDoc logo) — it
+        // vanished silently. Bail to the generic EmitParagraph path when the
+        // paragraph also carries a drawing: that path emits the picture via
+        // TryEmitPictureRun AND round-trips the TOC field verbatim through the
+        // generic field-emit (instr=…), so Word still regenerates the TOC.
+        if (pNode.Children.Any(c => c.Type == "picture")) return false;
         var instr = instrChild.Format["instruction"]!.ToString()!;
         // BUG-DUMP-TOC-LOSSY: the typed `add toc` path does NOT round-trip an
         // arbitrary TOC field. AddToc reconstructs a CANONICAL instruction —
