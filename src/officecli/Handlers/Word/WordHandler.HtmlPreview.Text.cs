@@ -308,7 +308,7 @@ public partial class WordHandler
             }
             var fnLabel = FormatNoteNumber(displayNum, GetFootnoteNumFmt());
             _ctx.FnLabels[fnId] = fnLabel;
-            sb.Append($"<sup class=\"fn-ref\" style=\"{ResolveNoteRefSupStyle(run, para)}\"><a href=\"#fn{fnId}\" id=\"fnref{fnId}\">{fnLabel}</a></sup>");
+            sb.Append($"<sup class=\"fn-ref\" style=\"{ResolveNoteRefSupStyle(run, para)}\"><a href=\"#fn{fnId}\" id=\"fnref{fnId}\" style=\"color:inherit;text-decoration:none\">{fnLabel}</a></sup>");
         }
         var enRef = run.GetFirstChild<EndnoteReference>();
         if (enRef?.Id?.HasValue == true && enRef.Id.Value > 0)
@@ -317,7 +317,7 @@ public partial class WordHandler
             _ctx.EndnoteRefs.Add(enId);
             var enNum = _ctx.EndnoteRefs.Count;
             var enLabel = FormatNoteNumber(enNum, GetEndnoteNumFmt());
-            sb.Append($"<sup class=\"en-ref\" style=\"{ResolveNoteRefSupStyle(run, para)}\"><a href=\"#en{enId}\" id=\"enref{enId}\">{enLabel}</a></sup>");
+            sb.Append($"<sup class=\"en-ref\" style=\"{ResolveNoteRefSupStyle(run, para)}\"><a href=\"#en{enId}\" id=\"enref{enId}\" style=\"color:inherit;text-decoration:none\">{enLabel}</a></sup>");
         }
         // FootnoteReferenceMark / EndnoteReferenceMark: don't skip the run, just ignore the mark element
         // (the run may also contain text that should be rendered)
@@ -728,7 +728,7 @@ public partial class WordHandler
             var fnSupStyle = ResolveNoteListSupStyle("FootnoteText");
             sb.Append($"<div id=\"fn{fnId}\" style=\"margin:0.3em 0\"><sup style=\"{fnSupStyle}\">{fnLabel}</sup> ");
             RenderFootnoteChildren(sb, fn);
-            sb.AppendLine($" <a href=\"#fnref{fnId}\" style=\"text-decoration:none\">\u21A9</a></div>");
+            sb.AppendLine($" <a href=\"#fnref{fnId}\" style=\"color:inherit;text-decoration:none\">\u21A9</a></div>");
         }
         sb.AppendLine("</div>");
     }
@@ -856,7 +856,10 @@ public partial class WordHandler
             var enSupStyle = ResolveNoteListSupStyle("EndnoteText");
             sb.Append($"<div id=\"en{enId}\" style=\"margin:0.3em 0;{enIndentCss}\"><sup style=\"{enSupStyle}\">{enLabel}</sup> ");
             RenderFootnoteChildren(sb, en);
-            sb.AppendLine("</div>");
+            // Back-reference link to the in-body endnote marker (id="enref{N}",
+            // emitted at ref-render time). Mirrors the footnote back-link so the
+            // two note lists are internally consistent.
+            sb.AppendLine($" <a href=\"#enref{enId}\" style=\"color:inherit;text-decoration:none\">↩</a></div>");
         }
         sb.AppendLine("</div>");
     }
