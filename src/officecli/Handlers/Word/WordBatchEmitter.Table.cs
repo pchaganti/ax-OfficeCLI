@@ -1032,6 +1032,30 @@ public static partial class WordBatchEmitter
                 });
             }
         }
+        // BUG-DUMP-TABLE-STRUCT-BOOKMARK: re-insert any <w:bookmarkStart>/<w:bookmarkEnd>
+        // that sat at table-structure level (a direct child of <w:tbl> between rows,
+        // or of <w:tr> between cells). The typed emit above only walks rows/cells, so
+        // these cross-reference targets were dropped, leaving dangling PAGEREF/REF
+        // ("Error! Bookmark not defined."). Replay each verbatim at its source
+        // position via raw-set. Restricted to body tables, where the (//w:tbl)[N]
+        // selector + /document part are reliable (same restriction as the tblGrid
+        // raw-set above); header/footer/nested-table structural bookmarks are rare
+        // and deferred.
+        if (containerPath == "/body")
+        {
+            foreach (var (bmXml, relXpath, action) in word.GetTableStructuralBookmarks(sourcePath))
+            {
+                items.Add(new BatchItem
+                {
+                    Command = "raw-set",
+                    Part = "/document",
+                    Xpath = $"(//w:tbl)[{tableOrdinal}]/{relXpath}",
+                    Action = action,
+                    Xml = bmXml,
+                });
+            }
+        }
+
         // BUG-DUMP-R26-7: clear the cell-XPath context once this table is fully
         // emitted so body/header/footer content AFTER the table (or a parent
         // cell's content after a nested table) doesn't inherit a stale cell

@@ -650,6 +650,65 @@ public partial class WordHandler : IDocumentHandler
         return set;
     }
 
+    // BUG-DUMP-TABLE-STRUCT-BOOKMARK: a <w:bookmarkStart>/<w:bookmarkEnd> placed
+    // at TABLE-STRUCTURE level — a direct child of <w:tbl> (between two <w:tr>) or
+    // of <w:tr> (between two <w:tc>) — is valid OOXML and a common cross-reference
+    // target (PAGEREF/REF \h), but the typed `add table` emit only walks rows and
+    // cells, so these markers were dropped on round-trip → dangling references
+    // ("Error! Bookmark not defined."). Return each structural marker's verbatim
+    // OuterXml plus a table-relative xpath + insert action so EmitTable can
+    // re-insert it at its source position via raw-set. Markers inside a cell's
+    // paragraphs (the normal case) are unaffected — they ride the cell emit.
+    internal List<(string Xml, string RelXpath, string Action)> GetTableStructuralBookmarks(string tablePath)
+    {
+        var result = new List<(string, string, string)>();
+        OpenXmlElement? el;
+        try { el = NavigateToElement(ParsePath(tablePath)); }
+        catch { return result; }
+        if (el is not Table tbl) return result;
+
+        // tbl-level markers: direct children of <w:tbl> that are bookmark markers,
+        // positioned relative to the running <w:tr> index.
+        int totalRows = tbl.Elements<TableRow>().Count();
+        int trIdx = 0;
+        foreach (var child in tbl.ChildElements)
+        {
+            if (child is TableRow) { trIdx++; continue; }
+            if (child is BookmarkStart || child is BookmarkEnd)
+            {
+                string rel, action;
+                if (trIdx == 0) { rel = "w:tr[1]"; action = "before"; }       // before first row
+                else if (trIdx < totalRows) { rel = $"w:tr[{trIdx + 1}]"; action = "before"; }
+                else { rel = $"w:tr[{trIdx}]"; action = "after"; }            // after last row
+                result.Add((child.OuterXml, rel, action));
+            }
+        }
+
+        // tr-level markers: direct children of a <w:tr> that are bookmark markers,
+        // positioned relative to the running <w:tc> index within that row.
+        trIdx = 0;
+        foreach (var row in tbl.Elements<TableRow>())
+        {
+            trIdx++;
+            int totalCells = row.Elements<TableCell>().Count();
+            if (totalCells == 0) continue;
+            int tcIdx = 0;
+            foreach (var rc in row.ChildElements)
+            {
+                if (rc is TableCell) { tcIdx++; continue; }
+                if (rc is BookmarkStart || rc is BookmarkEnd)
+                {
+                    string rel, action;
+                    if (tcIdx == 0) { rel = $"w:tr[{trIdx}]/w:tc[1]"; action = "before"; }
+                    else if (tcIdx < totalCells) { rel = $"w:tr[{trIdx}]/w:tc[{tcIdx + 1}]"; action = "before"; }
+                    else { rel = $"w:tr[{trIdx}]/w:tc[{tcIdx}]"; action = "after"; }
+                    result.Add((rc.OuterXml, rel, action));
+                }
+            }
+        }
+        return result;
+    }
+
     // BUG-DUMP-R72-FF-BOOKMARK-COUNT: per-name occurrence count of source body
     // bookmarks. The form-field noBookmark decision is count-aware, not boolean:
     // a doc with one <w:bookmarkStart name="Check1"> but 26 checkbox fields all
