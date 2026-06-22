@@ -506,25 +506,35 @@ public partial class WordHandler
         }
 
         // Outer shadow from a:effectLst/a:outerShdw — map to box-shadow
-        var effectLst = spPr.Elements().FirstOrDefault(e => e.LocalName == "effectLst");
-        var outerShdw = effectLst?.Elements().FirstOrDefault(e => e.LocalName == "outerShdw");
-        if (outerShdw != null)
-        {
-            // blurRad, dist, dir (60000ths of a degree) — simplified offset projection
-            var blurAttr = outerShdw.GetAttributes().FirstOrDefault(a => a.LocalName == "blurRad").Value;
-            var distAttr = outerShdw.GetAttributes().FirstOrDefault(a => a.LocalName == "dist").Value;
-            var dirAttr = outerShdw.GetAttributes().FirstOrDefault(a => a.LocalName == "dir").Value;
-            double blurPx = long.TryParse(blurAttr, out var blurEmu) ? blurEmu / EmuConverter.EmuPerPxF : 4;
-            double distPx = long.TryParse(distAttr, out var distEmu) ? distEmu / EmuConverter.EmuPerPxF : 4;
-            double dirDeg = long.TryParse(dirAttr, out var dirVal) ? dirVal / 60000.0 : 45;
-            var offX = distPx * Math.Cos(dirDeg * Math.PI / 180);
-            var offY = distPx * Math.Sin(dirDeg * Math.PI / 180);
-            var shdwFill = outerShdw.Elements().FirstOrDefault(e => e.LocalName == "srgbClr");
-            var shdwHex = shdwFill?.GetAttributes().FirstOrDefault(a => a.LocalName == "val").Value ?? "000000";
-            parts.Add($"box-shadow:{offX:0.#}px {offY:0.#}px {blurPx:0.#}px #{shdwHex}");
-        }
+        var shadowCss = ResolveOuterShadowCss(spPr);
+        if (!string.IsNullOrEmpty(shadowCss)) parts.Add(shadowCss);
 
         return string.Join(";", parts);
+    }
+
+    /// <summary>
+    /// Map a shape/picture spPr's a:effectLst/a:outerShdw to a CSS box-shadow.
+    /// Returns "" when no outer shadow is present. Shared by the picture path
+    /// and the wps shape style builder so both render drop shadows identically.
+    /// </summary>
+    private static string ResolveOuterShadowCss(OpenXmlElement? spPr)
+    {
+        var effectLst = spPr?.Elements().FirstOrDefault(e => e.LocalName == "effectLst");
+        var outerShdw = effectLst?.Elements().FirstOrDefault(e => e.LocalName == "outerShdw");
+        if (outerShdw == null) return "";
+
+        // blurRad, dist, dir (60000ths of a degree) — simplified offset projection
+        var blurAttr = outerShdw.GetAttributes().FirstOrDefault(a => a.LocalName == "blurRad").Value;
+        var distAttr = outerShdw.GetAttributes().FirstOrDefault(a => a.LocalName == "dist").Value;
+        var dirAttr = outerShdw.GetAttributes().FirstOrDefault(a => a.LocalName == "dir").Value;
+        double blurPx = long.TryParse(blurAttr, out var blurEmu) ? blurEmu / EmuConverter.EmuPerPxF : 4;
+        double distPx = long.TryParse(distAttr, out var distEmu) ? distEmu / EmuConverter.EmuPerPxF : 4;
+        double dirDeg = long.TryParse(dirAttr, out var dirVal) ? dirVal / 60000.0 : 45;
+        var offX = distPx * Math.Cos(dirDeg * Math.PI / 180);
+        var offY = distPx * Math.Sin(dirDeg * Math.PI / 180);
+        var shdwFill = outerShdw.Elements().FirstOrDefault(e => e.LocalName == "srgbClr");
+        var shdwHex = shdwFill?.GetAttributes().FirstOrDefault(a => a.LocalName == "val").Value ?? "000000";
+        return $"box-shadow:{offX:0.#}px {offY:0.#}px {blurPx:0.#}px #{shdwHex}";
     }
 
     /// <summary>
@@ -786,6 +796,12 @@ public partial class WordHandler
             if (!string.IsNullOrEmpty(fillCss)) style += $";{fillCss}";
             if (!string.IsNullOrEmpty(borderCss)) style += $";{borderCss}";
         }
+
+        // Outer shadow (a:effectLst/a:outerShdw) → box-shadow. Shares the
+        // picture path's projection so wps shapes and pictures drop shadows
+        // identically. Applies to the host div even for svg-overlay presets.
+        var shadowCss = ResolveOuterShadowCss(spPr);
+        if (!string.IsNullOrEmpty(shadowCss)) style += $";{shadowCss}";
 
         // Body properties: text layout + padding
         var bodyPr = shape.Elements().FirstOrDefault(e => e.LocalName == "bodyPr");
