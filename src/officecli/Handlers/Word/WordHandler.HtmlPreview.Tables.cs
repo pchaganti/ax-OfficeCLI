@@ -173,6 +173,22 @@ public partial class WordHandler
             tableStyles.Add($"border-spacing:{csTwips / 20.0:0.##}pt");
         }
 
+        // Table-level RTL (w:bidiVisual on tblPr): Word mirrors the column order
+        // so the first logical cell sits at the right edge (COL-C | COL-B | COL-A).
+        // CSS direction:rtl on the table reverses the table-cell layout order,
+        // reproducing that mirror. get already surfaces direction=rtl; this was a
+        // pure-render gap.
+        var tblBidiVisual = tblPr?.GetFirstChild<BiDiVisual>();
+        if (tblBidiVisual != null)
+        {
+            // CT_OnOff: no val (or a truthy val) is ON; an explicit falsey val
+            // is OFF. Read the raw attribute text, mirroring the Get-side
+            // readback in Navigation.cs so the render matches direction=rtl.
+            var bidiRaw = tblBidiVisual.Val?.InnerText;
+            if (bidiRaw is null || !(bidiRaw is "0" or "false" or "off"))
+                tableStyles.Add("direction:rtl");
+        }
+
         var tableClass = tableBordersNone ? "borderless" : "";
         var tableStyleAttr = tableStyles.Count > 0 ? $" style=\"{string.Join(";", tableStyles)}\"" : "";
         var dataPathAttr = !string.IsNullOrEmpty(dataPath) ? $" data-path=\"{dataPath}\"" : "";
