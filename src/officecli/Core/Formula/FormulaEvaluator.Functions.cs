@@ -760,8 +760,24 @@ internal partial class FormulaEvaluator
     private FormulaResult? EvalCountIf(List<object> args)
     {
         if (args.Count < 2) return null;
-        var range = AsResults(args[0]); var criteria = args[1] is FormulaResult c ? c.AsString() : "";
-        return range != null ? FR(range.Count(v => MatchesCriteria(v, criteria))) : null;
+        var range = AsResults(args[0]);
+        if (range == null) return null;
+        // Array/range criterion — COUNTIF(A1:A5, A1:A5) returns one count per
+        // criterion element, not a single scalar. This is the per-element form
+        // Excel uses inside array math; e.g. the distinct-count idiom
+        // SUMPRODUCT(1/COUNTIF(range,range)) needs it so `1/COUNTIF(...)`
+        // broadcasts ([0.5,0.5,0.5,1,...]) instead of collapsing to 1/N. The
+        // single-value criterion path below is unchanged (the common case).
+        var critArr = AsResults(args[1]);
+        if (critArr is { Length: > 1 })
+        {
+            var counts = critArr
+                .Select(cv => (double)range.Count(v => MatchesCriteria(v, cv?.AsString() ?? "")))
+                .ToArray();
+            return FormulaResult.Array(counts);
+        }
+        var criteria = args[1] is FormulaResult c ? c.AsString() : "";
+        return FR(range.Count(v => MatchesCriteria(v, criteria)));
     }
 
     private FormulaResult? EvalCountIfs(List<object> args)
