@@ -2403,8 +2403,13 @@ internal partial class ChartSvgRenderer
 
     public void RenderComboChartSvg(StringBuilder sb, PlotArea plotArea,
         List<(string name, double[] values)> seriesList, string[] categories, List<string> colors,
-        int ox, int oy, int pw, int ph)
+        int ox, int oy, int pw, int ph,
+        bool showDataLabels = false, string? dataLabelNumFmt = null)
     {
+        // Value-label formatter (honors <c:dLbls><c:numFmt>; falls back to a bare value),
+        // mirroring the bar/line renderers' data-label formatting.
+        string FmtLabel(double v) => !string.IsNullOrEmpty(dataLabelNumFmt) ? FormatAxisValue(v, dataLabelNumFmt)
+            : v % 1 == 0 ? $"{(int)v}" : $"{v:0.#}";
         var barIndices = new HashSet<int>();
         var lineIndices = new HashSet<int>();
         var areaIndices = new HashSet<int>();
@@ -2498,7 +2503,10 @@ internal partial class ChartSvgRenderer
                 {
                     var val = seriesList[s].values[c];
                     var barH = (val / axMax) * ph;
-                    sb.AppendLine($"        <rect x=\"{ox + c * groupW + gap + bi * barW:0.#}\" y=\"{oy + ph - barH:0.#}\" width=\"{barW:0.#}\" height=\"{barH:0.#}\" fill=\"{colors[s % colors.Count]}\" opacity=\"{FillOpacity(s)}\"/>");
+                    var bx = ox + c * groupW + gap + bi * barW;
+                    sb.AppendLine($"        <rect x=\"{bx:0.#}\" y=\"{oy + ph - barH:0.#}\" width=\"{barW:0.#}\" height=\"{barH:0.#}\" fill=\"{colors[s % colors.Count]}\" opacity=\"{FillOpacity(s)}\"/>");
+                    if (showDataLabels)
+                        sb.AppendLine($"        <text class=\"chart-data-label\" x=\"{bx + barW / 2:0.#}\" y=\"{oy + ph - barH - 3:0.#}\" fill=\"{ValueColor}\" font-size=\"{DataLabelFontPx}\" text-anchor=\"middle\">{HtmlEncode(FmtLabel(val))}</text>");
                 }
             }
         }
@@ -2533,10 +2541,12 @@ internal partial class ChartSvgRenderer
             if (points.Count > 0)
             {
                 sb.AppendLine($"        <polyline points=\"{string.Join(" ", points)}\" fill=\"none\" stroke=\"{colors[s % colors.Count]}\" stroke-width=\"2.5\"/>");
-                foreach (var pt in points)
+                for (int pi = 0; pi < points.Count; pi++)
                 {
-                    var parts = pt.Split(',');
+                    var parts = points[pi].Split(',');
                     sb.AppendLine($"        <circle cx=\"{parts[0]}\" cy=\"{parts[1]}\" r=\"3\" fill=\"{colors[s % colors.Count]}\"/>");
+                    if (showDataLabels && pi < seriesList[s].values.Length)
+                        sb.AppendLine($"        <text class=\"chart-data-label\" x=\"{parts[0]}\" y=\"{double.Parse(parts[1], System.Globalization.CultureInfo.InvariantCulture) - 6:0.#}\" fill=\"{ValueColor}\" font-size=\"{DataLabelFontPx}\" text-anchor=\"middle\">{HtmlEncode(FmtLabel(seriesList[s].values[pi]))}</text>");
                 }
             }
         }
@@ -4085,7 +4095,8 @@ internal partial class ChartSvgRenderer
         }
         else if (chartType == "combo")
         {
-            RenderComboChartSvg(sb, info.PlotArea!, info.Series, info.Categories, info.Colors, marginLeft, marginTop, plotW, plotH);
+            RenderComboChartSvg(sb, info.PlotArea!, info.Series, info.Categories, info.Colors, marginLeft, marginTop, plotW, plotH,
+                info.ShowDataLabels, info.DataLabelsNumFmt);
         }
         else if (chartType.Contains("radar"))
         {
