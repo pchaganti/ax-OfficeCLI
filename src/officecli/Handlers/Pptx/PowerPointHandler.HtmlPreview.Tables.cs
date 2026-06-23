@@ -218,8 +218,7 @@ public partial class PowerPointHandler
                     if (rp.FontSize?.HasValue == true)
                         cellStyles.Add($"font-size:{rp.FontSize.Value / 100.0:0.##}pt");
                     // else: inherit from table style / slideMaster (no hardcoded default)
-                    if (rp.Bold?.Value == true)
-                        cellStyles.Add("font-weight:bold");
+                    // (bold decided below — unified with the table-style emphasis bold)
                     // Italic / underline / strike — mirror RenderRun so cell text
                     // formatting matches shape text. Previously only bold was read,
                     // silently dropping <a:rPr i="1"/u="…"/strike="…"> on table cells.
@@ -240,6 +239,14 @@ public partial class PowerPointHandler
                     if (runColor != null)
                         cellStyles.Add($"color:{runColor}");
                 }
+
+                // Bold: an explicit run bold (b="1"/b="0") wins; otherwise the
+                // table style's emphasis-band bold (header/total/first-col/last-col)
+                // applies. Built-in PowerPoint styles render those bands bold, which
+                // the renderer previously dropped (only explicit run bold was read).
+                bool? explicitBold = firstRun?.RunProperties?.Bold?.Value;
+                if (explicitBold ?? (resolved?.Bold == true))
+                    cellStyles.Add("font-weight:bold");
 
                 // Cell borders (per-edge). Priority cascade:
                 //   1. Explicit <a:lnL/R/T/B> on this cell (per-cell override)
