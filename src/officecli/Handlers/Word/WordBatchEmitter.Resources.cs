@@ -2879,8 +2879,20 @@ public static partial class WordBatchEmitter
                         Xml = rawXml
                     });
                 }
-                else if (hostIsCell)
+                else
                 {
+                    // BUG-DUMP-H86: anchor each leading SDT with insertbefore the
+                    // host's auto-seed <w:p> (/w:p[1]) — for BOTH a table cell
+                    // (AddTable seeds one <w:p> per cell) AND a header/footer root
+                    // (the part is created with a seed <w:p>, removed later by
+                    // EmitHeaderFooter's firstChildIsNonPara pass). Successive
+                    // insertbefore raw-sets stack in document order
+                    // ([SDT1, SDT2, SDT3, seed]); the original header/footer branch
+                    // used bare `prepend` to the root, which REVERSES multiple SDTs
+                    // ([SDT3, SDT2, SDT1]) — the header/footer-path gap left by the
+                    // H85 cell fix. insertbefore lands ahead of the seed exactly like
+                    // the old prepend for a single SDT, so single-SDT behavior is
+                    // unchanged.
                     items.Add(new BatchItem
                     {
                         Command = "raw-set",
@@ -2889,24 +2901,11 @@ public static partial class WordBatchEmitter
                         Action = "insertbefore",
                         Xml = rawXml
                     });
-                    // SDT now sits ahead of AddTable's auto-seed paragraph; the
-                    // caller drops that seed when the cell has no real paragraph.
-                    return true;
-                }
-                else
-                {
-                    // Non-cell host (header/footer body root): no tcPr exists, so
-                    // prepend the SDT directly into the host root, ahead of the
-                    // auto-seeded leading paragraph (the original BUG-R11A(BUG3)
-                    // placement).
-                    items.Add(new BatchItem
-                    {
-                        Command = "raw-set",
-                        Part = rawPart,
-                        Xpath = cellXPath,
-                        Action = "prepend",
-                        Xml = rawXml
-                    });
+                    // The cell caller drops the now-unconsumed seed when the cell has
+                    // no real paragraph (returns true → cellSdtLeftSeed); the
+                    // header/footer caller runs its own seed removal and ignores the
+                    // return.
+                    if (hostIsCell) return true;
                 }
                 return false;
             }
