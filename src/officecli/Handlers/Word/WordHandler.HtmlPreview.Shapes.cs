@@ -1047,7 +1047,46 @@ public partial class WordHandler
                 e.LocalName == "spAutoFit" || e.LocalName == "normAutofit") == true;
             bool isFixedBox = !isAutofitBox;
             bool hasFillBg = fillCss.Contains("background", StringComparison.Ordinal);
-            var heightProp = isFixedBox && hasFillBg
+
+            // Horizontal overflow: a fixed (noAutofit) box can declare a narrow
+            // ext cx yet hold a wider inner table (cover layouts commonly pin a
+            // tall/thin box but lay the title + multi-column body in a table
+            // whose grid far exceeds the box). bodyPr/@horzOverflow defaults to
+            // "overflow"; Word then paints the content at its NATURAL width,
+            // spilling past the declared box edge — it does NOT crush the table
+            // into the narrow box. Pinning width:{widthPx}px here instead
+            // collapses the inner width:100% table into the box and detonates
+            // wrapping (one glyph/word per line, hyperlinks sliced). When the
+            // box is fixed, horzOverflow is not clipped, and it carries an inner
+            // table whose grid width exceeds the declared box width, widen the
+            // host to the table's natural width so the content renders un-crushed
+            // the way Word draws it. Mirrors the image-overflow precedent above
+            // (drop the clamp, paint at native width). Excludes the DRAFT-stamp /
+            // classification-banner / overlay-container boxes — none carry an
+            // inner table, so this never perturbs R88/R109.
+            var horzClip = bodyPrAf?.GetAttributes()
+                .Any(a => a.LocalName == "horzOverflow" && a.Value == "clip") == true;
+            long boxWidthPx = widthPx;
+            if (isFixedBox && !horzClip)
+            {
+                var innerTbl = txbx?.Elements().FirstOrDefault(e => e.LocalName == "tbl");
+                var tblGrid = innerTbl?.Elements().FirstOrDefault(e => e.LocalName == "tblGrid");
+                if (tblGrid != null)
+                {
+                    long gridTwips = 0;
+                    foreach (var gc in tblGrid.Elements().Where(e => e.LocalName == "gridCol"))
+                        gridTwips += GetLongAttr(gc, "w");
+                    // twips → px (1 twip = 1/15 px at 96dpi)
+                    int gridPx = (int)(gridTwips / 15);
+                    if (gridPx > boxWidthPx) boxWidthPx = gridPx;
+                }
+            }
+
+            // When the box widens to the table, never clip horizontally (the
+            // fill-confining overflow:hidden below would otherwise re-crush it);
+            // keep vertical clipping intent via the height path only.
+            bool widened = boxWidthPx > widthPx;
+            var heightProp = isFixedBox && hasFillBg && !widened
                 ? $"height:{heightPx}px;overflow:hidden"
                 : $"min-height:{heightPx}px";
 
@@ -1055,10 +1094,10 @@ public partial class WordHandler
             // wraps beside it; otherwise inline-block (inline / wrapNone /
             // behind / in-front-of-text).
             style = floatCss != null
-                ? $"{floatCss};width:{widthPx}px;{heightProp};box-sizing:border-box"
+                ? $"{floatCss};width:{boxWidthPx}px;{heightProp};box-sizing:border-box"
                 : isOverlayContainer
                     ? $"display:block;width:100%;{heightProp}"
-                    : $"display:inline-block;width:{widthPx}px;{heightProp};vertical-align:top";
+                    : $"display:inline-block;width:{boxWidthPx}px;{heightProp};vertical-align:top";
 
             // Rotation on standalone shapes too (was only applied inside groups)
             var sXfrm = spPr?.Elements().FirstOrDefault(e => e.LocalName == "xfrm");
