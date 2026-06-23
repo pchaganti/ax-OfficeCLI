@@ -805,8 +805,8 @@ public partial class WordHandler
                 if (pPr.SpacingBetweenLines != null)
                 {
                     var sp = pPr.SpacingBetweenLines;
-                    if (sp.Before?.Value != null) styleNode.Format["spaceBefore"] = SpacingConverter.FormatWordSpacing(sp.Before.Value);
-                    if (sp.After?.Value != null) styleNode.Format["spaceAfter"] = SpacingConverter.FormatWordSpacing(sp.After.Value);
+                    if (sp.Before?.Value != null) styleNode.Format["spaceBefore"] = SpacingConverter.FormatWordSpacingNonNegative(sp.Before.Value);
+                    if (sp.After?.Value != null) styleNode.Format["spaceAfter"] = SpacingConverter.FormatWordSpacingNonNegative(sp.After.Value);
                     // BUG-DUMP-R46-1: style-level auto-spacing toggles (mirror BUG-DUMP-R44-4 paragraph path)
                     if (sp.BeforeAutoSpacing?.Value != null) styleNode.Format["spaceBeforeAuto"] = sp.BeforeAutoSpacing.Value;
                     if (sp.AfterAutoSpacing?.Value != null) styleNode.Format["spaceAfterAuto"] = sp.AfterAutoSpacing.Value;
@@ -2352,7 +2352,23 @@ public partial class WordHandler
                         var anchorPath = FindCommentAnchorPath(comment.Id.Value);
                         if (anchorPath != null) cNode.Format["anchoredTo"] = anchorPath;
                     }
-                    results.Add(cNode);
+                    // commentsExtended.xml (w15) resolved-state + reply-parent —
+                    // mirrors CommentToNode so `query 'comment[done=false]'` /
+                    // 'comment[parentId=N]' filter correctly.
+                    var (cmtParentId, cmtDone) = ReadCommentExInfo(comment);
+                    cNode.Format["done"] = cmtDone ? "true" : "false";
+                    if (cmtParentId != null) cNode.Format["parentId"] = cmtParentId;
+                    // Filter by attribute (e.g. comment[done=false], comment[parentId=1]).
+                    bool matchAttrs = true;
+                    foreach (var (attrKey, rawVal) in parsed.Attributes)
+                    {
+                        bool negate = rawVal.StartsWith("!");
+                        var val = negate ? rawVal[1..] : rawVal;
+                        var hasKey = cNode.Format.TryGetValue(attrKey, out var fmtVal);
+                        bool matches = hasKey && string.Equals(fmtVal?.ToString(), val, StringComparison.OrdinalIgnoreCase);
+                        if (negate ? matches : !matches) { matchAttrs = false; break; }
+                    }
+                    if (matchAttrs) results.Add(cNode);
                 }
             }
             return results;
@@ -3494,7 +3510,7 @@ public partial class WordHandler
         var nb = _doc.MainDocumentPart?.NumberingDefinitionsPart?.Numbering;
         if (nb == null) return null;
         var styles = _doc.MainDocumentPart?.StyleDefinitionsPart?.Styles;
-        var style = styles?.Elements<Style>().FirstOrDefault(s => s.StyleId?.Value == styleId);
+        var style = FindStyleById(styleId);
         var styleNumId = style?.StyleParagraphProperties?.NumberingProperties?.NumberingId?.Val?.Value;
         if (styleNumId == null) return null;
         var inst = nb.Elements<NumberingInstance>().FirstOrDefault(n => n.NumberID?.Value == styleNumId);

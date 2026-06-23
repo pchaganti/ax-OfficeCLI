@@ -775,11 +775,14 @@ static partial class CommandBuilder
                 // internally — that double-resolution mangled batch JSON
                 // payloads, where `"text": "hello\\nworld"` already arrives
                 // as `hello\\nworld` literal after JSON parsing and must NOT
-                // be turned into a newline. Only `text` and `value` are
-                // affected; other props (colors, paths, numbers) are passed
-                // through untouched.
+                // be turned into a newline. Affected keys are the text-valued
+                // props: `text`, `value`, and the row-level `c1…cN` cell-text
+                // shortcuts (so `--prop c1='a\nb'` breaks the line exactly like
+                // `--prop text=` does); other props (colors, paths, numbers)
+                // are passed through untouched.
                 if (key.Equals("text", StringComparison.OrdinalIgnoreCase)
-                    || key.Equals("value", StringComparison.OrdinalIgnoreCase))
+                    || key.Equals("value", StringComparison.OrdinalIgnoreCase)
+                    || IsCellTextShortcutKey(key))
                 {
                     value = OfficeCli.Core.TextEscape.Resolve(value);
                 }
@@ -787,6 +790,17 @@ static partial class CommandBuilder
             }
         }
         return dict;
+    }
+
+    // Row-level cell-text shortcut key: `c` followed by digits (c1, c2, …, cN).
+    // These carry table-cell text, so they take the same `\n`/`\t` escape
+    // resolution as `text=` (see CONSISTENCY(text-escape-boundary) above).
+    private static bool IsCellTextShortcutKey(string key)
+    {
+        if (key.Length < 2 || (key[0] != 'c' && key[0] != 'C')) return false;
+        for (int i = 1; i < key.Length; i++)
+            if (!char.IsDigit(key[i])) return false;
+        return true;
     }
 
     internal static void PrintBatchResults(List<BatchResult> results, bool json, int totalCount = 0, TextWriter? output = null)

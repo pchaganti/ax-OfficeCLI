@@ -192,14 +192,21 @@ public partial class WordHandler
     {
         var rPr = EnsureRunProperties(run);
         RemoveW14Element(rPr, effectName);
-        var element = new OpenXmlUnknownElement("w14", "tmp", W14Ns);
-        element.InnerXml = $@"<w14:{effectName} xmlns:w14=""{W14Ns}"" w14:val=""{System.Security.SecurityElement.Escape(value)}""/>";
-        var child = element.FirstChild;
+        var child = BuildW14ValElement(effectName, value);
         if (child != null)
-        {
-            child.Remove();
             InsertW14ChildInSchemaOrder(rPr, child);
-        }
+    }
+
+    // Build a bare <w14:NAME w14:val="VALUE"/> element (detached, no parent) so
+    // both the run path (ApplyW14ValEffect) and the style path (AddStyle's
+    // StyleRunProperties) can insert it via their own schema-order placer.
+    internal static OpenXmlElement? BuildW14ValElement(string effectName, string value)
+    {
+        var holder = new OpenXmlUnknownElement("w14", "tmp", W14Ns);
+        holder.InnerXml = $@"<w14:{effectName} xmlns:w14=""{W14Ns}"" w14:val=""{System.Security.SecurityElement.Escape(value)}""/>";
+        var child = holder.FirstChild;
+        child?.Remove();
+        return child;
     }
 
     internal static void ApplyW14TextEffect(Run run, string effectName, string value, Func<string, string> builder)

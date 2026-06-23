@@ -59,6 +59,20 @@ public partial class WordHandler
         // length. -1 means "not tracking" (reset per paragraph).
         public int CurrentParagraphTabSegmentStart { get; set; } = -1;
 
+        // Tab alignment band model: true while rendering a paragraph whose tab
+        // stops include a center/right (no-leader) positional stop — the
+        // three-part "Left \t Center \t Right" header shape. In this mode each
+        // <w:tab/> closes the current leading text in a flex band and the
+        // upcoming stop's Val decides the band's text-align, so segments stay
+        // on one line and land left/centre/right (see has-aligned-tab CSS).
+        // Reset per paragraph.
+        public bool CurrentParagraphAlignedTab { get; set; }
+
+        // CSS text-align for the CURRENT aligned-tab band (the text typed before
+        // the next <w:tab/>). Band 0 (before the first tab) is left-aligned; each
+        // tab sets this to its own Val (center/right) for the band it opens.
+        public string CurrentAlignedTabAlign { get; set; } = "left";
+
         public void ResetLineForParagraph(double contentWidthPt, double firstLineIndentPt, double defaultSizePt)
         {
             LineWidthPt = contentWidthPt - firstLineIndentPt;
@@ -574,6 +588,22 @@ public partial class WordHandler
         sb.AppendLine("  function pickHtpl(n){return (etpl&&n%2===0)?etpl:htpl;}");
         sb.AppendLine("  function pickFtpl(n){return (eftpl&&n%2===0)?eftpl:ftpl;}");
         sb.AppendLine(@"
+  // Out-of-flow children (position:absolute/fixed — full-page background
+  // layers, behind-text watermarks, floating anchored drawings) are removed
+  // from the normal document flow and do NOT occupy vertical space for the
+  // content that follows them. A full-page background div
+  // (position:absolute;height:100%) reports offsetHeight==page-height, so if
+  // the pagination height math counted it as flow content it would think the
+  // hosting paragraph is a full page tall and push the real content (title,
+  // body) onto subsequent pages, splitting the cover and shifting the whole
+  // document down. Skip these elements when measuring flow height / picking
+  // split points so they paint where the renderer placed them without
+  // displacing in-flow siblings.
+  function isOutOfFlow(el){
+    if(!el||el.nodeType!==1)return false;
+    var pos=getComputedStyle(el).position;
+    return pos==='absolute'||pos==='fixed';
+  }
   function paginate(){
     var pages=document.querySelectorAll('.page');
     // Sync mode + page filter: bail once pages beyond max-requested exist
@@ -592,6 +622,7 @@ public partial class WordHandler
           var sch=0;
           Array.from(sb_.children).forEach(function(c){
             if(c.classList.contains('footnotes'))return;
+            if(isOutOfFlow(c))return;
             var bt=c.offsetTop+c.offsetHeight-sb_.offsetTop;
             if(bt>sch)sch=bt;
           });
@@ -612,6 +643,7 @@ public partial class WordHandler
       var contentH=0;
       Array.from(body.children).forEach(function(c){
         if(c.classList.contains('footnotes'))return;
+        if(isOutOfFlow(c))return;
         var b=c.offsetTop+c.offsetHeight-body.offsetTop;
         if(b>contentH)contentH=b;
       });
@@ -626,6 +658,7 @@ public partial class WordHandler
       var splitIdx=-1;
       for(var ci=0;ci<children.length;ci++){
         if(children[ci].classList.contains('footnotes'))continue;
+        if(isOutOfFlow(children[ci]))continue;
         var bot=children[ci].offsetTop+children[ci].offsetHeight-body.offsetTop;
         if(bot>availH+2){splitIdx=ci;break;}
       }
@@ -748,6 +781,10 @@ public partial class WordHandler
         var movable=[];
         for(var mi=splitIdx;mi<children.length;mi++){
           if(children[mi].classList.contains('footnotes'))continue;
+          // Out-of-flow layers (full-page background, watermark, floating
+          // drawing) are positioned relative to THIS .page; leave them on the
+          // source page and don't let them participate in split height math.
+          if(isOutOfFlow(children[mi]))continue;
           movable.push({el:children[mi],top:children[mi].offsetTop-bodyT,h:children[mi].offsetHeight});
         }
         if(movable.length===0)continue;
@@ -808,7 +845,9 @@ public partial class WordHandler
         // amortized across event loop turns).
         var toMove=[];
         for(var mi=splitIdx;mi<children.length;mi++){
-          if(!children[mi].classList.contains('footnotes'))toMove.push(children[mi]);
+          if(children[mi].classList.contains('footnotes'))continue;
+          if(isOutOfFlow(children[mi]))continue;
+          toMove.push(children[mi]);
         }
         if(toMove.length===0)continue;
         var nw=document.createElement('div');
@@ -866,6 +905,7 @@ public partial class WordHandler
       var visibleCount=0;
       Array.from(b.children).forEach(function(c){
         if(c.classList.contains('footnotes'))return;
+        if(isOutOfFlow(c))return;
         var bt=c.offsetTop+c.offsetHeight-b.offsetTop;
         if(bt>ch)ch=bt;
         if(c.offsetHeight>0)visibleCount++;
@@ -1681,11 +1721,19 @@ public partial class WordHandler
             {
                 if (hp.Header == null) continue;
                 if (!HeaderFooterHasContent(hp.Header)) continue;
-                sb.AppendLine($"<div class=\"{cssClass}\">");
                 var savedHost = _ctx.ImageHostPart;
                 _ctx.ImageHostPart = hp;
-                RenderHeaderFooterBody(sb, hp.Header);
+                // Watermark spans are collected separately so they can be
+                // emitted OUTSIDE the .doc-header div — the watermark must
+                // be centered on the whole page (.page is its positioning
+                // ancestor), not pinned inside the narrow header band.
+                var headerBodySb = new StringBuilder();
+                var watermarkSb = new StringBuilder();
+                RenderHeaderFooterBody(headerBodySb, hp.Header, watermarkSb);
                 _ctx.ImageHostPart = savedHost;
+                sb.Append(watermarkSb);
+                sb.AppendLine($"<div class=\"{cssClass}\">");
+                sb.Append(headerBodySb);
                 sb.AppendLine("</div>");
                 break;
             }
@@ -1698,11 +1746,15 @@ public partial class WordHandler
             {
                 if (fp.Footer == null) continue;
                 if (!HeaderFooterHasContent(fp.Footer)) continue;
-                sb.AppendLine($"<div class=\"{cssClass}\">");
                 var savedHost = _ctx.ImageHostPart;
                 _ctx.ImageHostPart = fp;
-                RenderHeaderFooterBody(sb, fp.Footer);
+                var footerBodySb = new StringBuilder();
+                var watermarkSb = new StringBuilder();
+                RenderHeaderFooterBody(footerBodySb, fp.Footer, watermarkSb);
                 _ctx.ImageHostPart = savedHost;
+                sb.Append(watermarkSb);
+                sb.AppendLine($"<div class=\"{cssClass}\">");
+                sb.Append(footerBodySb);
                 sb.AppendLine("</div>");
                 break;
             }
@@ -1737,7 +1789,7 @@ public partial class WordHandler
     /// <summary>Iterate header/footer children in order, rendering paragraphs
     /// and tables. Previously only paragraphs were emitted, dropping layout
     /// tables and image-only paragraphs.</summary>
-    private void RenderHeaderFooterBody(StringBuilder sb, OpenXmlElement hf)
+    private void RenderHeaderFooterBody(StringBuilder sb, OpenXmlElement hf, StringBuilder? watermarkSb = null)
     {
         foreach (var child in hf.ChildElements)
         {
@@ -1745,7 +1797,7 @@ public partial class WordHandler
             // recurse so they render the same as direct paragraph children.
             if (child is SdtBlock sdt && sdt.SdtContentBlock is { } content)
             {
-                RenderHeaderFooterBody(sb, content);
+                RenderHeaderFooterBody(sb, content, watermarkSb);
                 continue;
             }
             if (child is Paragraph para)
@@ -1761,13 +1813,26 @@ public partial class WordHandler
                     var colorCss = string.IsNullOrWhiteSpace(watermarkColor)
                         ? "#d0d0d0"
                         : (watermarkColor!.StartsWith("#") ? watermarkColor : "#" + watermarkColor);
-                    sb.Append($"<span class=\"vml-watermark\" style=\"position:absolute;" +
-                              "top:50%;left:50%;transform:translate(-50%,-50%) rotate(-45deg);" +
-                              $"color:{colorCss};font-size:7em;font-weight:bold;" +
-                              "z-index:0;pointer-events:none;white-space:nowrap;" +
-                              "user-select:none\">");
-                    sb.Append(HtmlEncode(watermarkText));
-                    sb.Append("</span>");
+                    // The watermark must be centered over the whole page, so it
+                    // is wrapped in a full-page layer (position:absolute;inset:0)
+                    // that the caller emits as a direct child of .page — NOT
+                    // inside .doc-header (whose narrow band would pin the
+                    // top:50%/left:50% anchor to the header strip, leaving the
+                    // watermark in the upper-left quadrant). The inner span's
+                    // 50%/50% then resolves against this full-page layer.
+                    var watermarkHtml =
+                        "<div class=\"vml-watermark-layer\" style=\"position:absolute;inset:0;" +
+                        "z-index:0;pointer-events:none\">" +
+                        $"<span class=\"vml-watermark\" style=\"position:absolute;" +
+                        "top:50%;left:50%;transform:translate(-50%,-50%) rotate(-45deg);" +
+                        $"color:{colorCss};font-size:7em;font-weight:bold;" +
+                        "pointer-events:none;white-space:nowrap;user-select:none\">" +
+                        HtmlEncode(watermarkText) +
+                        "</span></div>";
+                    // Prefer the dedicated watermark buffer (emitted outside
+                    // .doc-header); fall back to inline if a caller didn't
+                    // provide one (keeps older call paths working).
+                    (watermarkSb ?? sb).Append(watermarkHtml);
                     continue;
                 }
                 RenderParagraphHtml(sb, para);
@@ -1812,14 +1877,15 @@ public partial class WordHandler
         int? currentNumId = null; // track numId for cross-numId nesting
         int prevOoxmlIlvl = 0; // previous list item's RAW (pre-offset) ilvl — nesting depth follows ilvl, not numId indent
         var numIdLevelOffset = new Dictionary<int, int>(); // numId → effective ilvl offset for cross-numId nesting
-        var olCountPerLevel = new Dictionary<int, int>(); // ilvl → running <ol> item count for `start` attribute
-        // Per-(abstractNumId, ilvl) running counter. Persists across numId
-        // changes so that two num instances pointing at the same abstractNum
-        // share a counter (Word's "continue" behavior) UNLESS the new num
-        // carries an explicit <w:lvlOverride><w:startOverride/></w:lvlOverride>,
-        // in which case we reset to the override value.
-        var absNumLevelCounters = new Dictionary<int, Dictionary<int, int>>();
-        var multiLevelCounters = new Dictionary<int, int>(); // ilvl → counter for multi-level numbering
+        // Ordered-list counters shared with the plain-text walker via
+        // SeedOrderedStart / AdvanceOrderedCounter / RenderOrderedMarker
+        // (CONSISTENCY(list-marker)). olState.OlCountPerLevel holds the running
+        // <ol> item count per ilvl; .MultiLevelCounters feeds the lvlText
+        // template; .AbsNumLevelCounters persists across numId changes so two
+        // num instances on the same abstractNum continue numbering (Word's
+        // "continue" behavior) unless a <w:lvlOverride><w:startOverride/>
+        // resets it. The HTML path keeps currentNumId locally for nesting.
+        var olState = new OrderedListNumberingState();
         var headingCounters = new Dictionary<int, int>(); // ilvl → counter for heading auto-numbering from style numPr
         bool pendingLiClose = false; // defer </li> to allow nested lists inside
         bool inMultiColumn = false; // track whether we're inside a multi-column div
@@ -2038,6 +2104,24 @@ public partial class WordHandler
                     var picBulletUri = listStyle == "bullet" ? GetPicBulletDataUri(numId, ilvl) : null;
                     var tag = listStyle == "bullet" ? "ul" : "ol";
 
+                    // Re-arm per-instance startOverrides whenever the active num
+                    // changes (including the first list): the override fires on
+                    // the first DIRECT advance of its level under the new num,
+                    // even when a deeper item carried the level over. Mirrors the
+                    // text path (GetListPrefix), which arms on every CurrentNumId
+                    // change — both feed the same AdvanceOrderedCounter.
+                    if (numId != currentNumId)
+                    {
+                        olState.PendingInstanceOverride.Clear();
+                        // Skip lvlRestart="0" levels: a never-restart continued
+                        // level keeps counting across the switch rather than
+                        // jumping to the override value (see GetListPrefix).
+                        for (int lv = 0; lv <= 8; lv++)
+                            if (GetNumInstanceOverrideStart(numId, lv).HasValue
+                                && GetEffectiveLvlRestart(numId, lv) != 0)
+                                olState.PendingInstanceOverride.Add(lv);
+                    }
+
                     // When numId changes, decide: nesting or new list
                     if (currentNumId != null && numId != currentNumId)
                     {
@@ -2061,15 +2145,15 @@ public partial class WordHandler
                             else
                             {
                                 CloseAllLists(sb, listStack, ref currentListType, ref pendingLiClose);
-                                olCountPerLevel.Clear();
-                                multiLevelCounters.Clear();
+                                olState.OlCountPerLevel.Clear();
+                                olState.MultiLevelCounters.Clear();
                             }
                         }
                         else if (listStack.Count == 0)
                         {
                             // Previous list was closed by non-list content — reset counters for new list
-                            olCountPerLevel.Clear();
-                            multiLevelCounters.Clear();
+                            olState.OlCountPerLevel.Clear();
+                            olState.MultiLevelCounters.Clear();
                             numIdLevelOffset.Clear();
                         }
                     }
@@ -2129,40 +2213,18 @@ public partial class WordHandler
                     else if (tag == "ul")
                     {
                         listStyleParts += ";list-style-image:none"; // reset inherited picture bullet
-                        // Map Word bullet character to CSS list-style-type
-                        var bulletType = lvlText switch
-                        {
-                            "o" => "circle",
-                            "\u25E6" => "circle", // U+25E6 WHITE BULLET (Word outline level 1)
-                            "\uf0a7" or "▪" or "\u25AA" => "square",
-                            _ => "disc"
-                        };
+                        // Map Word bullet character to CSS list-style-type.
+                        // CONSISTENCY(bullet-glyph-map): shared with table-cell
+                        // path and GetCustomListStyleString; null => disc.
+                        var bulletType = BulletGlyphToCssKeyword(lvlText ?? "") ?? "disc";
                         listStyleParts += $";list-style-type:{bulletType}";
                     }
                     var indentStyle = $" style=\"{listStyleParts}\"";
 
-                    // Seed per-level counter. Three-way precedence:
-                    //   1. olCountPerLevel survives within the current <ol> stack.
-                    //   2. lvlOverride/startOverride on this num → restart from value.
-                    //   3. abstractNum-level running counter → continuation across
-                    //      sibling num instances on the same abstractNum (the
-                    //      `continue=true` path through the API; matches Word's
-                    //      default "list continues from previous list using the
-                    //      same template" behavior).
-                    //   4. Otherwise, abstractNum's level start (typically 1).
+                    // Counter seeding precedence (in-run → startOverride →
+                    // abstractNum continuation → level start) lives in
+                    // SeedOrderedStart, shared with the text walker.
                     var seedAbsId = GetAbstractNumId(numId);
-                    int SeedStart(int forIlvl)
-                    {
-                        if (olCountPerLevel.TryGetValue(forIlvl, out var prev) && prev > 0)
-                            return prev;
-                        var ovr = GetNumStartOverride(numId, forIlvl);
-                        if (ovr.HasValue) return ovr.Value - 1;
-                        if (seedAbsId.HasValue
-                            && absNumLevelCounters.TryGetValue(seedAbsId.Value, out var byIlvl)
-                            && byIlvl.TryGetValue(forIlvl, out var running) && running > 0)
-                            return running;
-                        return (GetStartValue(numId, forIlvl) ?? 1) - 1;
-                    }
 
                     while (listStack.Count < ilvl + 1)
                     {
@@ -2200,35 +2262,11 @@ public partial class WordHandler
                         listStack.Push(tag);
                     }
 
-                    // Track counters
+                    // Advance the ordered counter (increment level, reset
+                    // deeper levels, mirror to the abstractNum store) via the
+                    // shared state machine — identical to the text walker.
                     if (tag == "ol")
-                    {
-                        var seed = SeedStart(ilvl);
-                        olCountPerLevel[ilvl] = olCountPerLevel.GetValueOrDefault(ilvl, seed) + 1;
-                        multiLevelCounters[ilvl] = olCountPerLevel[ilvl];
-                        // Reset deeper level counters
-                        for (int lk = ilvl + 1; lk <= 8; lk++)
-                        {
-                            if (olCountPerLevel.ContainsKey(lk)) olCountPerLevel[lk] = 0;
-                            if (multiLevelCounters.ContainsKey(lk)) multiLevelCounters[lk] = 0;
-                        }
-                        // Mirror the running count into the per-abstractNum
-                        // store so a later sibling num on the same template
-                        // can pick it up (continuation). Reset the deeper
-                        // levels there too — Word resets all sub-levels when
-                        // a shallower level ticks.
-                        if (seedAbsId.HasValue)
-                        {
-                            if (!absNumLevelCounters.TryGetValue(seedAbsId.Value, out var byIlvl))
-                            {
-                                byIlvl = new Dictionary<int, int>();
-                                absNumLevelCounters[seedAbsId.Value] = byIlvl;
-                            }
-                            byIlvl[ilvl] = olCountPerLevel[ilvl];
-                            for (int lk = ilvl + 1; lk <= 8; lk++)
-                                if (byIlvl.ContainsKey(lk)) byIlvl[lk] = 0;
-                        }
-                    }
+                        AdvanceOrderedCounter(olState, numId, seedAbsId, ilvl);
 
                     currentListType = listStyle;
                     currentListLevel = ilvl;
@@ -2274,14 +2312,7 @@ public partial class WordHandler
                     string? olMarkerSpan = null;
                     if (tag == "ol")
                     {
-                        var template = string.IsNullOrEmpty(lvlText) ? $"%{ilvl + 1}" : lvlText!;
-                        var marker = System.Text.RegularExpressions.Regex.Replace(template, @"%(\d)", m =>
-                        {
-                            var k = int.Parse(m.Groups[1].Value) - 1;
-                            var lvlFmt = GetNumberingFormat(numId, k);
-                            var counter = multiLevelCounters.GetValueOrDefault(k, 0);
-                            return OfficeCli.Core.WordNumFmtRenderer.Render(counter, lvlFmt);
-                        });
+                        var marker = RenderOrderedMarker(olState, numId, ilvl, lvlText);
                         var suff = GetLevelSuffix(numId, ilvl);
                         var jc = GetLevelJustification(numId, ilvl);
                         var markerWidth = hangingPt > 0 ? $"{hangingPt:0.#}pt" : "3em";
@@ -2397,10 +2428,20 @@ public partial class WordHandler
                         var lvlText = GetLevelText(hn.NumId, hn.Ilvl);
                         if (!string.IsNullOrEmpty(lvlText))
                         {
-                            var numStr = System.Text.RegularExpressions.Regex.Replace(lvlText, @"%(\d)", m =>
+                            // Only %1..%9 are valid Word level placeholders.
+                            // Match the RenderOrderedMarker hardening: restrict
+                            // to %1-%9 (so %0 / %x stays literal) and emit ""
+                            // for a placeholder whose fmt resolves to "bullet"
+                            // or an undefined level — otherwise a heading number
+                            // gets polluted with a • glyph and diverges from
+                            // view text. See WordHandler.StyleList.cs
+                            // RenderOrderedMarker.
+                            var numStr = System.Text.RegularExpressions.Regex.Replace(lvlText, @"%([1-9])", m =>
                             {
                                 var lk = int.Parse(m.Groups[1].Value) - 1;
                                 var lvlFmt = GetNumberingFormat(hn.NumId, lk);
+                                if (lvlFmt.Equals("bullet", StringComparison.OrdinalIgnoreCase))
+                                    return "";
                                 var counter = headingCounters.GetValueOrDefault(lk, 0);
                                 return OfficeCli.Core.WordNumFmtRenderer.Render(counter, lvlFmt);
                             });
@@ -2456,10 +2497,14 @@ public partial class WordHandler
                     var pTag = HasBlockLevelDrawing(para) ? "div" : "p";
                     sb.Append("<").Append(pTag);
                     sb.Append($" data-path=\"/body/p[{wParaCount}]\"");
-                    // Add CSS class for TOC paragraphs (suppress hyperlink styling, enable dot leaders)
+                    // Add CSS class for TOC paragraphs (suppress hyperlink styling, enable dot leaders).
+                    // Match by resolved style NAME too, not just styleId prefix: WPS / localized
+                    // Word emit numeric styleIds (e.g. "28") whose display name is "toc 1", so a
+                    // styleId-only test silently misses their TOC entries and leaks the Hyperlink
+                    // character-style color. See IsTocParagraphStyle in HtmlPreview.Text.cs.
                     var paraStyleId = para.ParagraphProperties?.ParagraphStyleId?.Val?.Value;
                     var classNames = new List<string>();
-                    if (paraStyleId != null && paraStyleId.StartsWith("TOC", StringComparison.OrdinalIgnoreCase))
+                    if (IsTocParagraphStyle(paraStyleId, GetStyleName(para)))
                         classNames.Add("toc");
                     // CONSISTENCY(run-special-content): body-path render must
                     // also flag has-ptab so the paragraph becomes a flex
@@ -2471,6 +2516,8 @@ public partial class WordHandler
                         classNames.Add("has-ptab");
                     if (ParagraphHasLeaderTab(para))
                         classNames.Add("has-leader-tab");
+                    else if (ParagraphHasAlignedTab(para))
+                        classNames.Add("has-aligned-tab");
                     if (classNames.Count > 0)
                         sb.Append($" class=\"{string.Join(" ", classNames)}\"");
                     var pStyle = GetParagraphInlineCss(para);
@@ -2498,7 +2545,10 @@ public partial class WordHandler
             else if (element is Table table)
             {
                 CloseAllLists(sb, listStack, ref currentListType, ref pendingLiClose);
-                RenderTableHtml(sb, table, dataPath: $"/body/table[{wTableCount}]");
+                // Thread the body walk's ordered-list counter so a table cell's
+                // <ol> continues document-flow numbering (Word advances the
+                // counter through table paragraphs too). (CONSISTENCY(list-marker))
+                RenderTableHtml(sb, table, dataPath: $"/body/table[{wTableCount}]", olState: olState);
             }
             else if (element is AltChunk altChunk)
             {
@@ -2567,11 +2617,17 @@ public partial class WordHandler
                         && HeaderFooterHasContent(hp.Header))
                     {
                         var sb = new StringBuilder();
-                        sb.Append("<div class=\"doc-header\">");
                         var savedHost = _ctx.ImageHostPart;
                         _ctx.ImageHostPart = hp;
-                        RenderHeaderFooterBody(sb, hp.Header);
+                        // Watermark lifted out of .doc-header so it centers on
+                        // the whole page (see RenderHeaderFooterHtml).
+                        var bodySb = new StringBuilder();
+                        var watermarkSb = new StringBuilder();
+                        RenderHeaderFooterBody(bodySb, hp.Header, watermarkSb);
                         _ctx.ImageHostPart = savedHost;
+                        sb.Append(watermarkSb);
+                        sb.Append("<div class=\"doc-header\">");
+                        sb.Append(bodySb);
                         sb.Append("</div>");
                         html = sb.ToString();
                     }
@@ -2579,11 +2635,15 @@ public partial class WordHandler
                         && HeaderFooterHasContent(fp.Footer))
                     {
                         var sb = new StringBuilder();
-                        sb.Append("<div class=\"doc-footer\">");
                         var savedHost = _ctx.ImageHostPart;
                         _ctx.ImageHostPart = fp;
-                        RenderHeaderFooterBody(sb, fp.Footer);
+                        var bodySb = new StringBuilder();
+                        var watermarkSb = new StringBuilder();
+                        RenderHeaderFooterBody(bodySb, fp.Footer, watermarkSb);
                         _ctx.ImageHostPart = savedHost;
+                        sb.Append(watermarkSb);
+                        sb.Append("<div class=\"doc-footer\">");
+                        sb.Append(bodySb);
                         sb.Append("</div>");
                         html = sb.ToString();
                     }

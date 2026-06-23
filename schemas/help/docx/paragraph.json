@@ -158,7 +158,7 @@
         "ordered",
         "none"
       ],
-      "description": "high-level list type. 'bullet' (aliases: unordered, ul) creates a bulleted list; 'ordered' (or any other non-bullet value, e.g. 'decimal') creates a numbered list; 'none'/'remove'/'clear' strips list formatting. Preferred over raw numId. Continues a preceding list of the same type automatically unless 'start' is also given.",
+      "description": "high-level list type. 'bullet' (aliases: unordered, ul) creates a bulleted list; 'ordered' (or any other non-bullet value, e.g. 'decimal') creates a numbered list; 'none'/'remove'/'clear' strips list formatting. Preferred over raw numId. Continues the IMMEDIATELY preceding list of the same type automatically; an intervening non-list paragraph (or a list of the other type) starts a fresh list at 1. To continue numbering across such an interruption, pass an explicit 'numId' referencing the earlier list's instance; pass 'start' to force a restart.",
       "aliases": [
         "liststyle"
       ],
@@ -212,7 +212,7 @@
     },
     "start": {
       "type": "int",
-      "description": "starting number for an ordered list (w:start on level 0 of the numbering definition). Only meaningful together with liststyle=ordered or an existing numid. Readback not implemented — w:start lives in the separate numbering part and cross-part traversal is fragile; query the numbering directly if you need it.",
+      "description": "starting number for an ordered list (w:start / w:startOverride on level 0 of the numbering definition). Only meaningful together with liststyle=ordered or an existing numid. NOTE: this applies to the whole numbering instance shared by the paragraph, so setting it on one item of a multi-item list renumbers the entire list (every paragraph that shares the numId), not just that item onward. To restart numbering for a sub-range mid-list, give those paragraphs a fresh numId instead. Readback not implemented — w:start lives in the separate numbering part and cross-part traversal is fragile; query the numbering directly if you need it.",
       "add": true,
       "set": true,
       "get": false,
@@ -1003,31 +1003,42 @@
       "readback": "numbering format token",
       "enforcement": "report"
     },
+    "fill": {
+      "type": "color",
+      "description": "paragraph background shading (w:shd @fill). A solid background reads back as this canonical key (matching table cells and runs). Accepts a solid color — hex ('FF0000'), '#'-prefixed hex ('#FF0000'), named color ('red'), or rgb(...) notation. For a true pattern shading (pct*/stripe/cross) or a foreground pattern color, pass the legacy `shd`/`shading` triplet form 'PATTERN;FILL[;COLOR]' instead; those read back via the shading.* detail keys.",
+      "aliases": ["shd", "shading"],
+      "add": true,
+      "set": true,
+      "get": true,
+      "examples": ["--prop fill=FFFF00", "--prop fill=#FF0000", "--prop fill=red", "--prop shd=\"pct25;FF0000;0000FF\""],
+      "readback": "#RRGGBB uppercase",
+      "enforcement": "report"
+    },
     "shading.val": {
       "type": "string",
-      "description": "shading pattern value (decomposed from `shd`). Add/Set use `shd`.",
+      "description": "shading pattern value (decomposed from `shd`). Emitted on get only for a true pattern shading (pct*/stripe/cross); a solid background reads back as the canonical `fill` key. Add/Set use `fill`/`shd`/`shading`.",
       "add": false,
       "set": true,
       "get": true,
-      "readback": "shading pattern token",
+      "readback": "shading pattern token (pattern shading only)",
       "enforcement": "report"
     },
     "shading.fill": {
       "type": "string",
-      "description": "shading fill color hex (decomposed from `shd`).",
+      "description": "shading fill color hex (decomposed from `shd`). Emitted on get only for a true pattern shading; a solid background reads back as the canonical `fill` key.",
       "add": false,
       "set": true,
       "get": true,
-      "readback": "#RRGGBB",
+      "readback": "#RRGGBB (pattern shading only)",
       "enforcement": "report"
     },
     "shading.color": {
       "type": "string",
-      "description": "shading foreground color hex.",
+      "description": "shading foreground (pattern) color hex. Pattern shading only.",
       "add": false,
       "set": true,
       "get": true,
-      "readback": "#RRGGBB",
+      "readback": "#RRGGBB (pattern shading only)",
       "enforcement": "report"
     },
     "paraId": {

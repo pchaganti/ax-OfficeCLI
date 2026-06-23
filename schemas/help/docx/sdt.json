@@ -146,7 +146,7 @@
     },
     "editable": {
       "type": "bool",
-      "description": "false when SdtContentLockingValues.SdtContentLocked is set on this content control.",
+      "description": "false when content is locked (lock = contentLocked or sdtContentLocked) on this content control.",
       "add": false, "set": false, "get": true,
       "readback": "true | false",
       "enforcement": "report"

@@ -172,6 +172,13 @@ public partial class WordHandler
                 SetOnOffSetting<EvenAndOddHeaders>(EnsureSettings(), IsTruthy(value));
                 EnsureSettings().Save();
                 return true;
+            case "updatefields" or "updatefieldsonopen":
+                // <w:updateFields w:val="true"/> — tells Word to recompute every
+                // field (TOC / PAGE / SEQ / PAGEREF cached values) on open, so
+                // dynamic fields don't render their stale write-time cache.
+                SetOnOffSetting<UpdateFieldsOnOpen>(EnsureSettings(), IsTruthy(value));
+                EnsureSettings().Save();
+                return true;
             case "autohyphenation":
                 SetOnOffSetting<AutoHyphenation>(EnsureSettings(), IsTruthy(value));
                 EnsureSettings().Save();

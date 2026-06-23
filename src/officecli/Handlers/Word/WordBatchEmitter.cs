@@ -149,6 +149,7 @@ public static partial class WordBatchEmitter
             ParaIdToTargetIdx: new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase),
             DeferredBookmarks: new List<BatchItem>(),
             TextboxCounters: new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase),
+            SourceTextboxCounters: new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase),
             TableOrdinalBox: new int[1],
             CurrentCellXPathBox: new string?[1],
             CurrentCellPartBox: new string?[1],
@@ -317,6 +318,17 @@ public static partial class WordBatchEmitter
             it.Command == "add"
             && string.Equals(it.Type, kind, StringComparison.OrdinalIgnoreCase));
         if (emitted >= notes.Count) return;
+
+        // BUG-DUMP-NOTE-RAWREF-WONTOPEN: a note whose only reference lives inside
+        // a raw-emitted region (SDT carrier, verbatim field/textbox) is NOT an
+        // orphan — EmitNoteSpecialNotesFixup recovers it by emitting the whole
+        // notes part verbatim (fires only when no `add <kind>` ran, i.e.
+        // emitted == 0). Don't warn "dropped" for notes that path restores.
+        if (emitted == 0
+            && items.Any(it => it.Command == "raw-set"
+                && it.Xml != null
+                && it.Xml.Contains($"{kind}Reference", StringComparison.Ordinal)))
+            return;
 
         // The first `emitted` notes are the ones a reference recovered (Query
         // and the body walk both run in document order); the remainder are
@@ -509,6 +521,16 @@ public static partial class WordBatchEmitter
         // Matches the CountTextboxesInHost selector on the Add side so dump
         // and Add-side indexing stay in lockstep.
         Dictionary<string, int> TextboxCounters,
+        // BUG-DUMP-TEXTBOX-INDEX-DESYNC: per-host SOURCE textbox ordinal, bumped for
+        // EVERY textbox (verbatim AND typed) in document order so it tracks
+        // Navigation's source /<host>/textbox[N] index. TextboxCounters above counts
+        // only typed `add textbox` rows (the REBUILD index), which diverges from the
+        // source index whenever a verbatim (VML/AltContent/embedded-image) textbox
+        // precedes a typed one. The typed path reads source inner content via the
+        // SOURCE index and emits into the REBUILD index; conflating them dropped a
+        // multi-paragraph textbox's content (read the wrong source) or overran the
+        // rebuild textbox count (target index too high).
+        Dictionary<string, int> SourceTextboxCounters,
         // BUG-R11A(BUG1): document-order ordinal of the table currently being
         // emitted, used to build a `(//w:tbl)[N]` raw-set xpath when injecting a
         // block <w:sdt> that is a direct child of a table cell. Single-element
@@ -555,6 +577,33 @@ public static partial class WordBatchEmitter
         // (the same-paragraph name filter can't see it), so any bookmark row
         // carrying one of these names is skipped document-wide.
         public HashSet<string> FormFieldBookmarkNames { get; } = new(StringComparer.Ordinal);
+
+        // BUG-DUMP-FF-ROWLEVEL-BOOKMARK: lazily-cached set of EVERY bookmark name
+        // in the source body, so the form-field noBookmark decision can recognise
+        // a wrapping bookmark that sits at ROW level (between table cells) and is
+        // therefore invisible to the same-paragraph sibling check. Cached because
+        // the scan walks the whole body once per document, not per paragraph.
+        private HashSet<string>? _allSourceBookmarkNames;
+        public HashSet<string> AllSourceBookmarkNames(WordHandler word)
+            => _allSourceBookmarkNames ??= word.GetAllBookmarkNames();
+
+        // BUG-DUMP-R72-FF-BOOKMARK-COUNT: mutable per-name budget of how many
+        // source bookmarks of each name remain to be claimed by a form field.
+        // Each field that keeps its wrapping bookmark consumes one unit; once a
+        // name's budget hits zero, every further same-named field is pinned
+        // noBookmark so the rebuilt bookmark count matches the source instead of
+        // fabricating one bookmark per field. Lazily seeded from the source body.
+        private Dictionary<string, int>? _bookmarkBudget;
+        public bool ConsumeBookmarkBudget(WordHandler word, string name)
+        {
+            _bookmarkBudget ??= word.GetAllBookmarkNameCounts();
+            if (_bookmarkBudget.TryGetValue(name, out var c) && c > 0)
+            {
+                _bookmarkBudget[name] = c - 1;
+                return true;
+            }
+            return false;
+        }
     }
 
     private static void EmitBody(WordHandler word, List<BatchItem> items,
@@ -618,6 +667,7 @@ public static partial class WordBatchEmitter
             ParaIdToTargetIdx: paraIdToTargetIdx,
             DeferredBookmarks: new List<BatchItem>(),
             TextboxCounters: new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase),
+            SourceTextboxCounters: new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase),
             TableOrdinalBox: new int[1],
             CurrentCellXPathBox: new string?[1],
             CurrentCellPartBox: new string?[1],
@@ -725,7 +775,23 @@ public static partial class WordBatchEmitter
                         // position rather than relocated by paragraph count.
                         if (child.Format.TryGetValue("_spanOpen", out var so)
                             && so is bool bso && bso)
+                        {
                             bmProps["open"] = "true";
+                            // BUG-DUMP-BMSDT-ID: a content-wrapping bookmark whose
+                            // matching <w:bookmarkEnd> lives INSIDE a following
+                            // <w:sdt> (e.g. a TOC heading bookmark before the TOC's
+                            // docPartObj SDT) keeps that end verbatim with its SOURCE
+                            // id when the SDT block is raw-set as one unit. The
+                            // open=true start is added separately, so it MUST reuse
+                            // the source id to pair with the verbatim end —
+                            // AddBookmark's BUG-DUMP-R47-5 branch honors `id` only for
+                            // open=true. Without it the start got a fresh id, left the
+                            // bookmark unclosed, and every PAGEREF/TOC entry to it
+                            // rendered "Error! Bookmark not defined."
+                            if (child.Format.TryGetValue("id", out var bkId)
+                                && bkId?.ToString() is { Length: > 0 } bkIdS)
+                                bmProps["id"] = bkIdS;
+                        }
                         else if (child.Format.TryGetValue("endPara", out var ep)
                             && ep != null && ep.ToString() is { Length: > 0 } eps && eps != "0")
                             bmProps["endPara"] = eps;
@@ -887,6 +953,24 @@ public static partial class WordBatchEmitter
             }
         }
 
+        // BUG-DUMP-BLOCK-PERM: replay body-direct <w:permStart>/<w:permEnd>
+        // (editable-region markers between top-level paragraphs/tables — never
+        // visited by the paragraph walk) via raw-set at their positional anchor, so
+        // a protected doc's editable ranges stay balanced. The body paragraphs are
+        // already emitted above, so //w:body/w:p[N] resolves. (Table-direct perm
+        // markers ride EmitTable's GetTableStructuralBookmarks.)
+        foreach (var (permXml, relXpath, action) in word.GetBodyStructuralPermMarkers())
+        {
+            items.Add(new BatchItem
+            {
+                Command = "raw-set",
+                Part = "/document",
+                Xpath = relXpath == "." ? "//w:body" : $"//w:body/{relXpath}",
+                Action = action,
+                Xml = permXml,
+            });
+        }
+
         // BUG-DUMP10-04: flush deferred cross-paragraph bookmark rows. They
         // are emitted last so AddBookmark sees the full sibling list when
         // walking forward to the BookmarkEnd's target paragraph.
@@ -931,12 +1015,41 @@ public static partial class WordBatchEmitter
         // (the field wrapper is regenerated by the sibling `add toc`).
         if (HasExternalRelRef(rawP))
         {
-            ctx.Warnings.Add(new DocxUnsupportedWarning(
-                Element: "field.member",
-                Path: child.Path,
-                Reason: "cross-paragraph field member (cached TOC/field entry) carries a hyperlink/image with an external relationship; raw verbatim round-trip would dangle the r:id (corrupting the file), so the member is emitted via the typed path (its hyperlink relationship is recreated)"));
-            EmitParagraph(word, child.Path, "/body", pIndex, items, autoPresent: false, ctx);
-            return;
+            // BUG-DUMP-TOCOPENER-EXTREL / BUG-DUMP-TOCCLOSER-EXTREL: the typed
+            // fallback recreates the hyperlink relationship but CANNOT reconstruct a
+            // cross-paragraph field's fldChar markers — it emits no
+            // begin/instrText/separate/end. That is fine for a member that carries NO
+            // field marker (a cached TOC entry; markers ride on other members), but
+            // when the bail lands on ANY member carrying a fldChar — the OPENER
+            // (begin+instr+separate) OR the CLOSER (the paragraph holding the field's
+            // <w:fldChar end> alongside an external-rel hyperlink) — that marker is
+            // silently dropped, leaving an unbalanced, malformed field (a TOC/
+            // HYPERLINK field whose begin or end is gone). So for any fldChar-bearing
+            // member, prefer to raw-pass the paragraph verbatim (keeping every fldChar)
+            // after stripping the offending external hyperlink r:id (an absolute
+            // file/URL link out of a TOC entry); the field structure is what matters,
+            // the dangling link target is an acceptable loss. Fall back to the typed
+            // bail only when an external ref remains (e.g. an external IMAGE r:embed)
+            // that this strip can't neutralize without dropping content.
+            bool hasFieldChar = rawP.Contains("w:fldChar", StringComparison.Ordinal);
+            string strippedP = hasFieldChar ? StripHyperlinkExternalRels(rawP) : rawP;
+            if (hasFieldChar && !HasExternalRelRef(strippedP))
+            {
+                ctx.Warnings.Add(new DocxUnsupportedWarning(
+                    Element: "field.member",
+                    Path: child.Path,
+                    Reason: "cross-paragraph field member carries a fldChar marker plus a hyperlink with an external relationship; the field marker is preserved by raw round-trip but the external hyperlink target (r:id) is dropped to avoid a dangling relationship"));
+                rawP = strippedP;
+            }
+            else
+            {
+                ctx.Warnings.Add(new DocxUnsupportedWarning(
+                    Element: "field.member",
+                    Path: child.Path,
+                    Reason: "cross-paragraph field member (cached TOC/field entry) carries a hyperlink/image with an external relationship; raw verbatim round-trip would dangle the r:id (corrupting the file), so the member is emitted via the typed path (its hyperlink relationship is recreated)"));
+                EmitParagraph(word, child.Path, "/body", pIndex, items, autoPresent: false, ctx);
+                return;
+            }
         }
         items.Add(new BatchItem
         {
@@ -947,4 +1060,17 @@ public static partial class WordBatchEmitter
             Xml = rawP
         });
     }
+
+    // BUG-DUMP-TOCOPENER-EXTREL: remove the external-relationship r:id attribute
+    // from every <w:hyperlink> open tag in a fragment, downgrading an external
+    // (URL/file) link to a plain non-navigating hyperlink wrapper. Used to keep a
+    // cross-paragraph field opener round-trippable verbatim (preserving its field
+    // wrapper) without dangling a relationship the verbatim raw-set can't recreate.
+    // Internal anchor hyperlinks (w:anchor, no r:id) and all other content are
+    // untouched.
+    private static string StripHyperlinkExternalRels(string xml)
+        => System.Text.RegularExpressions.Regex.Replace(
+            xml,
+            @"(<w:hyperlink\b[^>]*?)\s+r:id=""[^""]*""",
+            "$1");
 }

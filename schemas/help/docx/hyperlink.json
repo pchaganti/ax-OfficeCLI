@@ -49,6 +49,18 @@
       "readback": "anchor name for internal links",
       "enforcement": "report"
     },
+    "tooltip": {
+      "type": "string",
+      "description": "hover text (w:tooltip / ScreenTip) shown when the cursor rests on the link. Set after Add not supported — supply on Add. Renders as the HTML title attribute in the preview.",
+      "add": true,
+      "set": false,
+      "get": true,
+      "examples": [
+        "--prop tooltip=\"Opens the report\""
+      ],
+      "readback": "tooltip text string",
+      "enforcement": "report"
+    },
     "text": {
       "type": "string",
       "description": "display text. Defaults to url or anchor value if omitted.",

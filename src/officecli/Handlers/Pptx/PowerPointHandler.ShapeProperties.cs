@@ -2488,6 +2488,10 @@ public partial class PowerPointHandler
         }
         var para = txBody.Elements<Drawing.Paragraph>().FirstOrDefault()
             ?? txBody.AppendChild(new Drawing.Paragraph());
+        // Drop any extra paragraphs left by a previous multi-line value so the
+        // cell rebuilds cleanly from the first paragraph.
+        foreach (var extra in txBody.Elements<Drawing.Paragraph>().Skip(1).ToList())
+            extra.Remove();
         para.RemoveAllChildren<Drawing.Run>();
         para.RemoveAllChildren<Drawing.Break>();
         var savedEndParaRPr = para.Elements<Drawing.EndParagraphRunProperties>().FirstOrDefault();
@@ -2495,13 +2499,22 @@ public partial class PowerPointHandler
             savedEndParaRPr.Remove();
         if (!string.IsNullOrEmpty(value))
         {
-            var newRun = new Drawing.Run(
-                new Drawing.RunProperties { Language = "en-US" },
-                MakePreservingText(value));
-            para.AppendChild(newRun);
+            // CONSISTENCY(text-escape-boundary): \n → paragraph break, \t → tab,
+            // exactly like the cell `text=` case and pptx shape text=. The row
+            // c1…cN shortcut routed here must not diverge from them.
+            Drawing.Run RunFactory(string seg) => new Drawing.Run(
+                new Drawing.RunProperties { Language = "en-US" }, MakePreservingText(seg));
+            var lines = value.Split('\n');
+            AppendLineWithTabs(para, lines[0], RunFactory);
+            for (int li = 1; li < lines.Length; li++)
+            {
+                var extraPara = new Drawing.Paragraph();
+                AppendLineWithTabs(extraPara, lines[li], RunFactory);
+                txBody.AppendChild(extraPara);
+            }
         }
         if (savedEndParaRPr != null)
-            para.AppendChild(savedEndParaRPr);
+            txBody.Elements<Drawing.Paragraph>().Last().AppendChild(savedEndParaRPr);
     }
 
     private static List<string> SetTableCellProperties(Drawing.TableCell cell, Dictionary<string, string> properties)

@@ -47,6 +47,31 @@ public partial class WordHandler
             or "middleDot" or "dash" or "heavy") == true;
     }
 
+    /// <summary>
+    /// True when the paragraph contains a &lt;w:tab&gt; AND its tab stops include
+    /// a center- or right-aligned positional stop without a leader (the classic
+    /// three-part header "Left \t Center \t Right" structure). Such paragraphs
+    /// are rendered with a flex band model (has-aligned-tab) instead of the
+    /// fixed-width left-aligned inline-block path: each band flex-grows and
+    /// text-aligns per the upcoming stop's Val, so the segments stay on one
+    /// line and land left/centre/right exactly like Word. Leader stops keep the
+    /// existing has-leader-tab (TOC dot-leader) path; pure left tabs keep the
+    /// inline-block path. Both are untouched by this detector.
+    /// </summary>
+    private bool ParagraphHasAlignedTab(Paragraph para)
+    {
+        if (!para.Descendants<TabChar>().Any()) return false;
+        var tabs = para.ParagraphProperties?.Tabs?.Elements<TabStop>();
+        if (tabs == null || !tabs.Any())
+        {
+            var tsId = para.ParagraphProperties?.ParagraphStyleId?.Val?.Value;
+            if (tsId != null) tabs = ResolveTabStopsFromStyle(tsId);
+        }
+        return tabs?.Any(t =>
+            t.Val?.InnerText is "center" or "right"
+            && t.Leader?.InnerText is null or "none") == true;
+    }
+
     private void RenderParagraphHtml(StringBuilder sb, Paragraph para)
     {
         // Use <div> instead of <p> when paragraph contains block-level elements (text boxes, charts, shapes)
@@ -64,10 +89,18 @@ public partial class WordHandler
     {
         var sb = new StringBuilder();
         sb.Append($"<{tag}");
-        // Add CSS class for TOC paragraphs (suppress hyperlink styling)
+        // Add CSS class for TOC paragraphs (suppress hyperlink styling).
+        // Word does NOT apply the Hyperlink character style's color/underline to
+        // the internal (\l bookmark) links a TOC field generates — entries render
+        // in the toc-N paragraph style's own color (black/auto by default). The
+        // styleId is unreliable as the TOC marker: Latin Word uses "TOC1"/"TOC2",
+        // but WPS / Chinese Word assign numeric ids (e.g. "28") whose display NAME
+        // is "toc 1". Match on the resolved style name too so both shapes get the
+        // .toc suppression class. (Real body hyperlinks — <w:hyperlink r:id=…> in
+        // non-TOC paragraphs — are unaffected and stay blue/underlined.)
         var styleId = para.ParagraphProperties?.ParagraphStyleId?.Val?.Value;
         var classes = new List<string>();
-        if (styleId != null && styleId.StartsWith("TOC", StringComparison.OrdinalIgnoreCase))
+        if (IsTocParagraphStyle(styleId, GetStyleName(para)))
             classes.Add("toc");
         // CONSISTENCY(run-special-content): paragraphs containing w:ptab
         // (header/footer left/center/right alignment) need a flex container
@@ -78,6 +111,8 @@ public partial class WordHandler
             classes.Add("has-ptab");
         if (ParagraphHasLeaderTab(para))
             classes.Add("has-leader-tab");
+        else if (ParagraphHasAlignedTab(para))
+            classes.Add("has-aligned-tab");
         if (classes.Count > 0)
             sb.Append($" class=\"{string.Join(" ", classes)}\"");
         var pStyle = GetParagraphInlineCss(para);
@@ -87,10 +122,33 @@ public partial class WordHandler
         return sb.ToString();
     }
 
+    // A paragraph belongs to a TOC entry when its style is one of the toc-N
+    // styles. Two authoring shapes exist: Latin Word styleId "TOC1".."TOC9"
+    // (and the legacy "Contents"/"TOA"/"Index" families share the prefix idea
+    // only for TOC), and WPS / localized Word where the styleId is opaque
+    // (numeric) but the style display name is "toc 1".."toc 9" / "目录 1".
+    // Matching either the styleId prefix or the normalized name catches both.
+    private static bool IsTocParagraphStyle(string? styleId, string? styleName)
+    {
+        if (styleId != null && styleId.StartsWith("TOC", StringComparison.OrdinalIgnoreCase))
+            return true;
+        if (styleName != null)
+        {
+            // Normalize "toc 1" / "TOC 1" / "toc1" → compare prefix "toc".
+            var trimmed = styleName.TrimStart();
+            if (trimmed.StartsWith("toc", StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+        return false;
+    }
+
     private void RenderParagraphContentHtml(StringBuilder sb, Paragraph para)
     {
         OnHtmlParagraphBegin(para);
         _ctx.CurrentParagraphTabIndex = 0;
+        _ctx.CurrentParagraphAlignedTab = ParagraphHasAlignedTab(para)
+            && !ParagraphHasLeaderTab(para);
+        _ctx.CurrentAlignedTabAlign = "left";
         // Mark where this paragraph's content begins so positional tabs can
         // retro-wrap the leading text into an absolute-width container.
         _ctx.CurrentParagraphTabSegmentStart = sb.Length;
@@ -308,7 +366,7 @@ public partial class WordHandler
             }
             var fnLabel = FormatNoteNumber(displayNum, GetFootnoteNumFmt());
             _ctx.FnLabels[fnId] = fnLabel;
-            sb.Append($"<sup class=\"fn-ref\" style=\"{ResolveNoteRefSupStyle(run, para)}\"><a href=\"#fn{fnId}\" id=\"fnref{fnId}\">{fnLabel}</a></sup>");
+            sb.Append($"<sup class=\"fn-ref\" style=\"{ResolveNoteRefSupStyle(run, para)}\"><a href=\"#fn{fnId}\" id=\"fnref{fnId}\" style=\"color:inherit;text-decoration:none\">{fnLabel}</a></sup>");
         }
         var enRef = run.GetFirstChild<EndnoteReference>();
         if (enRef?.Id?.HasValue == true && enRef.Id.Value > 0)
@@ -317,7 +375,7 @@ public partial class WordHandler
             _ctx.EndnoteRefs.Add(enId);
             var enNum = _ctx.EndnoteRefs.Count;
             var enLabel = FormatNoteNumber(enNum, GetEndnoteNumFmt());
-            sb.Append($"<sup class=\"en-ref\" style=\"{ResolveNoteRefSupStyle(run, para)}\"><a href=\"#en{enId}\" id=\"enref{enId}\">{enLabel}</a></sup>");
+            sb.Append($"<sup class=\"en-ref\" style=\"{ResolveNoteRefSupStyle(run, para)}\"><a href=\"#en{enId}\" id=\"enref{enId}\" style=\"color:inherit;text-decoration:none\">{enLabel}</a></sup>");
         }
         // FootnoteReferenceMark / EndnoteReferenceMark: don't skip the run, just ignore the mark element
         // (the run may also contain text that should be rendered)
@@ -358,12 +416,39 @@ public partial class WordHandler
         if (rProps.SpecVanish != null && (rProps.SpecVanish.Val == null || rProps.SpecVanish.Val.Value))
             return;
         var style = GetRunInlineCss(rProps, para);
+
+        // Format revision (w:rPrChange) — a tracked formatting change. The
+        // final format is already applied via GetRunInlineCss above; mirror
+        // the ins/del revision marks by adding a restrained format-revision
+        // indicator (dashed underline + author tooltip) so the reader sees
+        // "this run's formatting was changed under track-changes" rather
+        // than just the end result. The <w:rPrChange> element (the SDK's
+        // RunPropertiesChange, which carries the author/date) lives on the
+        // run's own direct rPr (not the style/docDefaults chain) — read it
+        // there. PreviousRunProperties is only its inner snapshot.
+        var rPrChange = run.RunProperties?.GetFirstChild<RunPropertiesChange>();
+        string fmtRevClass = "";
+        string fmtRevTitle = "";
+        if (rPrChange != null)
+        {
+            // text-decoration:underline dashed doesn't collide with the
+            // ins underline / del line-through (different color + dashed
+            // style), and leaves the final font formatting untouched.
+            style = string.IsNullOrEmpty(style)
+                ? "text-decoration:underline dashed #6A1B9A;text-decoration-thickness:1px"
+                : style + ";text-decoration:underline dashed #6A1B9A;text-decoration-thickness:1px";
+            fmtRevClass = " class=\"track-fmt\"";
+            var fmtAuthor = rPrChange.Author?.Value;
+            fmtRevTitle = string.IsNullOrEmpty(fmtAuthor)
+                ? " title=\"Formatting changed\""
+                : $" title=\"Formatted by {HtmlEncodeAttr(fmtAuthor)}\"";
+        }
         var needsSpan = !string.IsNullOrEmpty(style);
 
         // When line-break tracking is active, text is buffered and flushed later
         // with style spans — skip the outer span to avoid double-wrapping
         if (needsSpan && !_ctx.LineBreakEnabled)
-            sb.Append($"<span style=\"{style}\">");
+            sb.Append($"<span{fmtRevClass}{fmtRevTitle} style=\"{style}\">");
 
         foreach (var child in run.ChildElements)
         {
@@ -414,6 +499,43 @@ public partial class WordHandler
                 {
                     var tsId = para.ParagraphProperties?.ParagraphStyleId?.Val?.Value;
                     if (tsId != null) tabs = ResolveTabStopsFromStyle(tsId);
+                }
+                // Aligned-tab band model (three-part "Left \t Center \t Right"
+                // header): close the current leading text in a flex band whose
+                // text-align matches the band's own alignment, then arm the next
+                // band's alignment from THIS tab stop's Val. Each band flex:1, so
+                // the segments share the line evenly and land left/centre/right
+                // without overflowing onto a second line. Bypasses the
+                // fixed-width inline-block path (which ignores Val and overflows).
+                if (_ctx.CurrentParagraphAlignedTab)
+                {
+                    if (needsSpan) { sb.Append("</span>"); needsSpan = false; }
+                    var bandStart = _ctx.CurrentParagraphTabSegmentStart;
+                    var bandAlign = _ctx.CurrentAlignedTabAlign;
+                    if (bandStart >= 0 && bandStart <= sb.Length)
+                    {
+                        var leading = sb.ToString(bandStart, sb.Length - bandStart);
+                        sb.Length = bandStart;
+                        sb.Append($"<span class=\"atab-band\" style=\"text-align:{bandAlign}\">{leading}</span>");
+                    }
+                    // Arm the alignment for the band this tab opens.
+                    var alignedStops = tabs?
+                        .Where(t => t.Val?.InnerText != "clear" && t.Position?.HasValue == true)
+                        .OrderBy(t => t.Position!.Value).ToList();
+                    int aIdx = _ctx.CurrentParagraphTabIndex;
+                    var nextVal = (alignedStops != null && aIdx < alignedStops.Count)
+                        ? alignedStops[aIdx].Val?.InnerText : null;
+                    _ctx.CurrentAlignedTabAlign = nextVal switch
+                    {
+                        "center" => "center",
+                        "right" or "end" => "right",
+                        _ => "left",
+                    };
+                    _ctx.CurrentParagraphTabIndex++;
+                    _ctx.CurrentParagraphTabSegmentStart = sb.Length;
+                    if (!string.IsNullOrEmpty(style) && !_ctx.LineBreakEnabled)
+                    { sb.Append($"<span style=\"{style}\">"); needsSpan = true; }
+                    continue;
                 }
                 // TOC-style special case: right-aligned tab with any leader.
                 // Dot/hyphen/underscore/middleDot all fill the gap between
@@ -595,6 +717,23 @@ public partial class WordHandler
 
         if (needsSpan && !_ctx.LineBreakEnabled)
             sb.Append("</span>");
+
+        // Close the trailing aligned-tab band (text after the last <w:tab/>),
+        // so the final segment (e.g. the right-aligned "Right") is wrapped in a
+        // flex band with the armed alignment. Only when at least one tab opened
+        // a band (TabIndex > 0); a paragraph that ended up with no tab is left
+        // alone.
+        if (_ctx.CurrentParagraphAlignedTab && _ctx.CurrentParagraphTabIndex > 0)
+        {
+            var bandStart = _ctx.CurrentParagraphTabSegmentStart;
+            var bandAlign = _ctx.CurrentAlignedTabAlign;
+            if (bandStart >= 0 && bandStart <= sb.Length)
+            {
+                var leading = sb.ToString(bandStart, sb.Length - bandStart);
+                sb.Length = bandStart;
+                sb.Append($"<span class=\"atab-band\" style=\"text-align:{bandAlign}\">{leading}</span>");
+            }
+        }
     }
 
     // ==================== OLE Object Preview Rendering ====================
@@ -625,6 +764,13 @@ public partial class WordHandler
 
         var dataUri = LoadImageAsDataUri(relId);
         if (dataUri == null) return;
+
+        // Decide web-compatibility from the part's real content type, not the
+        // returned data URI. PartToDataUri degrades undecodable WMF/EMF to an
+        // SVG placeholder data URI; inferring from the URI string would
+        // misclassify that placeholder as a renderable SVG and route the OLE
+        // preview to the <img> branch instead of the sized placeholder block.
+        var rawContentType = LoadImageContentType(relId);
 
         // Display size comes from the companion v:shape style
         // ("width:Xpt;height:Ypt"), falling back to the w:object
@@ -662,12 +808,13 @@ public partial class WordHandler
         var widthPx = widthPt > 0 ? (long)(widthPt * 96 / 72) : 0;
         var heightPx = heightPt > 0 ? (long)(heightPt * 96 / 72) : 0;
 
-        bool isWebCompatible = dataUri.Contains("image/png")
-            || dataUri.Contains("image/jpeg")
-            || dataUri.Contains("image/gif")
-            || dataUri.Contains("image/svg")
-            || dataUri.Contains("image/webp")
-            || dataUri.Contains("image/bmp");
+        var ctForCompat = rawContentType ?? "";
+        bool isWebCompatible = ctForCompat.Contains("image/png")
+            || ctForCompat.Contains("image/jpeg")
+            || ctForCompat.Contains("image/gif")
+            || ctForCompat.Contains("image/svg")
+            || ctForCompat.Contains("image/webp")
+            || ctForCompat.Contains("image/bmp");
 
         if (isWebCompatible)
         {
@@ -728,7 +875,7 @@ public partial class WordHandler
             var fnSupStyle = ResolveNoteListSupStyle("FootnoteText");
             sb.Append($"<div id=\"fn{fnId}\" style=\"margin:0.3em 0\"><sup style=\"{fnSupStyle}\">{fnLabel}</sup> ");
             RenderFootnoteChildren(sb, fn);
-            sb.AppendLine($" <a href=\"#fnref{fnId}\" style=\"text-decoration:none\">\u21A9</a></div>");
+            sb.AppendLine($" <a href=\"#fnref{fnId}\" style=\"color:inherit;text-decoration:none\">\u21A9</a></div>");
         }
         sb.AppendLine("</div>");
     }
@@ -856,7 +1003,10 @@ public partial class WordHandler
             var enSupStyle = ResolveNoteListSupStyle("EndnoteText");
             sb.Append($"<div id=\"en{enId}\" style=\"margin:0.3em 0;{enIndentCss}\"><sup style=\"{enSupStyle}\">{enLabel}</sup> ");
             RenderFootnoteChildren(sb, en);
-            sb.AppendLine("</div>");
+            // Back-reference link to the in-body endnote marker (id="enref{N}",
+            // emitted at ref-render time). Mirrors the footnote back-link so the
+            // two note lists are internally consistent.
+            sb.AppendLine($" <a href=\"#enref{enId}\" style=\"color:inherit;text-decoration:none\">↩</a></div>");
         }
         sb.AppendLine("</div>");
     }

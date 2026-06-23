@@ -104,6 +104,18 @@ public partial class WordHandler
         // via Set inherit the run-level direction without a separate flag).
         // CONSISTENCY(rtl-cascade): mirrors SetElementParagraph — direction
         // is a paragraph-scope shorthand for "this paragraph is fully RTL".
+        // BUG-DUMP-MARKRPR-RTL-OVERSTAMP: when the dump forwards the whole ¶-mark
+        // <w:rPr> verbatim (markRPr.xml), that subtree is the authoritative mark —
+        // it already carries the source's exact mark-rtl state (present or absent).
+        // The direction=rtl / rtl=true convenience cascade below must NOT also
+        // inject <w:rtl/> into the mark, or a bidi paragraph whose source mark had
+        // no <w:rtl/> (only <w:lang w:bidi=…/>) gains a spurious mark rtl that
+        // changes the empty paragraph's line metrics and reflows the page. pPr
+        // <w:bidi/> is still set (it is the paragraph direction, separate from the
+        // mark and not carried in markRPr.xml). Mirrors the markRPrVerbatimApplied
+        // guard on the dotted markRPr.* keys further down.
+        bool hasVerbatimMarkRPr = properties.ContainsKey("markRPr.xml")
+            || properties.ContainsKey("markrpr.xml");
         bool? paraRtl = null;
         if (properties.TryGetValue("direction", out var dirRaw)
             || properties.TryGetValue("dir", out dirRaw)
@@ -112,9 +124,18 @@ public partial class WordHandler
             paraRtl = ParseDirectionRtl(dirRaw);
             if (paraRtl.Value)
             {
+                // direction/dir/bidi sets ONLY the paragraph-direction flag
+                // (pPr <w:bidi/>) — it must NOT inject <w:rtl/> into the ¶-mark
+                // rPr. The mark glyph's rtl is an independent property: a bidi
+                // paragraph whose source mark legitimately lacks <w:rtl/> (only
+                // <w:lang w:bidi=…/>) otherwise gained a spurious mark rtl on
+                // dump→batch replay, changing the empty paragraph's line metrics
+                // and reflowing the page below it. The dump always carries the
+                // mark's true rtl state explicitly (a dotted markRPr.rtl key or
+                // the verbatim markRPr.xml subtree), so the mark round-trips
+                // faithfully without this coupling. `rtl=true` below stays the
+                // explicit "make the mark rtl too" request.
                 pProps.BiDi = new BiDi();
-                var markRPr = pProps.ParagraphMarkRunProperties ?? pProps.AppendChild(new ParagraphMarkRunProperties());
-                ApplyRunFormatting(markRPr, "rtl", "true");
             }
             else
             {
@@ -149,8 +170,11 @@ public partial class WordHandler
         {
             paraRtl = true;
             pProps.BiDi = new BiDi();
-            var markRPr = pProps.ParagraphMarkRunProperties ?? pProps.AppendChild(new ParagraphMarkRunProperties());
-            ApplyRunFormatting(markRPr, "rtl", "true");
+            if (!hasVerbatimMarkRPr)
+            {
+                var markRPr = pProps.ParagraphMarkRunProperties ?? pProps.AppendChild(new ParagraphMarkRunProperties());
+                ApplyRunFormatting(markRPr, "rtl", "true");
+            }
         }
         // Complex-script run flags (bCs/iCs/szCs) hoisted above the text
         // block so an `add p --prop bold.cs=true` without explicit text
@@ -1135,7 +1159,7 @@ public partial class WordHandler
             "outlinelvl", "outlineLvl",
             "rstyle", "rStyle",
             "tabs", "tabstops",
-            "border", "borders", "shd", "shading",
+            "border", "borders", "shd", "shading", "fill",
             "font", "size", "fontsize", "fontSize", "bold", "italic", "color", "highlight",
             "underline", "strike", "strikethrough", "doublestrike", "dstrike",
             "vanish", "outline", "shadow", "emboss", "imprint", "noproof",
@@ -1458,7 +1482,15 @@ public partial class WordHandler
             properties.TryGetValue("revision.date", out pTcDate);
             properties.TryGetValue("revision.id", out pTcId);
             var pprChange = new ParagraphPropertiesChange();
-            if (!string.IsNullOrEmpty(pTcAuthor)) pprChange.Author = pTcAuthor;
+            // BUG-DUMP-PPRCHANGE-AUTHOR: w:author is a REQUIRED attribute on
+            // CT_TrackChange (pPrChange) — omitting it makes the file schema-invalid
+            // and Word repairs-on-open. A source pPrChange authored with an EMPTY
+            // name (w:author="") is common; Navigation's readback skips an empty
+            // author so revision.author never arrives here, and the old
+            // `if (!IsNullOrEmpty)` guard then dropped the attribute entirely.
+            // Always stamp author (empty string when unknown) so the marker stays
+            // schema-valid and the empty-author source round-trips faithfully.
+            pprChange.Author = pTcAuthor ?? "";
             if (!string.IsNullOrEmpty(pTcDate) && DateTime.TryParse(pTcDate, out var pTcDt))
                 pprChange.Date = pTcDt;
             pprChange.Id = !string.IsNullOrEmpty(pTcId)
@@ -1571,9 +1603,14 @@ public partial class WordHandler
             // leads). Mirrors the paraMarkDel block below.
             var pMarkRPr3 = pProps.ParagraphMarkRunProperties
                           ?? pProps.AppendChild(new ParagraphMarkRunProperties());
+            // BUG-DUMP-R71-PARAMARK-INSDEL-ORDER: seat via schema-order helper,
+            // not PrependChild. A paragraph mark CAN carry both ins and del
+            // (inserted by one reviewer, later deleted by another); two blind
+            // prepends order them by execution (del first), but CT_ParaRPr
+            // requires ins before del. The helper places each correctly.
             if (pMarkRPr3.GetFirstChild<Inserted>() == null)
             {
-                pMarkRPr3.PrependChild(new Inserted
+                InsertRunPropInSchemaOrder(pMarkRPr3, new Inserted
                 {
                     Author = author,
                     Date = date,
@@ -1622,16 +1659,17 @@ public partial class WordHandler
             var pMarkRPr2 = pProps.ParagraphMarkRunProperties
                           ?? pProps.AppendChild(new ParagraphMarkRunProperties());
             // Don't double-emit if a Deleted element already lives here.
-            // Prepend (not append) the <w:del> within the rPr: in CT_ParaRPr the
-            // ins/del/move group leads the sequence, so when markRPr.* props
-            // (rFonts / sz / …) were already added to this rPr the del must
-            // precede them or Word rejects it as an unexpected child. A
-            // paragraph mark is never both inserted and deleted, so prepending
-            // del cannot mis-order it relative to an ins. Mirrors the paragraph-
-            // mark ins handling above.
+            // BUG-DUMP-R71-PARAMARK-INSDEL-ORDER: seat the <w:del> via the
+            // schema-order helper. CT_ParaRPr leads with the ins/del/move group,
+            // so del must precede any markRPr.* props (rFonts/sz/…) already in
+            // the rPr. The earlier assumption that a paragraph mark is "never
+            // both inserted and deleted" is false — real review chains delete a
+            // previously-inserted mark, leaving both ins (id A) and del (id B);
+            // blind prepend then puts del before ins, which CT_ParaRPr rejects.
+            // The helper orders ins-then-del regardless of application order.
             if (pMarkRPr2.GetFirstChild<Deleted>() == null)
             {
-                pMarkRPr2.PrependChild(new Deleted
+                InsertRunPropInSchemaOrder(pMarkRPr2, new Deleted
                 {
                     Author = author,
                     Date = date,
@@ -1682,6 +1720,21 @@ public partial class WordHandler
     private static bool IsMathBlockContainer(OpenXmlElement parent) =>
         parent is Body or SdtBlock or Footnote or Endnote or Header or Footer;
 
+    // BUG-DUMP-COMMENT-IN-MATH: remove comment-range markers (commentRangeStart /
+    // commentRangeEnd / commentReference, any prefix) from a verbatim math fragment
+    // before it is reconstructed. These carry stale source comment ids that no
+    // longer exist after comments.xml is renumbered; the owning comment is
+    // re-anchored separately via AddComment. Leaving an empty run wrapper behind is
+    // schema-legal (it renders nothing).
+    private static string StripVerbatimCommentMarkers(string omml)
+    {
+        if (omml.IndexOf("comment", StringComparison.OrdinalIgnoreCase) < 0) return omml;
+        return System.Text.RegularExpressions.Regex.Replace(
+            omml,
+            @"<\w+:comment(?:RangeStart|RangeEnd|Reference)\b[^>]*/>",
+            string.Empty);
+    }
+
     private string AddEquation(OpenXmlElement parent, string parentPath, int? index, Dictionary<string, string> properties)
     {
         string resultPath;
@@ -1702,6 +1755,16 @@ public partial class WordHandler
             if ((properties.TryGetValue("xml", out var omml) || properties.TryGetValue("omml", out omml))
                 && !string.IsNullOrEmpty(omml) && omml.Contains("oMath", StringComparison.Ordinal))
             {
+                // BUG-DUMP-COMMENT-IN-MATH: a comment range whose End/Reference run
+                // sits INSIDE this equation rides along in the verbatim <m:oMath>,
+                // carrying the SOURCE comment id. But comments.xml is renumbered
+                // dense on replay and the comment is re-anchored separately via
+                // AddComment, so the math-borne marker keeps a now-nonexistent id —
+                // a dangling reference (silent comment loss) plus a duplicate-id
+                // desync (schema-invalid). Strip the comment-range markers from the
+                // verbatim math; the comment survives through its AddComment anchor
+                // (its end lands at the run boundary adjacent to the equation).
+                omml = StripVerbatimCommentMarkers(omml);
                 try
                 {
                     // Root is <m:oMath> → construct directly; root is <m:oMathPara>
@@ -1779,6 +1842,72 @@ public partial class WordHandler
 
             var mathPara = new M.Paragraph(oMath);
 
+            // BUG-DUMP-EQDISPLAY-PPR: re-apply the source wrapper paragraph's line
+            // spacing / before-after onto the rebuilt wrapper <w:p>. Call BEFORE any
+            // bidi PrependChild / mark-rPr append so CT_PPr schema order holds
+            // (bidi < spacing < jc < rPr). Without this a 1.5x display-equation
+            // line collapsed to single spacing, compressing the page on round-trip.
+            void ApplyEqWrapperSpacing(Paragraph wp)
+            {
+                if (properties == null) return;
+                // CONSISTENCY(verbatim-ppr-supersede): when the dump carried the
+                // whole wrapper <w:pPr> verbatim, restore it intact (spacing, jc,
+                // pStyle AND the paragraph-mark <w:rPr> that sets the equation
+                // line height). Re-applying only the granular spacing/jc keys
+                // dropped the mark rPr and shifted the line box. The verbatim
+                // pPr already contains bidi when the source had it, so the RTL
+                // cascade below only ever adds a missing one.
+                if (properties.TryGetValue("wrapperPpr", out var wpprXml)
+                    && !string.IsNullOrWhiteSpace(wpprXml)
+                    && wpprXml.Contains("pPr", StringComparison.Ordinal))
+                {
+                    try
+                    {
+                        var restored = new ParagraphProperties(wpprXml);
+                        if (wp.ParagraphProperties != null) wp.ParagraphProperties.Remove();
+                        wp.PrependChild(restored);
+                        return;
+                    }
+                    catch { /* fall through to granular re-apply on malformed XML */ }
+                }
+                SpacingBetweenLines? EnsureSp()
+                {
+                    var sp = wp.ParagraphProperties ??= new ParagraphProperties();
+                    return sp.SpacingBetweenLines ??= new SpacingBetweenLines();
+                }
+                if (properties.TryGetValue("lineSpacing", out var lsE) || properties.TryGetValue("linespacing", out lsE))
+                {
+                    var sbl = EnsureSp()!;
+                    var (tw, mult) = SpacingConverter.ParseWordLineSpacing(lsE);
+                    sbl.Line = tw.ToString();
+                    sbl.LineRule = mult ? LineSpacingRuleValues.Auto : LineSpacingRuleValues.Exact;
+                }
+                if (properties.TryGetValue("lineRule", out var lrE) || properties.TryGetValue("linerule", out lrE))
+                    EnsureSp()!.LineRule = ParseLineRule(lrE);
+                if (properties.TryGetValue("spaceBefore", out var sbE) || properties.TryGetValue("spacebefore", out sbE))
+                    EnsureSp()!.Before = SpacingConverter.ParseWordSpacing(sbE).ToString();
+                if (properties.TryGetValue("spaceAfter", out var saE) || properties.TryGetValue("spaceafter", out saE))
+                    EnsureSp()!.After = SpacingConverter.ParseWordSpacing(saE).ToString();
+                // BUG-DUMP-EQWRAP-JC: re-apply the wrapper paragraph's own
+                // justification (distinct from the math align). Schema order in
+                // CT_PPr is spacing < jc, and this runs before bidi/mark-rPr, so
+                // appending jc here is order-safe.
+                if (properties.TryGetValue("wrapperAlign", out var waE) && !string.IsNullOrWhiteSpace(waE))
+                {
+                    var jc = waE.Trim().ToLowerInvariant() switch
+                    {
+                        "justify" or "both" => "both",
+                        "center" => "center",
+                        "right" or "end" => "right",
+                        "left" or "start" => "left",
+                        _ => waE.Trim()
+                    };
+                    var pp = wp.ParagraphProperties ??= new ParagraphProperties();
+                    pp.Justification = new Justification { Val = new EnumValue<JustificationValues>(
+                        new JustificationValues(jc)) };
+                }
+            }
+
             // BUG-DUMP19-02: apply m:oMathParaPr/m:jc when caller passes `align`
             // so block-equation alignment round-trips. Schema requires
             // m:oMathParaPr to precede m:oMath inside m:oMathPara.
@@ -1813,6 +1942,7 @@ public partial class WordHandler
                 // Wrap m:oMathPara in w:p for schema validity
                 var wrapPara = new Paragraph(mathPara);
                 AssignParaId(wrapPara);
+                ApplyEqWrapperSpacing(wrapPara);
 
                 // CONSISTENCY(rtl-cascade): inherit pPr/bidi and paragraph-mark
                 // rPr/rtl from the host paragraph so the wrapper preserves the
@@ -1886,6 +2016,7 @@ public partial class WordHandler
                 // flatten to /oMathPara[N] the way Body does in NavigateToElement).
                 var wrapPara = new Paragraph(mathPara);
                 AssignParaId(wrapPara);
+                ApplyEqWrapperSpacing(wrapPara);
                 if (index.HasValue)
                 {
                     var children = insertTarget.ChildElements.ToList();
@@ -1903,6 +2034,14 @@ public partial class WordHandler
             }
             else
             {
+                // Cell display equation: the m:oMathPara is appended INTO the
+                // existing host paragraph (the cell paragraph), so that paragraph
+                // IS the wrapper. Re-apply its spacing/justification here — the
+                // new-wrapPara branches above never run for this case, so without
+                // this a cell equation lost its line height + jc, collapsing the
+                // line and drifting later content across page boundaries.
+                if (parent is Paragraph cellWrapPara)
+                    ApplyEqWrapperSpacing(cellWrapPara);
                 AppendToParent(parent, mathPara);
                 resultPath = $"{parentPath}/oMathPara[1]";
             }
@@ -1948,6 +2087,17 @@ public partial class WordHandler
         properties.TryGetValue("revision.author", out trackChangeAuthor);
         properties.TryGetValue("revision.date", out trackChangeDate);
         properties.TryGetValue("revision.id", out trackChangeId);
+        // BUG-DUMP-DELININS: a run that is BOTH inserted and deleted
+        // (<w:ins><w:del><w:r><w:delText>) — one reviewer inserts text, another
+        // deletes that insertion. The dump captures the outer ins as
+        // revision.* and the inner del as revision.nested.*. Without rebuilding
+        // both wrappers the deletion is lost and the text un-deletes.
+        string? nestedTcKind = null, nestedTcAuthor = null, nestedTcDate = null, nestedTcId = null;
+        if (properties.TryGetValue("revision.nested.type", out var nTcKindRaw))
+            nestedTcKind = nTcKindRaw?.Trim().ToLowerInvariant();
+        properties.TryGetValue("revision.nested.author", out nestedTcAuthor);
+        properties.TryGetValue("revision.nested.date", out nestedTcDate);
+        properties.TryGetValue("revision.nested.id", out nestedTcId);
 
         // High-level inference: if a revision.* sub-key is present
         // (author/date/id) without an explicit `revision.type=<kind>` literal,
@@ -2229,11 +2379,15 @@ public partial class WordHandler
                 : (int)Math.Round(ParseHelpers.SafeParseDouble(rCharSp, "charspacing"), MidpointRounding.AwayFromZero);
             newRProps.Spacing = new Spacing { Val = rCsTwips };
         }
-        if (properties.TryGetValue("shd", out var rShd) || properties.TryGetValue("shading", out rShd))
+        if (properties.TryGetValue("shd", out var rShd) || properties.TryGetValue("shading", out rShd)
+            || properties.TryGetValue("fill", out rShd))
         {
             // BUG-DUMP-R41-4: route through the shared ParseShadingValue so the
             // run-level <w:shd> theme-linkage (themeFill=…/themeColor=…) tail
             // round-trips; preserves the prior VAL;FILL;COLOR semantics.
+            // CONSISTENCY(shd-canonical-fill): `fill` is the canonical Get key
+            // for a solid run shading — accept it as an Add alias so dump→batch
+            // (which now carries `fill`) replays via `add run --prop fill=…`.
             newRProps.Shading = ParseShadingValue(rShd);
         }
 
@@ -2414,7 +2568,7 @@ public partial class WordHandler
             "charspacing", "letterspacing",
             "caps", "smallcaps", "allcaps",
             "boldcs", "italiccs", "sizecs",
-            "shd", "shading",
+            "shd", "shading", "fill",
             "rstyle", "rStyle",
             "annotationRef", "annotationref",
             "hyphen",
@@ -2547,6 +2701,12 @@ public partial class WordHandler
             LastAddUnsupportedProps.Add(key);
         }
 
+        // BUG-DUMP-R71-RPR-ORDER: the run rPr was built across mixed paths
+        // (SDK setters, ApplyRunFormatting, raw AppendChild for rFonts/sz, and
+        // TypedAttributeFallback tail-appends), any of which can leave a child
+        // out of CT_RPr order. Normalize once now so the emitted run validates.
+        NormalizeRunPropsSchemaOrder(newRProps);
+
         // Use ChildElements for index lookup so ResolveAnchorPosition's
         // childElement-indexed result lines up. If index points at
         // ParagraphProperties, clamp forward so pPr stays first.
@@ -2669,8 +2829,12 @@ public partial class WordHandler
             var rPr = newRun.GetFirstChild<RunProperties>()
                    ?? newRun.PrependChild(new RunProperties());
             var rprChange = new RunPropertiesChange();
-            if (!string.IsNullOrEmpty(trackChangeAuthor))
-                rprChange.Author = trackChangeAuthor;
+            // BUG-DUMP-PPRCHANGE-AUTHOR (run side): w:author is REQUIRED on
+            // CT_TrackChange (rPrChange) — same schema rule as pPrChange above.
+            // An empty-author source marker (w:author="") must round-trip as an
+            // empty attribute, not a dropped one (which fails validation and
+            // triggers Word repair-on-open).
+            rprChange.Author = trackChangeAuthor ?? "";
             // BUG-R4F-03: RoundtripKind keeps a …Z date in Utc (see above).
             if (!string.IsNullOrEmpty(trackChangeDate)
                 && DateTime.TryParse(trackChangeDate, null, System.Globalization.DateTimeStyles.RoundtripKind, out var tcfDate))
@@ -2735,8 +2899,37 @@ public partial class WordHandler
                         t.Parent?.ReplaceChild(dt, t);
                     }
                 }
-                parentEl.ReplaceChild(wrapper, newRun);
-                wrapper.AppendChild(newRun);
+                // BUG-DUMP-DELININS: rebuild the <w:ins><w:del> stack for a run
+                // that is both inserted and deleted. The wrapper above is the
+                // OUTER ins; insert an INNER del between it and the run so the
+                // shape is <w:ins><w:del><w:r><w:delText>. ECMA-376 permits only
+                // ins⊃del nesting, so this fires only for revision.type=ins +
+                // revision.nested.type=del.
+                if (trackChangeKind == "ins" && nestedTcKind == "del")
+                {
+                    var innerDel = new DeletedRun();
+                    if (!string.IsNullOrEmpty(nestedTcAuthor)) innerDel.Author = nestedTcAuthor;
+                    if (!string.IsNullOrEmpty(nestedTcDate)
+                        && DateTime.TryParse(nestedTcDate, null, System.Globalization.DateTimeStyles.RoundtripKind, out var ndDate))
+                        innerDel.Date = ndDate;
+                    innerDel.Id = !string.IsNullOrEmpty(nestedTcId) ? nestedTcId : GenerateRevisionId();
+                    // The deleted run's text must ride in <w:delText>.
+                    foreach (var t in newRun.Elements<Text>().ToList())
+                    {
+                        var dt = new DeletedText(t.Text ?? "") { Space = t.Space };
+                        t.Parent?.ReplaceChild(dt, t);
+                    }
+                    // newRun is still a child of parentEl here — swap in the
+                    // outer ins, then nest del then the run: <w:ins><w:del><w:r>.
+                    parentEl.ReplaceChild(wrapper, newRun);
+                    wrapper.AppendChild(innerDel);
+                    innerDel.AppendChild(newRun);
+                }
+                else
+                {
+                    parentEl.ReplaceChild(wrapper, newRun);
+                    wrapper.AppendChild(newRun);
+                }
             }
         }
         // moveFrom / moveTo: low-level OOXML synthesis primitives for
@@ -2783,6 +2976,27 @@ public partial class WordHandler
                     WrapRunAsMoveFrom(newRun, moveAuthor, moveDate, trackChangeId!);
                 else
                     WrapRunAsMoveTo(newRun, moveAuthor, moveDate, trackChangeId!);
+                // BUG-DUMP-MOVE-DEL: a run that is BOTH moved AND deleted
+                // (<w:moveFrom|moveTo><w:del><w:r>) must keep its inner deletion —
+                // otherwise the moved-and-deleted text resurfaces as live, accepted
+                // content (meaning change). Insert a <w:del> between the move wrapper
+                // and the run and convert <w:t> to <w:delText>, mirroring ins⊃del.
+                if (nestedTcKind == "del" && newRun.Parent != null)
+                {
+                    var moveParent = newRun.Parent;
+                    var innerDel = new DeletedRun
+                    {
+                        Id = !string.IsNullOrEmpty(nestedTcId) ? nestedTcId : GenerateRevisionId()
+                    };
+                    if (!string.IsNullOrEmpty(nestedTcAuthor)) innerDel.Author = nestedTcAuthor;
+                    if (!string.IsNullOrEmpty(nestedTcDate)
+                        && DateTime.TryParse(nestedTcDate, null, System.Globalization.DateTimeStyles.RoundtripKind, out var mvNdDate))
+                        innerDel.Date = mvNdDate;
+                    foreach (var t in newRun.Elements<Text>().ToList())
+                        t.Parent?.ReplaceChild(new DeletedText(t.Text ?? "") { Space = t.Space }, t);
+                    moveParent.ReplaceChild(innerDel, newRun);
+                    innerDel.AppendChild(newRun);
+                }
             }
         }
 

@@ -747,5 +747,24 @@ public partial class WordHandler
             start.Id = newId.ToString();
             if (end != null) end.Id = newId.ToString();
         }
+
+        // BUG-DUMP-BMORPHAN: a content-wrapping bookmark whose <w:bookmarkEnd>
+        // was lost on round-trip — its end fell outside the cross-paragraph
+        // field-span / raw-set fragment that carried only the start (a TOC
+        // heading bookmark split across raw-set-before-sectPr members) — replays
+        // as an UNCLOSED bookmark. Word then renders every PAGEREF/TOC entry to
+        // it as the localized "Error! Bookmark not defined." Close each orphan
+        // start with a zero-length end right after it: the reference resolves to
+        // the start's page (the heading sits there), and it is harmless for the
+        // invisible _Hlk edit-location markers that make up most orphans. Runs at
+        // batch finalization after every raw-set is in place; idempotent — a
+        // re-run finds no orphans because the end now exists.
+        foreach (var (start, end, _) in pairs)
+        {
+            if (end != null || start.Parent == null) continue;
+            var startId = start.Id?.Value;
+            if (string.IsNullOrEmpty(startId)) continue;
+            start.InsertAfterSelf(new BookmarkEnd { Id = startId });
+        }
     }
 }

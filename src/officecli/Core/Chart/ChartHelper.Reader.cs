@@ -12,6 +12,22 @@ internal static partial class ChartHelper
 {
     // ==================== Chart Readback ====================
 
+    // BUG-DUMP-CHART-AXID-UNSIGNED: c:axId/@val is xsd:unsignedInt, but Word
+    // routinely emits values >= 2^31 in their signed-overflow text form (e.g.
+    // "-1880390128" = unsigned 2414577168). UInt32Value.Value throws a
+    // FormatException on the negative string, which previously crashed the ENTIRE
+    // document dump (Error: input string '-1880390128' was not in a correct
+    // format). Read the raw text and reinterpret leniently so axis-rank mapping
+    // (the only consumer) survives; Word opens such files fine.
+    private static uint? SafeAxisIdVal(C.AxisId? ax)
+    {
+        var raw = ax?.Val?.InnerText;
+        if (string.IsNullOrEmpty(raw)) return null;
+        if (uint.TryParse(raw, out var u)) return u;
+        if (long.TryParse(raw, out var l)) return unchecked((uint)l);
+        return null;
+    }
+
     internal static void ReadChartProperties(C.Chart chart, DocumentNode node, int depth)
     {
         var plotArea = chart.GetFirstChild<C.PlotArea>();
@@ -454,7 +470,7 @@ internal static partial class ChartHelper
             var axisRank = new Dictionary<uint, int>();
             for (int ai = 0; ai < valAxes.Count; ai++)
             {
-                var axId = valAxes[ai].GetFirstChild<C.AxisId>()?.Val?.Value;
+                var axId = SafeAxisIdVal(valAxes[ai].GetFirstChild<C.AxisId>());
                 if (axId.HasValue) axisRank[axId.Value] = ai;
             }
             // Walk every series across every chart-type child of plotArea;
@@ -474,7 +490,7 @@ internal static partial class ChartHelper
                     // element's c:axId children; primary vs secondary depends
                     // on which value-axis those IDs match.
                     var binds = seriesAxisIds
-                        .Select(a => a.Val?.Value)
+                        .Select(a => SafeAxisIdVal(a))
                         .Where(v => v.HasValue && axisRank.ContainsKey(v.Value))
                         .Select(v => axisRank[v!.Value]);
                     if (binds.Any(r => r >= 1)) secIdx.Add(seriesIdx);

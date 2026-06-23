@@ -187,11 +187,13 @@ public partial class WordHandler
         });
 
         // Allow per-section overrides
-        if (properties.TryGetValue("pagewidth", out var sw) || properties.TryGetValue("pageWidth", out sw) || properties.TryGetValue("width", out sw))
+        bool explicitWidth = properties.TryGetValue("pagewidth", out var sw) || properties.TryGetValue("pageWidth", out sw) || properties.TryGetValue("width", out sw);
+        if (explicitWidth)
         {
             (EnsureSectPrChild<PageSize>(sectPr)).Width = ParseTwips(sw);
         }
-        if (properties.TryGetValue("pageheight", out var sh) || properties.TryGetValue("pageHeight", out sh) || properties.TryGetValue("height", out sh))
+        bool explicitHeight = properties.TryGetValue("pageheight", out var sh) || properties.TryGetValue("pageHeight", out sh) || properties.TryGetValue("height", out sh);
+        if (explicitHeight)
         {
             (EnsureSectPrChild<PageSize>(sectPr)).Height = ParseTwips(sh);
         }
@@ -201,11 +203,24 @@ public partial class WordHandler
             ps.Orient = orient.ToLowerInvariant() == "landscape"
                 ? PageOrientationValues.Landscape
                 : PageOrientationValues.Portrait;
-            // Swap width/height if dimensions don't match orientation
-            if (ps.Orient == PageOrientationValues.Landscape && ps.Width < ps.Height)
-                (ps.Width!.Value, ps.Height!.Value) = (ps.Height.Value, ps.Width.Value);
-            if (ps.Orient == PageOrientationValues.Portrait && ps.Width > ps.Height)
-                (ps.Width!.Value, ps.Height!.Value) = (ps.Height.Value, ps.Width.Value);
+            // BUG-DUMP-SECT-ORIENT-SWAP: only auto-swap W/H to match the
+            // orientation flag when the caller did NOT supply both explicit
+            // dimensions. `add section --prop orientation=landscape` with
+            // inherited portrait dims wants the swap (a convenience); but on
+            // dump→batch replay the source's pgSz is authoritative — Word
+            // renders w:w/w:h literally and w:orient is only a printer/UI hint.
+            // A section legitimately carrying w<h with orient=landscape (e.g. an
+            // 11"-wide × 15.75"-tall page) must NOT be rotated, or it becomes
+            // 15.75"×11", shrinks the usable height, and reflows onto an extra
+            // page on round-trip.
+            bool dimsAuthoritative = explicitWidth && explicitHeight;
+            if (!dimsAuthoritative)
+            {
+                if (ps.Orient == PageOrientationValues.Landscape && ps.Width < ps.Height)
+                    (ps.Width!.Value, ps.Height!.Value) = (ps.Height.Value, ps.Width.Value);
+                if (ps.Orient == PageOrientationValues.Portrait && ps.Width > ps.Height)
+                    (ps.Width!.Value, ps.Height!.Value) = (ps.Height.Value, ps.Width.Value);
+            }
         }
         else
         {
@@ -594,6 +609,42 @@ public partial class WordHandler
         return resultPath;
     }
 
+    // BUG-DUMP-NOTE-DEL: a footnote/endnote/comment whose seed content run carries
+    // track-change attribution (revision.type=del|ins on the `add <kind>` op) must
+    // have that run wrapped in <w:del>/<w:ins> — otherwise a tracked DELETION
+    // resurfaces as LIVE accepted text (a silent meaning change), the same way the
+    // body run path wraps via AddRun. Returns the wrapper (or the run unchanged when
+    // no revision attribution). For w:del the run's <w:t> become <w:delText>.
+    // Nested ins⊃del on a note seed is vanishingly rare and not handled here.
+    private OpenXmlElement ApplyNoteSeedRevision(Run run, Dictionary<string, string> properties)
+    {
+        if (!properties.TryGetValue("revision.type", out var rt)
+            || (rt != "del" && rt != "ins"))
+            return run;
+        OpenXmlElement wrapper = rt == "ins" ? new InsertedRun() : new DeletedRun();
+        string? author = properties.GetValueOrDefault("revision.author");
+        if (!string.IsNullOrEmpty(author))
+        {
+            if (wrapper is InsertedRun iw) iw.Author = author;
+            else if (wrapper is DeletedRun dw) dw.Author = author;
+        }
+        if (properties.TryGetValue("revision.date", out var dstr) && !string.IsNullOrEmpty(dstr)
+            && DateTime.TryParse(dstr, null, System.Globalization.DateTimeStyles.RoundtripKind, out var dt))
+        {
+            if (wrapper is InsertedRun iw2) iw2.Date = dt;
+            else if (wrapper is DeletedRun dw2) dw2.Date = dt;
+        }
+        var id = properties.GetValueOrDefault("revision.id");
+        if (string.IsNullOrEmpty(id)) id = GenerateRevisionId();
+        if (wrapper is InsertedRun iw3) iw3.Id = id;
+        else if (wrapper is DeletedRun dw3) dw3.Id = id;
+        if (rt == "del")
+            foreach (var t in run.Elements<Text>().ToList())
+                t.Parent?.ReplaceChild(new DeletedText(t.Text ?? "") { Space = t.Space }, t);
+        wrapper.AppendChild(run);
+        return wrapper;
+    }
+
     private string AddFootnote(OpenXmlElement parent, string parentPath, int? index, Dictionary<string, string> properties)
     {
         if (!properties.TryGetValue("text", out var fnText))
@@ -677,11 +728,20 @@ public partial class WordHandler
                 new Run(fnRefMarkRPr, new Text(fnText) { Space = SpaceProcessingModeValues.Preserve })
             );
         else
+        {
+            // BUG-DUMP-NOTE-TAB: build the content run via AppendTextWithBreaks so a
+            // tab/newline in the seed text becomes a structural <w:tab/> / <w:br/>
+            // (mirrors `add r`), not a literal U+0009/U+000A glyph. A footnote ref
+            // mark is commonly followed by a <w:tab/> separating the number from the
+            // text; the verbatim Text node dropped that structural tab.
+            var fnTextRun = new Run();
+            AppendTextWithBreaks(fnTextRun, fnText);
             fnContentPara = new Paragraph(
                 new ParagraphProperties(new ParagraphStyleId { Val = "FootnoteText" }),
                 new Run(fnRefMarkRPr, new FootnoteReferenceMark()),
-                new Run(new Text(fnText) { Space = SpaceProcessingModeValues.Preserve })
+                ApplyNoteSeedRevision(fnTextRun, properties)   // BUG-DUMP-NOTE-DEL
             );
+        }
         footnote.AppendChild(fnContentPara);
         // i18n: route remaining keys (direction, font.cs, bold.cs, etc.)
         // through the same paragraph + run helpers SetFootnotePath uses.
@@ -781,11 +841,17 @@ public partial class WordHandler
                 new Run(enRefMarkRPr, new Text(enText) { Space = SpaceProcessingModeValues.Preserve })
             );
         else
+        {
+            // BUG-DUMP-NOTE-TAB: see AddFootnote — split tab/newline in the seed
+            // text into structural <w:tab/> / <w:br/> instead of a literal glyph.
+            var enTextRun = new Run();
+            AppendTextWithBreaks(enTextRun, enText);
             enContentPara = new Paragraph(
                 new ParagraphProperties(new ParagraphStyleId { Val = "EndnoteText" }),
                 new Run(enRefMarkRPr, new EndnoteReferenceMark()),
-                new Run(new Text(enText) { Space = SpaceProcessingModeValues.Preserve })
+                ApplyNoteSeedRevision(enTextRun, properties)   // BUG-DUMP-NOTE-DEL
             );
+        }
         endnote.AppendChild(enContentPara);
         // i18n: route remaining keys through the same helper as footnote.
         var enUnsupported = new List<string>();
@@ -1460,6 +1526,34 @@ public partial class WordHandler
             styleRPr.Color = styleColor;
             hasRPr = true;
         }
+        // BUG-DUMP-STYLE-W14LIG: OpenType typographic toggles (ligatures /
+        // numForm / numSpacing) on a STYLE's rPr were dropped on round-trip —
+        // AddStyle's typed setters don't cover the w14 extension elements and the
+        // generic per-key fallback (ApplyRunFormatting / GenericXmlQuery) can't
+        // write a w14-namespaced element. A body style that disables ligatures
+        // (`<w14:ligatures w14:val="none"/>` on Normal) then inherited
+        // docDefaults' `standardContextual`, so the whole document re-rendered
+        // with ligatures ON — different glyph shaping/line-wrapping that drifted
+        // the layout across pages. Mirror the run-level ApplyW14ValEffect: "none"
+        // is a real ST_ enum value (explicit disable), never a strip sentinel.
+        foreach (var (w14Key, w14Aliases) in new[]
+        {
+            ("ligatures", new[] { "ligatures" }),
+            ("numForm", new[] { "numForm", "numform" }),
+            ("numSpacing", new[] { "numSpacing", "numspacing" }),
+        })
+        {
+            string? w14Val = null;
+            foreach (var alias in w14Aliases)
+                if (properties.TryGetValue(alias, out w14Val)) break;
+            if (string.IsNullOrEmpty(w14Val)) continue;
+            var w14Child = WordHandler.BuildW14ValElement(w14Key, w14Val);
+            if (w14Child != null)
+            {
+                InsertRunPropInSchemaOrder(styleRPr, w14Child);
+                hasRPr = true;
+            }
+        }
         if (hasRPr) newStyle.AppendChild(styleRPr);
 
         // Numbering linkage on the style itself (numPr inside StyleParagraphProperties).
@@ -1535,6 +1629,12 @@ public partial class WordHandler
             // loop would route `hidden` to ApplyRunFormatting (vanish alias)
             // and double-stamp it on rPr.
             "autoRedefine", "autoredefine", "hidden",
+            // customStyle / customstyle consumed in the explicit dispatch above
+            // (sets Style.CustomStyle, BUG-DUMP-R30-1). The dump emits it on
+            // every style entry (Normal included), so without listing it here
+            // the per-key sweep flags every styled docx's round-trip with a
+            // spurious customStyle "(not supported)" warning.
+            "customStyle", "customstyle",
             // BUG-DUMP-STYLE-LATENT: latent-style flags consumed in the explicit
             // dispatch above (uiPriority/semiHidden/unhideWhenUsed/qFormat/
             // locked). Without listing them here the per-key fallback loop would
@@ -1551,12 +1651,23 @@ public partial class WordHandler
             "align", "alignment", "spacebefore", "spaceBefore",
             "spaceafter", "spaceAfter", "linespacing", "lineSpacing",
             "spacebeforelines", "spaceBeforeLines", "spaceafterlines", "spaceAfterLines",
+            // auto-spacing toggles consumed in the explicit dispatch above; the
+            // dump emits them on styles whose pPr carries <w:spacing
+            // w:beforeAutospacing/@w:afterAutospacing>, so without listing them
+            // the per-key sweep flagged every such style's round-trip.
+            "spacebeforeauto", "spaceBeforeAuto", "beforeautospacing",
+            "spaceafterauto", "spaceAfterAuto", "afterautospacing",
             "lineRule", "linerule",
             "font", "size", "bold", "italic", "color",
             "direction", "dir", "bidi",
             "font.ascii", "font.hAnsi", "font.eastAsia", "font.cs",
             "numId", "numid", "ilvl", "numLevel", "numlevel",
             "tabs", "tabstops",
+            // BUG-DUMP-STYLE-W14LIG: w14 OpenType toggles consumed by the
+            // explicit StyleRunProperties block above; without listing them the
+            // per-key fallback would route them to GenericXmlQuery (which can't
+            // write a w14-namespaced element) and surface a misleading UNSUPPORTED.
+            "ligatures", "numForm", "numform", "numSpacing", "numspacing",
         };
         foreach (var (key, value) in properties)
         {
@@ -1588,6 +1699,23 @@ public partial class WordHandler
             {
                 var pPrShd = newStyle.StyleParagraphProperties ?? EnsureStyleParagraphProperties(newStyle);
                 pPrShd.Shading = ParseShadingValue(value);
+                continue;
+            }
+            // CONSISTENCY(style-snaptogrid-pPr): <w:snapToGrid> is dual-valid —
+            // legal in BOTH CT_PPr and CT_RPr. On a docGrid document a paragraph
+            // style's pPr-level <w:snapToGrid w:val="0"/> turns OFF grid-snapping
+            // for the whole paragraph (lines keep their natural height); the dump
+            // reader flattens that to the bare `snapToGrid` key. ApplyRunFormatting
+            // (step 1) handles snapToGrid as an rPr toggle, so without this branch
+            // the property round-tripped into rPr (character-level) and the
+            // paragraph re-snapped to the grid — taller lines, cumulative drift
+            // (BUG-DUMP-STYLE-SNAPGRID). Route it to pPr for paragraph/table
+            // styles; character styles fall through to the rPr path below.
+            if (string.Equals(key, "snapToGrid", StringComparison.OrdinalIgnoreCase)
+                && (styleType == StyleValues.Paragraph || styleType == StyleValues.Table))
+            {
+                var pPrSnap = newStyle.StyleParagraphProperties ?? EnsureStyleParagraphProperties(newStyle);
+                pPrSnap.SnapToGrid = new SnapToGrid { Val = OnOffValue.FromBoolean(IsTruthy(value)) };
                 continue;
             }
             // 1) Run-formatting helper (covers underline/strike/highlight/caps/
@@ -1732,8 +1860,32 @@ public partial class WordHandler
             LastAddUnsupportedProps.Add(key);
         }
 
+        // BUG-DUMP-STYLE-RPR-ORDER: the rPr is built in two passes — the explicit
+        // dispatch (rFonts/sz/color via SDK typed setters + ligatures via
+        // InsertRunPropInSchemaOrder) then the per-key sweep (size.cs→szCs,
+        // lang.*→lang, … via TypedAttributeFallback/GenericXmlQuery). The sweep
+        // paths call SchemaOrder.Place directly, which lacks the w14-extension
+        // hoist InsertRunPropInSchemaOrder has: when a <w14:ligatures> already
+        // sits in the rPr, the SDK comparator sorts that unknown element to the
+        // front, so Place strands a later standard child (szCs/lang) AFTER the
+        // w14 block — schema-invalid (CT_RPr requires every standard child to
+        // precede the w14 extension) and cascading into a fully scrambled rPr.
+        // Re-seat every standard (non-w14) child through InsertRunPropInSchemaOrder
+        // once at the end: its Place + w14-hoist converge on the correct CT_RPr
+        // order regardless of the pre-existing (scrambled) sibling order.
+        if (newStyle.StyleRunProperties is { } finalRPr)
+        {
+            foreach (var child in finalRPr.ChildElements
+                         .Where(c => c.NamespaceUri != W14Ns).ToList())
+            {
+                child.Remove();
+                InsertRunPropInSchemaOrder(finalRPr, child);
+            }
+        }
+
         stylesPart.Styles.AppendChild(newStyle);
         stylesPart.Styles.Save();
+        InvalidateStyleIndex(); // new StyleId must be visible to FindStyleById
 
         var resultPath = $"/styles/{styleId}";
         return resultPath;

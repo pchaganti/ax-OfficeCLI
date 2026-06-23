@@ -376,6 +376,14 @@ public static partial class WordBatchEmitter
             var tblPrBeforeXml = TryStringFormat(tableNode.Format, "tblPrChange.beforeXml");
             if (tblPrBeforeXml != null)
                 tableSetProps["revision.beforeXml"] = tblPrBeforeXml;
+            // BUG-DUMP-R71-TBLPREX-CASCADE: suppress the apply-side per-row
+            // tblPrEx cascade. That cascade is an interactive Mac-Word
+            // visibility hack; on round-trip the source's real per-row tblPrEx
+            // already replay verbatim via per-row `set tr --prop tblPrEx`, so
+            // letting the cascade also run injects spurious tblPrEx into every
+            // row (tables with a table-level tblPrChange but no per-row
+            // exceptions went 0 → rows×2 tblPrEx and failed validation).
+            tableSetProps["revision.skipRowCascade"] = "true";
         }
         else
         {
@@ -433,7 +441,21 @@ public static partial class WordBatchEmitter
         // schema order on save, so append is safe. Only emitted when the grid
         // doesn't already carry a tblGridChange from a width-Set side effect
         // (the snapshot here is the authoritative source state).
+        // BUG-DUMP-R71-TBLGRIDCHANGE-DUP: when the table also carries a
+        // tracked table-properties change (hasTblPrChange), the follow-up
+        // `set` step replays the source colWidths under track-changes, and the
+        // colWidths-Set-under-revision side effect ALREADY re-creates the
+        // <w:tblGridChange> in the grid (see RestorePropsFromChange/gridChange
+        // in Set.Revision.cs). Appending the verbatim snapshot here too then
+        // duplicates it — two <w:tblGridChange> in one <w:tblGrid>, which
+        // CT_TblGrid (gridCol* + tblGridChange?) rejects. Only emit the raw-set
+        // append when the set side effect won't produce one (no tblPrChange, or
+        // no colWidths to drive the grid change).
+        bool gridChangeFromSetSideEffect = hasTblPrChange
+            && tableSetProps != null
+            && (tableSetProps.ContainsKey("colWidths") || tableSetProps.ContainsKey("colwidths"));
         if (containerPath == "/body"
+            && !gridChangeFromSetSideEffect
             && tableNode.Format.TryGetValue("tblGridChange.xml", out var gridChangeRaw)
             && gridChangeRaw?.ToString() is { Length: > 0 } gridChangeXml)
         {
@@ -1010,6 +1032,64 @@ public static partial class WordBatchEmitter
                 });
             }
         }
+        // BUG-DUMP-TABLE-STRUCT-BOOKMARK: re-insert any <w:bookmarkStart>/<w:bookmarkEnd>
+        // that sat at table-structure level (a direct child of <w:tbl> between rows,
+        // or of <w:tr> between cells). The typed emit above only walks rows/cells, so
+        // these cross-reference targets were dropped, leaving dangling PAGEREF/REF
+        // ("Error! Bookmark not defined."). Replay each verbatim at its source
+        // position via raw-set. Restricted to body tables, where the (//w:tbl)[N]
+        // selector + /document part are reliable (same restriction as the tblGrid
+        // raw-set above); header/footer/nested-table structural bookmarks are rare
+        // and deferred.
+        if (containerPath == "/body")
+        {
+            // BUG-DUMP-FF-BOOKMARK-DUP: a row-level bookmark that WRAPS a legacy
+            // form field (FORMTEXT/FORMCHECKBOX) is emitted by TWO paths — the form
+            // field's own `add formfield` recreates its wrapping bookmark (consuming
+            // one unit of the per-name bookmark budget), and this structural
+            // re-injection would emit it a SECOND time, duplicating the bookmark
+            // name (Word de-dups/drops one, breaking the form field / REF). The cell
+            // emit runs before this pass, so a form-field bookmark's budget is
+            // already spent here: skip a lone named start whose budget is exhausted,
+            // and its matching lone end (by id). A genuinely structural-only bookmark
+            // (e.g. a _Toc heading anchor with no form field) still has budget and is
+            // emitted (and accounted). Coalesced zero-length bookmarks (start+end in
+            // one fragment) are structural-only and pass through.
+            var skippedBmIds = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var (bmXml, relXpath, action) in word.GetTableStructuralBookmarks(sourcePath))
+            {
+                var starts = System.Text.RegularExpressions.Regex.Matches(bmXml, "<w:bookmarkStart\\b");
+                var ends = System.Text.RegularExpressions.Regex.Matches(bmXml, "<w:bookmarkEnd\\b");
+                // Lone named start: claim a budget unit; if none remain it was already
+                // emitted by a form field — skip it and remember its id.
+                if (starts.Count == 1 && ends.Count == 0)
+                {
+                    var nameM = System.Text.RegularExpressions.Regex.Match(bmXml, "w:name=\"([^\"]*)\"");
+                    var idM = System.Text.RegularExpressions.Regex.Match(bmXml, "<w:bookmarkStart\\b[^>]*w:id=\"(\\d+)\"");
+                    if (nameM.Success && ctx != null && !ctx.ConsumeBookmarkBudget(word, nameM.Groups[1].Value))
+                    {
+                        if (idM.Success) skippedBmIds.Add(idM.Groups[1].Value);
+                        continue;
+                    }
+                }
+                // Lone end whose matching start was skipped: drop it too.
+                else if (ends.Count == 1 && starts.Count == 0)
+                {
+                    var idM = System.Text.RegularExpressions.Regex.Match(bmXml, "<w:bookmarkEnd\\b[^>]*w:id=\"(\\d+)\"");
+                    if (idM.Success && skippedBmIds.Contains(idM.Groups[1].Value))
+                        continue;
+                }
+                items.Add(new BatchItem
+                {
+                    Command = "raw-set",
+                    Part = "/document",
+                    Xpath = $"(//w:tbl)[{tableOrdinal}]/{relXpath}",
+                    Action = action,
+                    Xml = bmXml,
+                });
+            }
+        }
+
         // BUG-DUMP-R26-7: clear the cell-XPath context once this table is fully
         // emitted so body/header/footer content AFTER the table (or a parent
         // cell's content after a nested table) doesn't inherit a stale cell
@@ -1032,9 +1112,27 @@ public static partial class WordBatchEmitter
         };
         if (!string.IsNullOrEmpty(eqNode.Text))
             eqProps["formula"] = eqNode.Text!;
+        // BUG-DUMP-CELLEQ-VERBATIM: forward the verbatim <m:oMath> so a cell
+        // display equation keeps its math-run rPr (Cambria Math, sizes) instead
+        // of being reparsed from the lossy LaTeX string. Without this the
+        // equation rendered in the body font at the wrong metrics, shifting the
+        // surrounding lines and drifting later content across page boundaries.
+        // Mirrors TryEmitDisplayEquation (WordBatchEmitter.Paragraph.cs); the
+        // body path was fixed in c0b0f015 but this cell path was missed.
+        if (eqNode.Format.TryGetValue("xml", out var eqXml)
+            && eqXml != null && eqXml.ToString() is { Length: > 0 } eqXmlS
+            && eqXmlS.Contains("oMath", StringComparison.Ordinal))
+            eqProps["xml"] = eqXmlS;
         if (eqNode.Format.TryGetValue("align", out var eqAlign)
             && eqAlign != null && !string.IsNullOrEmpty(eqAlign.ToString()))
             eqProps["align"] = eqAlign.ToString()!;
+        // BUG-DUMP-CELLEQ-PPR: forward the wrapper paragraph's spacing/justification
+        // so the rebuilt cell equation keeps its line height and alignment. Mirrors
+        // TryEmitDisplayEquation.
+        foreach (var sk in new[] { "lineSpacing", "lineRule", "spaceBefore", "spaceAfter", "wrapperAlign", "wrapperPpr" })
+            if (eqNode.Format.TryGetValue(sk, out var sv)
+                && sv != null && sv.ToString() is { Length: > 0 } svs)
+                eqProps[sk] = svs;
         items.Add(new BatchItem
         {
             Command = "add",

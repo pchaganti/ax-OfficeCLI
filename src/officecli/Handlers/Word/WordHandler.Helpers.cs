@@ -384,9 +384,16 @@ public partial class WordHandler
     /// </summary>
     private bool IsSdtEditable(SdtProperties? sdtProps)
     {
+        // A content-locked control is read-only regardless of document
+        // protection: <w:lock w:val="contentLocked"|"sdtContentLocked"> both
+        // mark the control's content as not editable. (sdtLocked only blocks
+        // deletion of the control, leaving content editable.)
+        if (IsSdtContentLocked(sdtProps))
+            return false;
+
         var (mode, enforced) = GetDocumentProtection();
 
-        // No protection or not enforced → all SDTs are editable
+        // No protection or not enforced → editable (content not locked above)
         if (!enforced || mode == "none")
             return true;
 
@@ -394,15 +401,23 @@ public partial class WordHandler
         if (mode == "readOnly")
             return false;
 
-        // forms protection → SDTs are editable unless content-locked
+        // forms protection → editable (content-lock already handled above)
         if (mode == "forms")
-        {
-            var lockEl = sdtProps?.GetFirstChild<DocumentFormat.OpenXml.Wordprocessing.Lock>();
-            var lockVal = lockEl?.Val?.Value;
-            return lockVal != LockingValues.ContentLocked && lockVal != LockingValues.SdtContentLocked;
-        }
+            return true;
 
         // comments/trackedChanges → not typically editable
         return false;
+    }
+
+    /// <summary>
+    /// True when the SDT's content is locked read-only
+    /// (<w:lock w:val="contentLocked"> or "sdtContentLocked").
+    /// </summary>
+    private static bool IsSdtContentLocked(SdtProperties? sdtProps)
+    {
+        var lockEl = sdtProps?.GetFirstChild<DocumentFormat.OpenXml.Wordprocessing.Lock>();
+        var lockVal = lockEl?.Val?.Value;
+        return lockVal == LockingValues.ContentLocked
+            || lockVal == LockingValues.SdtContentLocked;
     }
 }

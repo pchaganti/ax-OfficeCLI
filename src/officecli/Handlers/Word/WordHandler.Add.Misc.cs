@@ -110,9 +110,20 @@ public partial class WordHandler
 
         // BUG-R6B(BUG1): empty text -> empty paragraph (no run); non-empty ->
         // a run carrying the text. Both are valid OOXML comment bodies.
-        var commentBody = string.IsNullOrEmpty(commentText)
-            ? new Paragraph()
-            : new Paragraph(new Run(new Text(commentText) { Space = SpaceProcessingModeValues.Preserve }));
+        // BUG-DUMP-NOTE-TAB: build the seed run via AppendTextWithBreaks so a tab /
+        // newline in the comment text becomes a structural <w:tab/> / <w:br/> rather
+        // than a literal U+0009/U+000A glyph (mirrors `add r` and AddFootnote).
+        Paragraph commentBody;
+        if (string.IsNullOrEmpty(commentText))
+            commentBody = new Paragraph();
+        else
+        {
+            var cmtRun = new Run();
+            AppendTextWithBreaks(cmtRun, commentText);
+            // BUG-DUMP-NOTE-DEL: honor track-change attribution on the comment seed
+            // run too (no-op when absent), mirroring the footnote/endnote seed.
+            commentBody = new Paragraph(ApplyNoteSeedRevision(cmtRun, properties));
+        }
         // BUG-DUMP-R40-2: a Word-authored comment body opens with the comment
         // reference mark run — <w:r><w:rPr><w:rStyle w:val="CommentReference"/>
         // </w:rPr><w:annotationRef/></w:r>. The dump emitter rides this run on
@@ -161,9 +172,62 @@ public partial class WordHandler
         // Apply paragraph-level / run-level format keys (direction, font, size, etc.)
         // Mirrors R2-2 footnote/header fix — the same vocabulary should work
         // on comment bodies as on footnote/endnote bodies.
+        // Reply threading (w15:paraIdParent) + resolved-state (w15:done) live in
+        // word/commentsExtended.xml, keyed by the comment paragraphs' w14:paraId.
+        // Consume parentId/done here (translating the parent's w:id -> its paraId)
+        // and remove them so the unsupported-forwarding below doesn't flag them.
+        if ((properties.TryGetValue("parentId", out var parentIdRaw)
+             || properties.TryGetValue("parentid", out parentIdRaw))
+            && !string.IsNullOrEmpty(parentIdRaw))
+        {
+            var parentParaId = GetCommentFirstParaId(parentIdRaw)
+                ?? throw new ArgumentException(
+                    $"parentId={parentIdRaw}: no comment with that id to reply to.");
+            if (string.IsNullOrEmpty(commentBody.ParagraphId?.Value)) AssignParaId(commentBody);
+            // Word writes a commentEx for every comment; ensure the parent's
+            // thread-root entry exists, then link this reply to it.
+            UpsertCommentEx(parentParaId, null, null);
+            UpsertCommentEx(commentBody.ParagraphId!.Value!, parentParaId, false);
+        }
+        properties.Remove("parentId");
+        properties.Remove("parentid");
+        if ((properties.TryGetValue("done", out var addDoneRaw)
+             || properties.TryGetValue("resolved", out addDoneRaw)))
+        {
+            if (string.IsNullOrEmpty(commentBody.ParagraphId?.Value)) AssignParaId(commentBody);
+            UpsertCommentEx(commentBody.ParagraphId!.Value!, null, IsTruthy(addDoneRaw));
+        }
+        properties.Remove("done");
+        properties.Remove("resolved");
+
         var _commentUnsupported = new List<string>();
         ApplyCommentFormatKeys(commentEl, properties, _commentUnsupported);
         commentsPart.Comments.Save();
+
+        // Surface genuinely-unsupported props through the same channel every
+        // other `add` type uses (LastAddUnsupportedProps -> CLI "UNSUPPORTED
+        // props:" WARNING). AddComment used to discard _commentUnsupported, so
+        // an unknown key (a typo, or a not-yet-supported feature like
+        // `parentId` reply-threading / `done` resolution) was swallowed
+        // silently — inconsistent with `add paragraph`, where ApplyCommentFormatKeys
+        // sees the structural keys AddComment consumes itself (rangeOpen,
+        // pointRef, runStart, …) and would otherwise flag them as false
+        // positives; exclude that set, forward the rest.
+        foreach (var key in _commentUnsupported)
+        {
+            switch (key.ToLowerInvariant())
+            {
+                case "text": case "author": case "initials": case "date":
+                case "annotationref": case "rstyle":
+                case "commentparaid": case "pointref":
+                case "range": case "rangeopen": case "rangeend":
+                case "runstart": case "runend":
+                    continue;
+                default:
+                    LastAddUnsupportedProps.Add(key);
+                    break;
+            }
+        }
 
         var rangeStart = new CommentRangeStart { Id = commentId };
         var rangeEnd = new CommentRangeEnd { Id = commentId };
@@ -463,6 +527,20 @@ public partial class WordHandler
                 || properties.TryGetValue("collast", out colLastStr))
             && int.TryParse(colLastStr, out var colLastN))
             bookmarkStart.ColumnLast = colLastN;
+
+        // BUG-DUMP-BMDISPLACED: re-stamp w:displacedByCustomXml ("next"/"prev")
+        // on a bookmark adjacent to a custom-XML / SDT boundary. Dropping it
+        // (e.g. a TOC heading bookmark before the TOC <w:sdt>) shifted the
+        // bookmark across the boundary so PAGEREF/TOC entries to it rendered
+        // "Error! Bookmark not defined." BookmarkStartToNode surfaces it.
+        if (properties.TryGetValue("displacedByCustomXml", out var dbcxStr)
+            && !string.IsNullOrEmpty(dbcxStr))
+        {
+            if (dbcxStr.Equals("next", StringComparison.OrdinalIgnoreCase))
+                bookmarkStart.DisplacedByCustomXml = DisplacedByCustomXmlValues.Next;
+            else if (dbcxStr.Equals("prev", StringComparison.OrdinalIgnoreCase))
+                bookmarkStart.DisplacedByCustomXml = DisplacedByCustomXmlValues.Previous;
+        }
 
         // BUG-DUMP10-04: optional endPara offset (>0) defers BookmarkEnd
         // placement to a later paragraph in the same body so multi-
@@ -1402,9 +1480,18 @@ public partial class WordHandler
         var fieldRunSep = fieldNoSeparator
             ? null
             : new Run(new FieldChar { FieldCharType = FieldCharValues.Separate });
-        var fieldRunResult = fieldNoSeparator
-            ? null
-            : new Run(new Text(fieldPlaceholder) { Space = SpaceProcessingModeValues.Preserve });
+        Run? fieldRunResult = null;
+        if (!fieldNoSeparator)
+        {
+            fieldRunResult = new Run();
+            // BUG-DUMP-FIELDTAB: a field's cached display text can carry tabs/line
+            // breaks (e.g. a numbered caption "4.1.\tImages" where the tab aligns
+            // the title past the list number). Tokenize \t→<w:tab/> and \n→<w:br/>
+            // instead of dumping the literal control char into one <w:t> — a raw
+            // U+0009 in <w:t> does not advance to the tab stop, so the number/title
+            // alignment was lost on every such field round-trip.
+            AppendTextWithBreaks(fieldRunResult, fieldPlaceholder);
+        }
         var fieldRunEnd = new Run(new FieldChar { FieldCharType = FieldCharValues.End });
 
         // Apply optional run formatting to all runs
@@ -1627,18 +1714,20 @@ public partial class WordHandler
         // HYPERLINK keeps its <w:del> + <w:delInstrText>/<w:delText> instead of
         // resurrecting as live text. del converts FieldCode→DeletedFieldCode
         // (delInstrText is the only valid field-code form inside <w:del>).
-        WrapFieldRunsInRevision(fieldRuns, properties);
+        WrapRunsInRevision(fieldRuns, properties);
         return resultPath;
     }
 
-    // Wrap a freshly-built field's runs in a tracked-change marker when the
-    // caller supplied revision.type (= ins/del/moveFrom/moveTo) + attribution.
-    // Mirrors the per-run revision wrap used by Set/Add on plain runs; the only
-    // field-specific twist is that a <w:del>-wrapped instruction run must carry
-    // its code as <w:delInstrText> (DeletedFieldCode), not <w:instrText>
-    // (FieldCode) — ECMA-376 §17.16.23. format/paraMark* kinds don't apply to a
-    // run-level field wrap and are ignored here.
-    private void WrapFieldRunsInRevision(List<Run> fieldRuns, Dictionary<string, string> properties)
+    // Wrap freshly-built runs in a tracked-change marker when the caller supplied
+    // revision.type (= ins/del/moveFrom/moveTo) + attribution. Used by the field
+    // rebuild (deleted/inserted hyperlinks & fields) AND by AddBreak (a tracked
+    // page/column break — BUG-DUMP-DELBREAK). Mirrors the per-run revision wrap
+    // used by Set/Add on plain runs; the only field-specific twist is that a
+    // <w:del>-wrapped instruction run must carry its code as <w:delInstrText>
+    // (DeletedFieldCode), not <w:instrText> (FieldCode) — ECMA-376 §17.16.23 —
+    // which is a guarded no-op for runs (e.g. break runs) that carry no FieldCode.
+    // format/paraMark* kinds don't apply to a run-level wrap and are ignored here.
+    private void WrapRunsInRevision(List<Run> runs, Dictionary<string, string> properties)
     {
         if (!properties.TryGetValue("revision.type", out var revType)
             || string.IsNullOrWhiteSpace(revType))
@@ -1666,7 +1755,7 @@ public partial class WordHandler
         var explicitId = properties.GetValueOrDefault("revision.id");
         var moveId = !string.IsNullOrEmpty(explicitId) ? explicitId : GenerateRevisionId();
 
-        foreach (var fr in fieldRuns)
+        foreach (var fr in runs)
         {
             if (fr.Parent == null) continue;
             if (revType == "del")
@@ -1888,6 +1977,19 @@ public partial class WordHandler
             brk.Clear = new EnumValue<BreakTextRestartLocationValues>(new BreakTextRestartLocationValues(clearCanon));
         }
         var brkRun = new Run(brk);
+        // BUG-DUMP-BREAKRPR: a break-only run (<w:r><w:rPr>…</w:rPr><w:br/></w:r>)
+        // carries an rPr whose font/size sets the height of the line the break
+        // starts. The verbatim raw-set fallback in TryEmitBreakRun only fires for
+        // /body hosts, so a break inside a table cell rebuilt as a bare
+        // <w:r><w:br/></w:r> and the broken line collapsed to the default font
+        // size — inflating cell/row height and drifting the table. Re-apply the
+        // forwarded rPr here so it round-trips in every container.
+        if (properties.TryGetValue("breakRunRpr", out var brkRpr)
+            && !string.IsNullOrWhiteSpace(brkRpr)
+            && brkRpr.Contains("rPr", StringComparison.Ordinal))
+        {
+            try { brkRun.PrependChild(new RunProperties(brkRpr)); } catch { /* malformed: skip */ }
+        }
 
         string resultPath;
         if (parent is Paragraph brkPara)
@@ -1910,6 +2012,10 @@ public partial class WordHandler
             // breaks added inside header/footer paragraphs.
             var canonicalParaPath = ReplaceTrailingParaSegment(parentPath, brkPara);
             resultPath = $"{canonicalParaPath}/r[{brkRunIdx}]";
+            // BUG-DUMP-DELBREAK: a tracked-DELETED/inserted break must keep its
+            // <w:del>/<w:ins> wrapper, else a deleted (invisible) page break
+            // resurrects as a live break and inflates the page count.
+            WrapRunsInRevision(new List<Run> { brkRun }, properties);
         }
         else
         {
@@ -1925,6 +2031,9 @@ public partial class WordHandler
             // works everywhere.
             AssignParaId(brkNewPara);
             InsertAtIndexOrAppend(parent, brkNewPara, index);
+            // BUG-DUMP-DELBREAK: see the in-paragraph branch above — preserve the
+            // tracked-change wrapper on the rebuilt break run.
+            WrapRunsInRevision(new List<Run> { brkRun }, properties);
             // CONSISTENCY(para-path-canonical): paraId-form is valid in
             // every container (the paraId is globally unique and Navigation
             // resolves it inside header/footer/cell parts as well as body).

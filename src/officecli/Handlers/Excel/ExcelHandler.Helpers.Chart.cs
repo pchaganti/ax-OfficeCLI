@@ -127,6 +127,30 @@ public partial class ExcelHandler
         var fromM = anchor.FromMarker;
         var toM = anchor.ToMarker;
 
+        // ---- Full rectangle (anchor=D2:K20) → set both markers ----
+        // Lets a chart be moved AND resized in one prop after create, mirroring
+        // chart Add's `anchor=<range>`. Takes precedence over x/y/width/height
+        // (anchor defines the whole rectangle), so those are dropped if combined.
+        static void SetMarkerCell(XDR.MarkerType marker, int col, int row)
+        {
+            if (marker.GetFirstChild<XDR.ColumnId>() is { } ci) ci.Text = col.ToString();
+            if (marker.GetFirstChild<XDR.RowId>() is { } ri) ri.Text = row.ToString();
+            if (marker.GetFirstChild<XDR.ColumnOffset>() is { } co) co.Text = "0";
+            if (marker.GetFirstChild<XDR.RowOffset>() is { } ro) ro.Text = "0";
+        }
+        if (properties.TryGetValue("anchor", out var anchorStr) && !string.IsNullOrWhiteSpace(anchorStr))
+        {
+            if (TryParseCellRangeAnchor(anchorStr, out var aFromCol, out var aFromRow, out var aToCol, out var aToRow))
+            {
+                SetMarkerCell(fromM, aFromCol, aFromRow);
+                SetMarkerCell(toM, aToCol, aToRow);
+                // anchor defines the whole rectangle — skip x/y/width/height
+                // (mirrors chart Add, which ignores them when anchor is given).
+                return unsupported;
+            }
+            unsupported.Add("anchor");
+        }
+
         // ---- Position (x, y) → FromMarker cell indices ----
         // `x` = column index (0-based), `y` = row index (0-based). Integer
         // only — sub-cell offset is not supported here (matches chart Add).

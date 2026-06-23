@@ -98,6 +98,19 @@ public partial class WordHandler
                 case "date":
                     comment.Date = DateTime.Parse(value);
                     break;
+                case "done":
+                case "resolved":
+                {
+                    // Resolved-state lives in word/commentsExtended.xml (w15:done),
+                    // keyed by the comment's first-paragraph w14:paraId.
+                    var fp = comment.Descendants<Paragraph>().FirstOrDefault();
+                    if (fp != null)
+                    {
+                        if (string.IsNullOrEmpty(fp.ParagraphId?.Value)) AssignParaId(fp);
+                        UpsertCommentEx(fp.ParagraphId!.Value!, null, IsTruthy(value));
+                    }
+                    break;
+                }
             }
         }
         ApplyCommentFormatKeys(comment, properties, unsupported);
@@ -973,8 +986,14 @@ public partial class WordHandler
             consumed.UnionWith(new[] { "paraMarkIns.author", "paraMarkIns.date", "paraMarkIns.id" });
             var rpr = pProps.ParagraphMarkRunProperties
                       ?? pProps.AppendChild(new ParagraphMarkRunProperties());
+            // BUG-DUMP-R71-PARAMARK-INSDEL-ORDER: place via the schema-order
+            // helper, not PrependChild. When a paragraph mark carries BOTH ins
+            // and del (mark inserted by one reviewer, deleted by another), two
+            // blind prepends leave them in execution order (del ends up first);
+            // CT_ParaRPr requires ins before del. InsertRunPropInSchemaOrder
+            // seats each at its CT_ParaRPr slot regardless of application order.
             if (rpr.GetFirstChild<Inserted>() == null)
-                rpr.PrependChild(new Inserted
+                InsertRunPropInSchemaOrder(rpr, new Inserted
                 {
                     Author = string.IsNullOrEmpty(iA) ? "OfficeCLI" : iA!,
                     Date = ParseRev(iD),
@@ -989,7 +1008,7 @@ public partial class WordHandler
             var rpr = pProps.ParagraphMarkRunProperties
                       ?? pProps.AppendChild(new ParagraphMarkRunProperties());
             if (rpr.GetFirstChild<Deleted>() == null)
-                rpr.PrependChild(new Deleted
+                InsertRunPropInSchemaOrder(rpr, new Deleted
                 {
                     Author = string.IsNullOrEmpty(dA) ? "OfficeCLI" : dA!,
                     Date = ParseRev(dD),
@@ -2504,7 +2523,15 @@ public partial class WordHandler
                             ?? rowCells[cIdx - 1].AppendChild(new Paragraph());
                         targetPara.RemoveAllChildren<Run>();
                         if (!string.IsNullOrEmpty(value))
-                            targetPara.AppendChild(new Run(new Text(value) { Space = SpaceProcessingModeValues.Preserve }));
+                        {
+                            // CONSISTENCY(escape-sequences): route cell text through
+                            // AppendTextWithBreaks so `\n`→<w:br/> and `\t`→<w:tab/>
+                            // exactly like --prop text=, instead of storing a literal
+                            // backslash-n. The two text-input paths must not diverge.
+                            var cellRun = new Run();
+                            AppendTextWithBreaks(cellRun, value);
+                            targetPara.AppendChild(cellRun);
+                        }
                     }
                     else if (key.Contains('.')
                         && Core.TypedAttributeFallback.TrySet(trPr, key, value))

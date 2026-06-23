@@ -606,6 +606,13 @@ public partial class WordHandler
             // (AddFootnote/AddEndnote rebuild the reference runs from them).
             if (key.Equals("referenceRPr", StringComparison.OrdinalIgnoreCase)
                 || key.Equals("referenceMarkRPr", StringComparison.OrdinalIgnoreCase)) continue;
+            // referenceCustomMark / referenceCustomMarkFollows are likewise
+            // consumed at note-creation time (AddFootnote/AddEndnote stamp the
+            // body ref run's w:customMarkFollows + sibling <w:t> glyph). The dump
+            // forwards both on every custom-mark note, so without this skip a
+            // round-trip falsely reports them as unsupported_property.
+            if (key.Equals("referenceCustomMark", StringComparison.OrdinalIgnoreCase)
+                || key.Equals("referenceCustomMarkFollows", StringComparison.OrdinalIgnoreCase)) continue;
             // Explicit paragraph-mark-only formatting (the dotted markRPr.* form
             // the dump forwards from the note's first paragraph) writes ONLY to
             // the ¶ mark, never to the content runs — mirrors ApplyCommentFormatKeys.
@@ -676,7 +683,11 @@ public partial class WordHandler
             // the base Dictionary enumerator, bypassing the tracking override).
             properties.ContainsKey(key);
             var lk = key.ToLowerInvariant();
-            if (lk == "text" || lk == "author" || lk == "initials" || lk == "date") continue;
+            // done/resolved (w15:done) + parentId (w15:paraIdParent) are handled
+            // by SetElementComment / AddComment against commentsExtended.xml, not
+            // here — skip so they aren't mis-flagged as unsupported comment props.
+            if (lk == "text" || lk == "author" || lk == "initials" || lk == "date"
+                || lk == "done" || lk == "resolved" || lk == "parentid") continue;
             // BUG-DUMP-R45-3: explicit paragraph-mark-only formatting (the dotted
             // `markRPr.*` form Navigation emits when the source comment paragraph
             // genuinely carries a <w:pPr><w:rPr>). Writes ONLY to the ¶ mark,
@@ -1694,6 +1705,19 @@ public partial class WordHandler
                     existingRPr.RemoveAllChildren<RightToLeftText>();
                     if (!existingRPr.HasChildren) existingRPr.Remove();
                 }
+                continue;
+            }
+
+            // CONSISTENCY(style-snaptogrid-pPr): see AddStyle (BUG-DUMP-STYLE-SNAPGRID).
+            // snapToGrid is dual-valid (CT_PPr + CT_RPr); for a paragraph/table
+            // style it disables grid-snapping for the whole paragraph and must
+            // land in pPr. ApplyRunFormatting below would mis-route it to rPr, so
+            // intercept it here first. Character styles fall through to rPr.
+            if (string.Equals(key, "snapToGrid", StringComparison.OrdinalIgnoreCase)
+                && (style.Type?.Value == StyleValues.Paragraph || style.Type?.Value == StyleValues.Table))
+            {
+                var pPrSnap = style.StyleParagraphProperties ?? EnsureStyleParagraphProperties(style);
+                pPrSnap.SnapToGrid = new SnapToGrid { Val = OnOffValue.FromBoolean(IsTruthy(value)) };
                 continue;
             }
 

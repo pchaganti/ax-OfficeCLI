@@ -192,7 +192,19 @@ internal static class RawXmlHelper
                     if (xml == null) throw new ArgumentException("--xml is required for insertafter");
                     RequireParent(node, "insertafter");
                     var afterFragment = ParseFragment(xml, xDoc);
-                    foreach (var el in afterFragment)
+                    // AddAfterSelf inserts immediately after `node`, so calling it
+                    // repeatedly against the SAME anchor REVERSES a multi-element
+                    // fragment (start,end → node,end,start). Iterate in REVERSE and
+                    // keep anchoring to `node`, mirroring insertbefore — each element
+                    // lands right after `node`, yielding source order. (Chaining the
+                    // anchor off the just-added node does NOT work: AddAfterSelf clones
+                    // a parented element, so the loop variable still points at the
+                    // detached fragment node, the chain breaks, and only the first
+                    // element reaches the document — silently dropping the rest of a
+                    // multi-marker fragment, e.g. a second tr-level bookmark.) A
+                    // reversed start/end pair also desynced the id-balancer into
+                    // duplicate bookmark ids.
+                    foreach (var el in afterFragment.AsEnumerable().Reverse())
                         node.AddAfterSelf(el);
                     affected++;
                     break;
@@ -672,7 +684,42 @@ internal static class RawXmlHelper
                     null, null));
             }
         }
+        // Drop known SDK-validator false positives on chartEx (cx:) val-attribute
+        // elements — see IsBenignChartExValAttributeError. A valid pareto /
+        // histogram chart opens and renders correctly in real Excel; without this
+        // it would fail `validate` (and the Delivery Gate) over a gap in the
+        // OpenXmlValidator's schema model, not a real defect.
+        errors.RemoveAll(IsBenignChartExValAttributeError);
         return errors;
+    }
+
+    /// <summary>
+    /// True for the OpenXmlValidator false positives on chartEx (cx:) elements
+    /// whose id is carried in a <c>val</c> ATTRIBUTE — <c>&lt;cx:axisId val="1"/&gt;</c>,
+    /// <c>&lt;cx:binCount val="5"/&gt;</c>, <c>&lt;cx:binSize val="3"/&gt;</c>. That is the
+    /// form every file real Excel writes and requires (the text-content form the
+    /// SDK models instead makes Excel refuse the whole workbook, 0x800A03EC — see
+    /// <c>MakeCxAxisId</c> in <c>Core/Chart/ChartExBuilder.cs</c>). The validator
+    /// can't model the attribute form, so it emits "the 'val' attribute is not
+    /// declared" and "the text value cannot be empty" on these elements. They are
+    /// not real defects; suppress them narrowly (chartEx part + one of those three
+    /// elements + one of those two messages) so genuine errors still surface.
+    /// </summary>
+    private static bool IsBenignChartExValAttributeError(ValidationError e)
+    {
+        var path = e.Path ?? "";
+        var part = e.Part ?? "";
+        bool inChartEx = part.Contains("extendedChart", StringComparison.OrdinalIgnoreCase)
+            || part.Contains("chartEx", StringComparison.OrdinalIgnoreCase)
+            || path.Contains("cx:", StringComparison.OrdinalIgnoreCase);
+        if (!inChartEx) return false;
+        bool valAttrElement = path.Contains(":axisId", StringComparison.OrdinalIgnoreCase)
+            || path.Contains(":binCount", StringComparison.OrdinalIgnoreCase)
+            || path.Contains(":binSize", StringComparison.OrdinalIgnoreCase);
+        if (!valAttrElement) return false;
+        var d = e.Description ?? "";
+        return d.Contains("'val' attribute is not declared", StringComparison.OrdinalIgnoreCase)
+            || d.Contains("text value cannot be empty", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>

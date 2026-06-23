@@ -63,13 +63,16 @@ public partial class ExcelHandler
         {
             var positionUnsupported = ApplyChartPositionSet(
                 drawingsPart, chartIdx, chartProps);
-            foreach (var k in new[] { "x", "y", "width", "height" })
-            {
-                var matched = chartProps.Keys
-                    .FirstOrDefault(key => key.Equals(k, StringComparison.OrdinalIgnoreCase));
-                if (matched != null && !positionUnsupported.Contains(matched))
-                    chartProps.Remove(matched);
-            }
+            // Forward everything EXCEPT successfully-applied position keys to the
+            // property setter. Build a filtered COPY — never mutate the caller's
+            // `properties` dict, or the CLI's applied-props accounting drops the
+            // position change and reports "No properties applied" on a
+            // position-only set. Failed position keys stay so the setter flags them.
+            var posKeys = new[] { "x", "y", "width", "height", "anchor" };
+            chartProps = chartProps
+                .Where(kv => positionUnsupported.Contains(kv.Key)
+                          || !posKeys.Any(p => p.Equals(kv.Key, StringComparison.OrdinalIgnoreCase)))
+                .ToDictionary(kv => kv.Key, kv => kv.Value);
         }
 
         if (chartInfo.StandardPart != null)

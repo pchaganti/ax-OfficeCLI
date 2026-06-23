@@ -506,25 +506,35 @@ public partial class WordHandler
         }
 
         // Outer shadow from a:effectLst/a:outerShdw — map to box-shadow
-        var effectLst = spPr.Elements().FirstOrDefault(e => e.LocalName == "effectLst");
-        var outerShdw = effectLst?.Elements().FirstOrDefault(e => e.LocalName == "outerShdw");
-        if (outerShdw != null)
-        {
-            // blurRad, dist, dir (60000ths of a degree) — simplified offset projection
-            var blurAttr = outerShdw.GetAttributes().FirstOrDefault(a => a.LocalName == "blurRad").Value;
-            var distAttr = outerShdw.GetAttributes().FirstOrDefault(a => a.LocalName == "dist").Value;
-            var dirAttr = outerShdw.GetAttributes().FirstOrDefault(a => a.LocalName == "dir").Value;
-            double blurPx = long.TryParse(blurAttr, out var blurEmu) ? blurEmu / EmuConverter.EmuPerPxF : 4;
-            double distPx = long.TryParse(distAttr, out var distEmu) ? distEmu / EmuConverter.EmuPerPxF : 4;
-            double dirDeg = long.TryParse(dirAttr, out var dirVal) ? dirVal / 60000.0 : 45;
-            var offX = distPx * Math.Cos(dirDeg * Math.PI / 180);
-            var offY = distPx * Math.Sin(dirDeg * Math.PI / 180);
-            var shdwFill = outerShdw.Elements().FirstOrDefault(e => e.LocalName == "srgbClr");
-            var shdwHex = shdwFill?.GetAttributes().FirstOrDefault(a => a.LocalName == "val").Value ?? "000000";
-            parts.Add($"box-shadow:{offX:0.#}px {offY:0.#}px {blurPx:0.#}px #{shdwHex}");
-        }
+        var shadowCss = ResolveOuterShadowCss(spPr);
+        if (!string.IsNullOrEmpty(shadowCss)) parts.Add(shadowCss);
 
         return string.Join(";", parts);
+    }
+
+    /// <summary>
+    /// Map a shape/picture spPr's a:effectLst/a:outerShdw to a CSS box-shadow.
+    /// Returns "" when no outer shadow is present. Shared by the picture path
+    /// and the wps shape style builder so both render drop shadows identically.
+    /// </summary>
+    private static string ResolveOuterShadowCss(OpenXmlElement? spPr)
+    {
+        var effectLst = spPr?.Elements().FirstOrDefault(e => e.LocalName == "effectLst");
+        var outerShdw = effectLst?.Elements().FirstOrDefault(e => e.LocalName == "outerShdw");
+        if (outerShdw == null) return "";
+
+        // blurRad, dist, dir (60000ths of a degree) — simplified offset projection
+        var blurAttr = outerShdw.GetAttributes().FirstOrDefault(a => a.LocalName == "blurRad").Value;
+        var distAttr = outerShdw.GetAttributes().FirstOrDefault(a => a.LocalName == "dist").Value;
+        var dirAttr = outerShdw.GetAttributes().FirstOrDefault(a => a.LocalName == "dir").Value;
+        double blurPx = long.TryParse(blurAttr, out var blurEmu) ? blurEmu / EmuConverter.EmuPerPxF : 4;
+        double distPx = long.TryParse(distAttr, out var distEmu) ? distEmu / EmuConverter.EmuPerPxF : 4;
+        double dirDeg = long.TryParse(dirAttr, out var dirVal) ? dirVal / 60000.0 : 45;
+        var offX = distPx * Math.Cos(dirDeg * Math.PI / 180);
+        var offY = distPx * Math.Sin(dirDeg * Math.PI / 180);
+        var shdwFill = outerShdw.Elements().FirstOrDefault(e => e.LocalName == "srgbClr");
+        var shdwHex = shdwFill?.GetAttributes().FirstOrDefault(a => a.LocalName == "val").Value ?? "000000";
+        return $"box-shadow:{offX:0.#}px {offY:0.#}px {blurPx:0.#}px #{shdwHex}";
     }
 
     /// <summary>
@@ -550,6 +560,13 @@ public partial class WordHandler
     /// <summary>
     /// Render a cropped image using a container div with overflow:hidden.
     /// The image is scaled to its original size and positioned to show only the cropped region.
+    /// The image is absolutely positioned inside the container (NOT a baseline-
+    /// dependent inline element with negative margins): a 128px-tall inline img in
+    /// a 128px container sits on the text baseline, so without a vertical-crop
+    /// margin to pull it back (e.g. cropLeft-only crops where margin-top is 0) it
+    /// is pushed out of the overflow:hidden window and vanishes entirely. Absolute
+    /// positioning ties the offset to the container box, not the line box, so every
+    /// crop combination (symmetric / single-side / mixed) clips correctly.
     /// </summary>
     private static void RenderCroppedImage(StringBuilder sb, string dataUri, long displayWidthPx, long displayHeightPx,
         double cropL, double cropT, double cropR, double cropB, string alt, string extraStyle = "")
@@ -567,10 +584,10 @@ public partial class WordHandler
         var offsetX = -imgW * (cropL / 100.0);
         var offsetY = -imgH * (cropT / 100.0);
 
-        var containerStyle = $"display:inline-block;width:{displayWidthPx}px;height:{displayHeightPx}px;overflow:hidden";
+        var containerStyle = $"position:relative;display:inline-block;width:{displayWidthPx}px;height:{displayHeightPx}px;overflow:hidden";
         if (!string.IsNullOrEmpty(extraStyle)) containerStyle += $";{extraStyle}";
         sb.Append($"<div style=\"{containerStyle}\">");
-        sb.Append($"<img src=\"{dataUri}\" alt=\"{alt}\" style=\"width:{imgW:0}px;height:{imgH:0}px;margin-left:{offsetX:0}px;margin-top:{offsetY:0}px\">");
+        sb.Append($"<img src=\"{dataUri}\" alt=\"{alt}\" style=\"position:absolute;left:{offsetX:0}px;top:{offsetY:0}px;width:{imgW:0}px;height:{imgH:0}px;max-width:none\">");
         sb.Append("</div>");
     }
 
@@ -590,6 +607,27 @@ public partial class WordHandler
         var hostPart = _ctx.ImageHostPart ?? (DocumentFormat.OpenXml.Packaging.OpenXmlPart?)_doc.MainDocumentPart;
         if (hostPart == null) return null;
         return HtmlPreviewHelper.PartToDataUri(hostPart, relId);
+    }
+
+    /// <summary>
+    /// Resolve the raw content type of an image part by relationship ID, using the
+    /// same host-part fallback as LoadImageAsDataUri. Returns null if the part
+    /// cannot be found. Callers that must distinguish a genuinely browser-renderable
+    /// image from a degraded placeholder (PartToDataUri rewrites WMF/EMF to an SVG
+    /// placeholder) should branch on this, not on the returned data URI string.
+    /// </summary>
+    private string? LoadImageContentType(string relId)
+    {
+        var hostPart = _ctx.ImageHostPart ?? (DocumentFormat.OpenXml.Packaging.OpenXmlPart?)_doc.MainDocumentPart;
+        if (hostPart == null) return null;
+        try
+        {
+            return hostPart.GetPartById(relId)?.ContentType;
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     // ==================== Group / Shape Rendering ====================
@@ -672,6 +710,37 @@ public partial class WordHandler
         if (!anchor.Elements().Any(e => e.LocalName == "wrapSquare" || e.LocalName == "wrapTight" || e.LocalName == "wrapThrough"))
             return null;
 
+        // Page-anchored shapes with an explicit posOffset (both H and V relative
+        // to the page) live at a FIXED page location, not "beside this paragraph".
+        // Floating them into the anchoring paragraph's inline flow both
+        // mispositions them (they belong at their page coords, often page bottom)
+        // and steals horizontal width from that paragraph — e.g. a 36pt cover
+        // title forced to wrap in the narrow gap left of a page-bottom address
+        // box, which then mid-word-breaks ("produc/t"). Position such shapes
+        // absolutely against the .page (position:relative) so the wrapping text
+        // keeps its full column width. Word's own square-wrap of body text around
+        // a page-bottom box is negligible here (text ends far above it).
+        var vPosPage = anchor.GetFirstChild<DW.VerticalPosition>();
+        var hPosPage = anchor.GetFirstChild<DW.HorizontalPosition>();
+        if (vPosPage?.RelativeFrom?.Value == DW.VerticalRelativePositionValues.Page
+            && hPosPage?.RelativeFrom?.Value == DW.HorizontalRelativePositionValues.Page)
+        {
+            var vOff = vPosPage.Descendants().FirstOrDefault(e => e.LocalName == "posOffset");
+            var hOff = hPosPage.Descendants().FirstOrDefault(e => e.LocalName == "posOffset");
+            if (vOff != null && hOff != null
+                && long.TryParse(vOff.InnerText, out var vEmu)
+                && long.TryParse(hOff.InnerText, out var hEmu))
+            {
+                // posOffset is from the physical page edge (0,0); an absolute
+                // child resolves against .page's padding box, so subtract the
+                // page margin (== .page padding) to convert.
+                var pg = GetPageLayout();
+                var topPt = vEmu / EmuConverter.EmuPerPointF - pg.MarginTopPt;
+                var leftPt = hEmu / EmuConverter.EmuPerPointF - pg.MarginLeftPt;
+                return $"position:absolute;top:{topPt:0.#}pt;left:{leftPt:0.#}pt;z-index:1";
+            }
+        }
+
         var hPos = anchor.GetFirstChild<DW.HorizontalPosition>();
         var hAlign = hPos?.Descendants().FirstOrDefault(e => e.LocalName == "align")?.InnerText;
         var hPosFrom = hPos?.RelativeFrom?.Value;
@@ -729,12 +798,55 @@ public partial class WordHandler
         {
             var widthPx = extCx / EmuConverter.EmuPerPx;
             var heightPx = extCy / EmuConverter.EmuPerPx;
+            // A shape that receives overlaid header images (floatImages, e.g. a
+            // cover banner + logo floated into a header text box) acts as a
+            // full-width header container, not a sized box. Shrink-wrapping it
+            // to its own (often tiny) text extent makes the global
+            // `img{max-width:100%}` rule clamp a 940px banner to the box width —
+            // collapsing it to a thin strip. Render it as a non-shrink-wrapping
+            // full-width block so the overlay images resolve against the header
+            // content width instead. The overlay imgs get `max-width:none`
+            // (see the floatImages inject loop) so their declared px width wins.
+            bool isOverlayContainer = floatImages is { Count: > 0 };
+
+            // Box sizing model: autofit vs fixed.
+            //
+            // A fixed-size text box (bodyPr/a:noAutofit, Word "Do not autofit")
+            // with a solid fill paints the fill ONLY over its declared height.
+            // When its content (e.g. an inner table whose rows exceed the box)
+            // overflows — vertOverflow="overflow" — Word draws the overflowing
+            // content beyond the box edge WITHOUT extending the fill. Emitting
+            // `min-height` here lets the host div grow to the content and paints
+            // `background-color` across the whole grown height, so any
+            // transparent lower region (e.g. an unshaded table row) exposes the
+            // box fill below the real box — a phantom colored band that Word
+            // never shows. Pin the declared `height` and clip to the box
+            // (overflow:hidden) so the fill — and any content taller than the
+            // box — stays confined to the declared height, matching the box
+            // Word paints. Only fixed boxes WITH a fill need this; autofit boxes
+            // (spAutoFit / normAutofit) and fill-less fixed boxes keep min-height
+            // (grow-to-content) so short content doesn't leave a gap.
+            // Autofit detection: a box is autofit only when it carries an
+            // explicit a:spAutoFit (resize box to text) or a:normAutofit (shrink
+            // text to box). Everything else — explicit a:noAutofit OR no autofit
+            // child at all (OOXML default == noAutofit) — is a fixed box.
+            var bodyPrAf = shape.Elements().FirstOrDefault(e => e.LocalName == "bodyPr");
+            bool isAutofitBox = bodyPrAf?.Elements().Any(e =>
+                e.LocalName == "spAutoFit" || e.LocalName == "normAutofit") == true;
+            bool isFixedBox = !isAutofitBox;
+            bool hasFillBg = fillCss.Contains("background", StringComparison.Ordinal);
+            var heightProp = isFixedBox && hasFillBg
+                ? $"height:{heightPx}px;overflow:hidden"
+                : $"min-height:{heightPx}px";
+
             // Anchored wrapSquare/wrapTight shape → float so following text
             // wraps beside it; otherwise inline-block (inline / wrapNone /
             // behind / in-front-of-text).
             style = floatCss != null
-                ? $"{floatCss};width:{widthPx}px;min-height:{heightPx}px;box-sizing:border-box"
-                : $"display:inline-block;width:{widthPx}px;min-height:{heightPx}px;vertical-align:top";
+                ? $"{floatCss};width:{widthPx}px;{heightProp};box-sizing:border-box"
+                : isOverlayContainer
+                    ? $"display:block;width:100%;{heightProp}"
+                    : $"display:inline-block;width:{widthPx}px;{heightProp};vertical-align:top";
 
             // Rotation on standalone shapes too (was only applied inside groups)
             var sXfrm = spPr?.Elements().FirstOrDefault(e => e.LocalName == "xfrm");
@@ -780,6 +892,12 @@ public partial class WordHandler
             if (!string.IsNullOrEmpty(borderCss)) style += $";{borderCss}";
         }
 
+        // Outer shadow (a:effectLst/a:outerShdw) → box-shadow. Shares the
+        // picture path's projection so wps shapes and pictures drop shadows
+        // identically. Applies to the host div even for svg-overlay presets.
+        var shadowCss = ResolveOuterShadowCss(spPr);
+        if (!string.IsNullOrEmpty(shadowCss)) style += $";{shadowCss}";
+
         // Body properties: text layout + padding
         var bodyPr = shape.Elements().FirstOrDefault(e => e.LocalName == "bodyPr");
         // Vertical text anchor applies to both standalone and positioned shapes
@@ -792,6 +910,26 @@ public partial class WordHandler
         var rIns = GetLongAttr(bodyPr, "rIns", 91440);
         var bIns = GetLongAttr(bodyPr, "bIns", 45720);
         style += $";padding:{tIns / EmuConverter.EmuPerPx}px {rIns / EmuConverter.EmuPerPx}px {bIns / EmuConverter.EmuPerPx}px {lIns / EmuConverter.EmuPerPx}px";
+
+        // Vertical text direction (bodyPr/@vert): rotate text via CSS writing-mode.
+        // OOXML vert values map to writing-mode the same way table-cell tcDir
+        // (Css.cs) and Excel textRotation (ExcelHandler.HtmlPreview.cs) do.
+        // CONSISTENCY(vertical-text): vertical-rl + text-orientation, see sibling renderers.
+        var vert = bodyPr?.GetAttributes().FirstOrDefault(a => a.LocalName == "vert").Value;
+        switch (vert)
+        {
+            case "eaVert":          // East Asian vertical: glyphs upright, columns right→left
+            case "mongolianVert":   // rare; degrade to upright vertical
+                style += ";writing-mode:vertical-rl;text-orientation:upright";
+                break;
+            case "vert":            // Latin rotated 90° CW (glyphs lie on their side)
+                style += ";writing-mode:vertical-rl";
+                break;
+            case "vert270":         // Latin rotated 90° CCW
+                style += ";writing-mode:vertical-rl;transform:rotate(180deg)";
+                break;
+            // "horz", null, or unknown → no writing-mode (stay horizontal)
+        }
 
         sb.Append($"<div style=\"{style}\">");
 
@@ -853,7 +991,11 @@ public partial class WordHandler
                         }
                         else
                         {
-                            sb.Append($"<img src=\"{imgDataUri}\" style=\"float:left;width:{imgW}px;height:{imgH}px;object-fit:cover;{marginCss}\">");
+                            // max-width:none so the overlay's declared px width
+                            // wins over the global img{max-width:100%}: a
+                            // full-width banner (e.g. 940px) must not be clamped
+                            // to the container width and collapse to a strip.
+                            sb.Append($"<img src=\"{imgDataUri}\" style=\"float:left;width:{imgW}px;height:{imgH}px;max-width:none;object-fit:cover;{marginCss}\">");
                         }
                     }
                     catch { }

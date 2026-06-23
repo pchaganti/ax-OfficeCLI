@@ -63,8 +63,7 @@ public partial class WordHandler
             var currentStyleId = styleId;
             while (currentStyleId != null && visited.Add(currentStyleId))
             {
-                var style = _doc.MainDocumentPart?.StyleDefinitionsPart?.Styles
-                    ?.Elements<Style>().FirstOrDefault(s => s.StyleId?.Value == currentStyleId);
+                var style = FindStyleById(currentStyleId);
                 if (style == null) break;
                 chain.Add(style);
                 currentStyleId = style.BasedOn?.Val?.Value;
@@ -113,8 +112,7 @@ public partial class WordHandler
             var curRStyleId = rStyleId;
             while (curRStyleId != null && rVisited.Add(curRStyleId))
             {
-                var rStyle = _doc.MainDocumentPart?.StyleDefinitionsPart?.Styles
-                    ?.Elements<Style>().FirstOrDefault(s => s.StyleId?.Value == curRStyleId);
+                var rStyle = FindStyleById(curRStyleId);
                 if (rStyle == null) break;
                 rStyleChain.Add(rStyle);
                 curRStyleId = rStyle.BasedOn?.Val?.Value;
@@ -523,8 +521,7 @@ public partial class WordHandler
         var currentStyleId = styleId;
         while (currentStyleId != null && visited.Add(currentStyleId))
         {
-            var style = _doc.MainDocumentPart?.StyleDefinitionsPart?.Styles
-                ?.Elements<Style>().FirstOrDefault(s => s.StyleId?.Value == currentStyleId);
+            var style = FindStyleById(currentStyleId);
             if (style == null) break;
             chain.Add(style);
             currentStyleId = style.BasedOn?.Val?.Value;
@@ -554,12 +551,12 @@ public partial class WordHandler
             }
             if (ppr.SpacingBetweenLines?.Before?.Value != null)
             {
-                spaceBefore = SpacingConverter.FormatWordSpacing(ppr.SpacingBetweenLines.Before.Value);
+                spaceBefore = SpacingConverter.FormatWordSpacingNonNegative(ppr.SpacingBetweenLines.Before.Value);
                 spaceBeforeSrc = layer;
             }
             if (ppr.SpacingBetweenLines?.After?.Value != null)
             {
-                spaceAfter = SpacingConverter.FormatWordSpacing(ppr.SpacingBetweenLines.After.Value);
+                spaceAfter = SpacingConverter.FormatWordSpacingNonNegative(ppr.SpacingBetweenLines.After.Value);
                 spaceAfterSrc = layer;
             }
             if (ppr.SpacingBetweenLines?.Line?.Value != null)
@@ -621,10 +618,7 @@ public partial class WordHandler
                 var inst = numbering?.Elements<NumberingInstance>()
                     .FirstOrDefault(n => n.NumberID?.Value == numId);
                 var absId = inst?.AbstractNumId?.Val?.Value;
-                var abs = absId != null
-                    ? numbering!.Elements<AbstractNum>()
-                        .FirstOrDefault(a => a.AbstractNumberId?.Value == absId.Value)
-                    : null;
+                var abs = FindAbstractNum(numbering, absId);
                 var lvl = abs?.Elements<Level>()
                     .FirstOrDefault(l => l.LevelIndex?.Value == ilvl);
                 var lvlBidi = lvl?.PreviousParagraphProperties?.GetFirstChild<BiDi>();
@@ -650,8 +644,7 @@ public partial class WordHandler
             var tblStyleId = tbl?.GetFirstChild<TableProperties>()?.TableStyle?.Val?.Value;
             if (tblStyleId != null)
             {
-                var tblStyle = _doc.MainDocumentPart?.StyleDefinitionsPart?.Styles
-                    ?.Elements<Style>().FirstOrDefault(s => s.StyleId?.Value == tblStyleId);
+                var tblStyle = FindStyleById(tblStyleId);
                 var tblPpr = tblStyle?.StyleParagraphProperties;
                 var tblBidi = tblPpr?.GetFirstChild<BiDi>();
                 if (tblBidi != null)
@@ -802,14 +795,12 @@ public partial class WordHandler
         var styleId = para.ParagraphProperties?.ParagraphStyleId?.Val?.Value;
         if (styleId == null) return null;
 
-        var stylesPart = _doc.MainDocumentPart?.StyleDefinitionsPart;
-        if (stylesPart?.Styles == null) return null;
+        if (_doc.MainDocumentPart?.StyleDefinitionsPart?.Styles == null) return null;
 
         var visited = new HashSet<string>();
         while (styleId != null && visited.Add(styleId))
         {
-            var style = stylesPart.Styles.Elements<Style>()
-                .FirstOrDefault(s => s.StyleId?.Value == styleId);
+            var style = FindStyleById(styleId);
             if (style == null) break;
 
             var styleNumPr = style.StyleParagraphProperties?.NumberingProperties;
@@ -836,6 +827,8 @@ public partial class WordHandler
         if (directNid != null && directNid != 0)
         {
             var ilvl = directNumPr!.NumberingLevelReference?.Val?.Value ?? 0;
+            // CONSISTENCY(ilvl-clamp): same guard as GetListPrefix.
+            if (ilvl < 0) ilvl = 0; else if (ilvl > 8) ilvl = 8;
             var numFmt = GetNumberingFormat(directNid.Value, ilvl);
             return numFmt.ToLowerInvariant() == "bullet" ? "bullet" : "ordered";
         }
@@ -857,33 +850,440 @@ public partial class WordHandler
         if (resolved == null) return null;
         var (numId, ilvlR) = resolved.Value;
         if (numId == 0) return null;
-        var numFmtR = GetNumberingFormat(numId, ilvlR);
+        // CONSISTENCY(ilvl-clamp): same guard as GetListPrefix.
+        var ilvlRc = ilvlR < 0 ? 0 : ilvlR > 8 ? 8 : ilvlR;
+        var numFmtR = GetNumberingFormat(numId, ilvlRc);
         return numFmtR.ToLowerInvariant() == "bullet" ? "bullet" : "ordered";
     }
 
-    private string GetListPrefix(Paragraph para)
-    {
-        var numProps = para.ParagraphProperties?.NumberingProperties;
-        if (numProps == null) return "";
+    // ---- Shared ordered-list numbering (text + HTML preview) -------------
+    //
+    // CONSISTENCY(list-marker): the plain-text walker (WordHandler.View.cs) and
+    // the HTML preview (WordHandler.HtmlPreview.cs) compute ordered-list markers
+    // through this ONE state machine, so the two views can never diverge on
+    // auto-numbering (the bug behind GitHub #161, where text fell back to "• ").
+    // The HTML path additionally owns its <ol>/<ul> nesting + CSS; only the
+    // counter seeding / advancing / glyph rendering lives here.
 
-        var numId = numProps.NumberingId?.Val?.Value;
-        var ilvl = numProps.NumberingLevelReference?.Val?.Value ?? 0;
-        if (numId == null || numId == 0) return "";
+    /// <summary>
+    /// Running ordered-list counter state for one render walk. Holds the same
+    /// three dictionaries the HTML preview has always used:
+    ///   • <see cref="OlCountPerLevel"/> — running item count per ilvl in the
+    ///     active list run (cleared when the list breaks to a different numId).
+    ///   • <see cref="MultiLevelCounters"/> — the values fed into the lvlText
+    ///     template ("%1.%2.") when rendering a marker.
+    ///   • <see cref="AbsNumLevelCounters"/> — per-abstractNum running counts
+    ///     that survive a numId change, so sibling num instances sharing one
+    ///     abstractNum continue numbering (Word's default list continuation).
+    /// <see cref="CurrentNumId"/> drives the text path's break detection; the
+    /// HTML path tracks its own currentNumId alongside its nesting state.
+    /// </summary>
+    private sealed class OrderedListNumberingState
+    {
+        public int? CurrentNumId;
+        public readonly Dictionary<int, int> OlCountPerLevel = new();
+        public readonly Dictionary<int, int> MultiLevelCounters = new();
+        public readonly Dictionary<int, Dictionary<int, int>> AbsNumLevelCounters = new();
+        // Levels of the active num that carry an un-consumed per-instance
+        // <w:startOverride> (or override-embedded <w:lvl><w:start>). Re-armed on
+        // every numId switch; a level fires its override the FIRST time it is
+        // directly advanced under that num, then is removed. This lets the
+        // override win over abstractNum continuation even when a deeper item
+        // appeared first and carried the level over (ECMA-376 §17.9.7).
+        public readonly HashSet<int> PendingInstanceOverride = new();
+    }
+
+    /// <summary>
+    /// Seed value (one BELOW the first rendered number) for an ordered level,
+    /// using the four-way precedence Word follows: in-run running count →
+    /// explicit startOverride → abstractNum continuation → level start value.
+    /// </summary>
+    // INT_MIN guard: seed - 1 would wrap (unchecked) to int.MaxValue, which then
+    // permanently triggers the saturation branch in AdvanceOrderedCounter and
+    // freezes every item at int.MaxValue. Seed at INT_MIN instead so the counter
+    // still advances upward (graceful for an absurd start).
+    private static int SeedBelow(int v) => v == int.MinValue ? int.MinValue : v - 1;
+
+    private int SeedOrderedStart(OrderedListNumberingState st, int numId, int? absId, int forIlvl, bool autoInit = false)
+    {
+        if (st.OlCountPerLevel.TryGetValue(forIlvl, out var prev) && prev > 0)
+            return prev;
+        // A per-num-instance level override (a <w:lvlOverride> carrying a
+        // <w:startOverride> OR an embedded <w:lvl> with its own <w:start>) means
+        // "this num restarts its numbering at that value" and takes precedence
+        // over continuation from a sibling num sharing the abstractNum. Without
+        // checking it BEFORE the continuation branch below, an overridden num
+        // sharing an abstractNum continued the sibling's count (e.g. 4,5,6)
+        // instead of starting fresh at the override (5,6,7). This is a restart
+        // marker, so it applies only on explicit visitation — autoInit (a deeper
+        // level implicitly initializing this skipped level) ignores it and uses
+        // the level's intrinsic <w:start>, matching Word.
+        int? continuedRun = null;
+        if (absId.HasValue
+            && st.AbsNumLevelCounters.TryGetValue(absId.Value, out var byIlvl)
+            && byIlvl.TryGetValue(forIlvl, out var running) && running > 0)
+            continuedRun = running;
+        if (!autoInit)
+        {
+            var ovr = GetNumInstanceOverrideStart(numId, forIlvl);
+            // A bare startOverride restarts the level to that value — but only on
+            // the level's INITIAL start or an lvlRestart-triggered restart
+            // (ECMA-376 §17.9.7). A level that is CONTINUED from a sibling num
+            // sharing the abstractNum AND never restarts (lvlRestart="0") meets
+            // neither condition, so it keeps its running count rather than jumping
+            // to the override value (matches Word). A fresh level (not continued)
+            // still takes the override as its initial start.
+            if (ovr.HasValue
+                && !(continuedRun.HasValue && GetEffectiveLvlRestart(numId, forIlvl) == 0))
+                return SeedBelow(ovr.Value);
+        }
+        if (continuedRun.HasValue)
+            return continuedRun.Value;
+        var rawStart = autoInit
+            ? GetLevelDefinedStart(numId, forIlvl)
+            : (GetStartValue(numId, forIlvl) ?? 1);
+        return SeedBelow(rawStart);
+    }
+
+    // The level's intrinsic start value, EXCLUDING <w:startOverride> (which is a
+    // restart marker, not part of the level definition). An embedded <w:lvl>
+    // override replaces the level definition, so its own <w:start> governs;
+    // otherwise the abstractNum level's <w:start>. Default 1.
+    private int GetLevelDefinedStart(int numId, int ilvl)
+    {
+        var numbering = _doc.MainDocumentPart?.NumberingDefinitionsPart?.Numbering;
+        var inst = numbering?.Elements<NumberingInstance>()
+            .FirstOrDefault(n => n.NumberID?.Value == numId);
+        var lvlOverride = inst?.Elements<LevelOverride>()
+            .FirstOrDefault(o => o.LevelIndex?.Value == ilvl);
+        if (lvlOverride?.GetFirstChild<Level>() is Level emb)
+            return emb.StartNumberingValue?.Val?.Value ?? 1;
+        var absId = inst?.AbstractNumId?.Val?.Value;
+        var abs = FindAbstractNum(numbering, absId);
+        var lvl = abs?.Elements<Level>()
+            .FirstOrDefault(l => l.LevelIndex?.Value == ilvl);
+        return lvl?.StartNumberingValue?.Val?.Value ?? 1;
+    }
+
+    // The per-num-instance override start for a level, or null when this num has
+    // no <w:lvlOverride> for it. An embedded <w:lvl> replaces the level (its own
+    // <w:start> governs, ECMA-376 §17.9.7 — startOverride is then ignored);
+    // otherwise the bare <w:startOverride> value. Non-null signals "this num
+    // restarts here", which outranks shared-abstractNum continuation.
+    private int? GetNumInstanceOverrideStart(int numId, int ilvl)
+    {
+        var numbering = _doc.MainDocumentPart?.NumberingDefinitionsPart?.Numbering;
+        var inst = numbering?.Elements<NumberingInstance>()
+            .FirstOrDefault(n => n.NumberID?.Value == numId);
+        var ovr = inst?.Elements<LevelOverride>()
+            .FirstOrDefault(o => o.LevelIndex?.Value == ilvl);
+        if (ovr == null) return null;
+        // Only a bare <w:startOverride> forces a RESTART at that value
+        // (ECMA-376 §17.9.7). An embedded <w:lvl> override merely REDEFINES the
+        // level (its format + its own <w:start> for future lvlRestart events);
+        // the counter CONTINUES from the shared abstractNum, it does not restart
+        // (Word: a num sharing abstractNum that ends at 7 then carries an
+        // embedded-lvl override renders the next item as 8 in the new format,
+        // not the override's start). The embedded start is still honored for a
+        // fresh (non-continuation) list via normal start resolution — GetLevel
+        // prefers the override lvl — so it is not lost; it just must not trigger
+        // an override-restart here.
+        return ovr.StartOverrideNumberingValue?.Val?.Value;
+    }
+
+    /// <summary>
+    /// Advance the counter for an ordered item at (numId, ilvl): increment this
+    /// level, then reset deeper levels per each deeper level's
+    /// <c>&lt;w:lvlRestart&gt;</c> (ECMA-376 §17.9.6), and mirror the running
+    /// count into the per-abstractNum store so a later sibling num can continue
+    /// from it.
+    /// </summary>
+    private void AdvanceOrderedCounter(OrderedListNumberingState st, int numId, int? absId, int ilvl)
+    {
+        // ECMA-376 §17.9: jumping to a deeper level auto-initializes every
+        // shallower level that was never visited to its start value. Word
+        // renders a skipped intermediate level as its start (0->2 yields
+        // "1.1.1.", not "1.0.1.") AND treats the implicit init as a visit, so a
+        // later explicit visit to that level increments from start ("1.2.").
+        // Seed each un-visited shallower level before advancing the current one.
+        for (int j = 0; j < ilvl; j++)
+        {
+            if (st.OlCountPerLevel.ContainsKey(j)) continue;
+            int sj;
+            // A shallower level missing from OlCountPerLevel is one of two things:
+            //   (a) never visited at all (jump-to-deeper within a list) → it must
+            //       APPEAR as its start value, so seed-below + 1 = start.
+            //   (b) already visited under a sibling num sharing this abstractNum,
+            //       then dropped when the numId switch cleared the in-run counters
+            //       (GetListPrefix). Its running count survives in
+            //       AbsNumLevelCounters; the parent did NOT advance merely because
+            //       a deeper item appeared first under the new num, so RESTORE that
+            //       value verbatim (no +1). Adding +1 here over-counted every
+            //       subsequent marker (parent shown one level too high) — e.g. a
+            //       0,0,0,1 / switch / 1,0,0,1,0 walk rendered the post-switch
+            //       parent as d,e,f instead of Word's c,d,e.
+            if (absId.HasValue
+                && st.AbsNumLevelCounters.TryGetValue(absId.Value, out var carried)
+                && carried.TryGetValue(j, out var run) && run > 0)
+            {
+                sj = run;
+            }
+            else
+            {
+                sj = SeedOrderedStart(st, numId, absId, j, autoInit: true) + 1;
+            }
+            st.OlCountPerLevel[j] = sj;
+            st.MultiLevelCounters[j] = sj;
+            if (absId.HasValue)
+            {
+                if (!st.AbsNumLevelCounters.TryGetValue(absId.Value, out var bi))
+                {
+                    bi = new Dictionary<int, int>();
+                    st.AbsNumLevelCounters[absId.Value] = bi;
+                }
+                bi[j] = sj;
+            }
+        }
+        var seed = SeedOrderedStart(st, numId, absId, ilvl);
+        // A per-instance startOverride fires on the FIRST direct advance of its
+        // level under the new num — taking the override value verbatim (a
+        // restart), not continuing from the carried-over count. The override is
+        // consumed once; later advances of the same level continue normally.
+        if (st.PendingInstanceOverride.Remove(ilvl)
+            && GetNumInstanceOverrideStart(numId, ilvl) is int ovrStart)
+        {
+            st.OlCountPerLevel[ilvl] = ovrStart;
+        }
+        else
+        {
+            var prev = st.OlCountPerLevel.GetValueOrDefault(ilvl, seed);
+            // Saturate at int.MaxValue to avoid overflow when w:start is INT_MAX.
+            st.OlCountPerLevel[ilvl] = prev == int.MaxValue ? int.MaxValue : prev + 1;
+        }
+        st.MultiLevelCounters[ilvl] = st.OlCountPerLevel[ilvl];
+        for (int lk = ilvl + 1; lk <= 8; lk++)
+        {
+            if (!ShouldRestartDeeperLevel(numId, ilvl, lk)) continue;
+            // Restart by REMOVING the counter, not zeroing it: the next advance
+            // then re-seeds via SeedOrderedStart, which honors the level's
+            // <w:start> / <w:startOverride>. Zeroing made GetValueOrDefault
+            // return the stored 0, so the level always restarted at 1 — wrong
+            // for any level whose start != 1 (e.g. start=5 restarted to 1, not
+            // 5). Verified vs real Word.
+            st.OlCountPerLevel.Remove(lk);
+            st.MultiLevelCounters.Remove(lk);
+        }
+        if (absId.HasValue)
+        {
+            if (!st.AbsNumLevelCounters.TryGetValue(absId.Value, out var byIlvl))
+            {
+                byIlvl = new Dictionary<int, int>();
+                st.AbsNumLevelCounters[absId.Value] = byIlvl;
+            }
+            byIlvl[ilvl] = st.OlCountPerLevel[ilvl];
+            for (int lk = ilvl + 1; lk <= 8; lk++)
+            {
+                if (!ShouldRestartDeeperLevel(numId, ilvl, lk)) continue;
+                byIlvl.Remove(lk); // mirror the OlCountPerLevel restart: re-seed, don't zero
+            }
+        }
+    }
+
+    /// <summary>
+    /// ECMA-376 §17.9.6 &lt;w:lvlRestart&gt;: the current level restarts whenever the
+    /// level numbered R (1-based) <em>or any level above it (lower index = shallower)</em>
+    /// is used. So when the level at <paramref name="ilvl"/> (0-based) increments,
+    /// deeper level <paramref name="deeperIlvl"/> restarts iff its lvlRestart value
+    /// R satisfies (ilvl+1) &lt;= R — i.e. the incrementing level is R or shallower.
+    ///   • R absent → default R = deeperIlvl (its own 0-based index): restarts on
+    ///     every STRICTLY shallower level (the standard outline default). This is
+    ///     mathematically identical to the historic "(ilvl+1) &gt;= 1" default, so
+    ///     plain multi-level lists are unaffected; only explicit lvlRestart values
+    ///     change behavior.
+    ///   • R == 0   → never restart.
+    /// (lvlRestart="1" therefore restarts ONLY when the top level (ilvl=0) ticks,
+    /// NOT when an intermediate level ticks — matching real Word.)
+    /// </summary>
+    private bool ShouldRestartDeeperLevel(int numId, int ilvl, int deeperIlvl)
+    {
+        var restart = GetEffectiveLvlRestart(numId, deeperIlvl);
+        if (restart == 0) return false;          // val="0": never restart
+        var r = restart ?? deeperIlvl;           // default: restart on any strictly shallower level
+        return (ilvl + 1) <= r;
+    }
+
+    /// <summary>
+    /// lvlRestart for a level, honoring the embedded-&lt;w:lvl&gt;-override MERGE
+    /// model: an embedded override redefines the properties it specifies but
+    /// INHERITS those it omits from the base abstractNum level. GetLevel returns
+    /// the override lvl (which may omit lvlRestart), so fall back to the base
+    /// abstractNum level's lvlRestart when the override does not set one — Word
+    /// keeps the original restart rule (e.g. lvlRestart="1") rather than reverting
+    /// to the default "restart on any parent tick".
+    /// </summary>
+    private int? GetEffectiveLvlRestart(int numId, int ilvl)
+    {
+        var r = GetLevel(numId, ilvl)?.GetFirstChild<LevelRestart>()?.Val?.Value;
+        if (r.HasValue) return r;
+        return GetAbstractLevel(numId, ilvl)?.GetFirstChild<LevelRestart>()?.Val?.Value;
+    }
+
+    /// <summary>
+    /// The level definition straight from the abstractNum, IGNORING any
+    /// per-instance lvlOverride (the opposite of <see cref="GetLevel"/>, which
+    /// prefers an embedded override lvl). Used to recover properties the override
+    /// omits under the merge model.
+    /// </summary>
+    private Level? GetAbstractLevel(int numId, int ilvl)
+    {
+        var numbering = _doc.MainDocumentPart?.NumberingDefinitionsPart?.Numbering;
+        var inst = numbering?.Elements<NumberingInstance>()
+            .FirstOrDefault(n => n.NumberID?.Value == numId);
+        var absId = inst?.AbstractNumId?.Val?.Value;
+        if (absId == null) return null;
+        var abs = FindAbstractNum(numbering, absId);
+        return abs?.Elements<Level>().FirstOrDefault(l => l.LevelIndex?.Value == ilvl);
+    }
+
+    /// <summary>
+    /// Expand a level's lvlText template ("%1、", "%1.%2.") against the current
+    /// multi-level counters, rendering each %N through WordNumFmtRenderer so
+    /// every numFmt (decimal, chineseCounting, decimalEnclosedCircle, …) maps to
+    /// the same glyphs in both views. An empty template defaults to "%N".
+    /// </summary>
+    private string RenderOrderedMarker(OrderedListNumberingState st, int numId, int ilvl, string? lvlText)
+    {
+        // Distinguish "no lvlText element" (null → legit %N fallback) from a
+        // present-but-empty <w:lvlText w:val=""/> (intentional no-marker; Word
+        // renders nothing). Only null defaults to the %N template; an explicit
+        // "" yields an empty marker. GetLevelText returns null when the level
+        // or its lvlText is absent and "" when val="" is present, so the
+        // distinction is clean at this layer.
+        var template = lvlText ?? $"%{ilvl + 1}";
+        // isLgl (ECMA-376 §17.9.10 w:isLgl) on the CURRENT level forces every
+        // placeholder in this level's lvlText to render as decimal (arabic),
+        // regardless of each referenced level's own numFmt — e.g. an
+        // upperRoman level 0 referenced as "%1" inside an isLgl level renders
+        // "1" not "I". Read off the current (ilvl) level definition.
+        // EXCEPTION: decimalZero is already a decimal format; isLgl only changes
+        // the number SYSTEM, so Word preserves decimalZero's zero-padding ("05"
+        // stays "05", not "5"). Only non-decimal systems collapse to plain
+        // decimal.
+        var legal = GetLevel(numId, ilvl)?.GetFirstChild<IsLegalNumberingStyle>();
+        var isLgl = legal != null &&
+            (legal.Val == null || legal.Val.Value); // CT_OnOff default-true
+        // Only %1..%9 are valid Word level placeholders (CT_LevelText / lvlText
+        // references 1-based level indices 1-9). %0 is not a placeholder — Word
+        // leaves it literal — and matching it here produced k=-1 →
+        // GetNumberingFormat(numId,-1) → no level → "bullet" → a • glyph
+        // emitted inside an ordered marker. Restrict to %1-%9 so any other %x
+        // stays literal in both views.
+        return System.Text.RegularExpressions.Regex.Replace(template, @"%([1-9])", m =>
+        {
+            var k = int.Parse(m.Groups[1].Value) - 1;
+            var actualFmt = GetNumberingFormat(numId, k);
+            var lvlFmt = isLgl
+                ? (actualFmt.Equals("decimalZero", StringComparison.OrdinalIgnoreCase)
+                    ? "decimalZero" : "decimal")
+                : actualFmt;
+            // A placeholder referencing an UNDEFINED level (or one whose fmt
+            // resolves to "bullet") must emit nothing for an ordered marker —
+            // Word renders an unstarted/undefined level as empty, NOT a bullet
+            // glyph. Without this, lvlText "%1.%2.%3." with only level 0 defined
+            // produced "1.•.•." (bullet pollution). isLgl forces decimal so it
+            // never hits this branch.
+            if (!isLgl && lvlFmt.Equals("bullet", StringComparison.OrdinalIgnoreCase))
+                return "";
+            var counter = st.MultiLevelCounters.GetValueOrDefault(k, 0);
+            return OfficeCli.Core.WordNumFmtRenderer.Render(counter, lvlFmt);
+        });
+    }
+
+    private string GetListPrefix(Paragraph para, OrderedListNumberingState? state = null)
+    {
+        // A direct <w:numPr><w:numId val="0"/> explicitly suppresses numbering
+        // (e.g. a heading that opts out of its style's list). Honor it before
+        // resolving the style chain so suppressed paragraphs stay marker-less.
+        if (IsNumberingSuppressed(para)) return "";
+
+        // Direct numPr wins; otherwise fall back to the paragraph/character
+        // style chain so STYLE-inherited numbering (custom list styles AND
+        // Heading1..9) gets a text marker — matching the HTML preview, which
+        // already resolves via ResolveNumPrFromStyle. Reading only direct
+        // numPr left these paragraphs with no marker in `view text` while
+        // `view html` rendered "1.", "1.1.", etc.
+        var numProps = para.ParagraphProperties?.NumberingProperties;
+        int numIdVal;
+        int ilvl;
+        var directNumId = numProps?.NumberingId?.Val?.Value;
+        if (directNumId != null && directNumId != 0)
+        {
+            numIdVal = directNumId.Value;
+            ilvl = numProps!.NumberingLevelReference?.Val?.Value ?? 0;
+        }
+        else
+        {
+            var resolved = ResolveNumPrFromStyle(para);
+            if (resolved == null) return "";
+            (numIdVal, ilvl) = resolved.Value;
+            if (numIdVal == 0) return "";
+        }
+        int? numId = numIdVal;
+
+        // Clamp ilvl to the OOXML-legal range [0, 8] ONCE before any use.
+        // Malformed docs (raw-zip fuzz) carry ilvl negative (→ new string(' ',
+        // neg) throws) or huge (~1e9 → ilvl*2 int overflow → negative → throws;
+        // 10000 → a 20000-space line). Matches the HTML preview path
+        // (WordHandler.HtmlPreview.cs, "ilvl > 8") so text == html marker.
+        if (ilvl < 0) ilvl = 0;
+        else if (ilvl > 8) ilvl = 8;
 
         var indent = new string(' ', ilvl * 2);
         var numFmt = GetNumberingFormat(numId.Value, ilvl);
 
-        return numFmt.ToLowerInvariant() switch
+        // Bullet lists render their lvlText glyph in text mode — a custom glyph
+        // (★ ▶ ● …) passes through verbatim to match Word and the HTML preview;
+        // standard/Wingdings bullets map to •/◦/▪. See BulletGlyphForText.
+        if (numFmt.Equals("bullet", StringComparison.OrdinalIgnoreCase))
+            return $"{indent}{BulletGlyphForText(GetLevelText(numId.Value, ilvl))} ";
+
+        // Stateless fallback: no walk context → render from the level start.
+        var st = state ?? new OrderedListNumberingState();
+
+        // A different numId breaks the active run: clear the in-run counters
+        // (but NOT AbsNumLevelCounters — that carries continuation across
+        // sibling nums sharing an abstractNum). Mirrors the HTML reset at
+        // WordHandler.HtmlPreview.cs. Same numId continues across intervening
+        // non-list paragraphs, exactly as Word does.
+        if (st.CurrentNumId != numId.Value)
         {
-            "bullet" => $"{indent}• ",
-            "decimal" => $"{indent}1. ",
-            "decimalzero" => $"{indent}01. ",
-            "lowerletter" => $"{indent}a. ",
-            "upperletter" => $"{indent}A. ",
-            "lowerroman" => $"{indent}i. ",
-            "upperroman" => $"{indent}I. ",
-            _ => $"{indent}• "
-        };
+            st.OlCountPerLevel.Clear();
+            st.MultiLevelCounters.Clear();
+            st.CurrentNumId = numId.Value;
+            // Re-arm per-instance startOverrides for the new num: each overridden
+            // level fires its override the next time it is DIRECTLY advanced,
+            // even if a deeper item carried the level over first. EXCEPTION: a
+            // level with lvlRestart="0" (never restart) that is already running
+            // does NOT fire — startOverride applies only on a level's initial
+            // start or an lvlRestart-triggered restart (ECMA-376 §17.9.7), and a
+            // never-restart continued level meets neither, so it keeps counting
+            // (Word continues such a level across the numId switch instead of
+            // jumping to the override value).
+            st.PendingInstanceOverride.Clear();
+            for (int lv = 0; lv <= 8; lv++)
+                if (GetNumInstanceOverrideStart(numId.Value, lv).HasValue
+                    && GetEffectiveLvlRestart(numId.Value, lv) != 0)
+                    st.PendingInstanceOverride.Add(lv);
+        }
+
+        var absId = GetAbstractNumId(numId.Value);
+        AdvanceOrderedCounter(st, numId.Value, absId, ilvl);
+        var marker = RenderOrderedMarker(st, numId.Value, ilvl, GetLevelText(numId.Value, ilvl));
+
+        // Separator after the marker: honor <w:suff> (nothing → none; tab/space
+        // both collapse to a single space in plain text).
+        var sep = GetLevelSuffix(numId.Value, ilvl) == "nothing" ? "" : " ";
+        return $"{indent}{marker}{sep}";
     }
 
     private string GetNumberingFormat(int numId, int ilvl)
@@ -905,16 +1305,14 @@ public partial class WordHandler
             .FirstOrDefault(n => n.NumberID?.Value == numId);
         var abstractNumId = numInstance?.AbstractNumId?.Val?.Value;
         if (abstractNumId == null) return null;
-        var abstractNum = numbering.Elements<AbstractNum>()
-            .FirstOrDefault(a => a.AbstractNumberId?.Value == abstractNumId);
+        var abstractNum = FindAbstractNum(numbering, abstractNumId);
         var level = abstractNum?.Elements<Level>()
             .FirstOrDefault(l => l.LevelIndex?.Value == ilvl);
 
-        // Check for lvlPicBulletId
-        var picBulletIdAttr = level?.GetAttributes().FirstOrDefault(a => a.LocalName == "lvlPicBulletId");
-        if (picBulletIdAttr is not { } attr || attr.Value == null) return null;
-
-        // Find the matching numPicBullet element
+        // <w:lvlPicBulletId w:val="N"/> is a CHILD element of <w:lvl>, not an
+        // attribute — the old GetAttributes() guard here never matched and made
+        // this method always return null (picture bullets fell back to a plain
+        // circle in the HTML preview). Read the child element directly.
         var picBulletEl = level?.Descendants().FirstOrDefault(e => e.LocalName == "lvlPicBulletId");
         if (picBulletEl == null) return null;
         var picBulletIdStr = picBulletEl.GetAttributes().FirstOrDefault(a => a.LocalName == "val").Value;
@@ -989,10 +1387,27 @@ public partial class WordHandler
 
         var abstractNumId = numInstance.AbstractNumId?.Val?.Value;
         if (abstractNumId == null) return null;
-        var abstractNum = numbering.Elements<AbstractNum>()
-            .FirstOrDefault(a => a.AbstractNumberId?.Value == abstractNumId);
+        var abstractNum = FindAbstractNum(numbering, abstractNumId);
         return abstractNum?.Elements<Level>()
             .FirstOrDefault(l => l.LevelIndex?.Value == ilvl);
+    }
+
+    // Resolve an abstractNumId to its AbstractNum, following a <w:numStyleLink>
+    // indirection. An abstractNum that only links to a numbering style
+    // (numStyleLink="X") has no level definitions of its own — it borrows them
+    // from the abstractNum carrying the matching <w:styleLink w:val="X"/>. Word
+    // resolves list-gallery "list styles" this way; without following the link
+    // every marker for such a list fell back to a bullet glyph.
+    private static AbstractNum? FindAbstractNum(Numbering? numbering, int? abstractNumId)
+    {
+        if (numbering == null || abstractNumId == null) return null;
+        var abs = numbering.Elements<AbstractNum>()
+            .FirstOrDefault(a => a.AbstractNumberId?.Value == abstractNumId);
+        if (abs == null) return null;
+        var link = abs.GetFirstChild<NumberingStyleLink>()?.Val?.Value;
+        if (string.IsNullOrEmpty(link)) return abs;
+        return numbering.Elements<AbstractNum>()
+            .FirstOrDefault(a => a.GetFirstChild<StyleLink>()?.Val?.Value == link) ?? abs;
     }
 
     private int? GetStartValue(int numId, int ilvl)
@@ -1004,17 +1419,20 @@ public partial class WordHandler
             .FirstOrDefault(n => n.NumberID?.Value == numId);
         if (numInstance == null) return null;
 
-        // Check level override first
+        // Check level override first. ECMA-376 §17.9.7: when the lvlOverride
+        // embeds a full <w:lvl>, that replacement's own <w:start> governs and
+        // the sibling startOverride is ignored — mirror GetLevel's precedence.
         var lvlOverride = numInstance.Elements<LevelOverride>()
             .FirstOrDefault(o => o.LevelIndex?.Value == ilvl);
+        if (lvlOverride?.GetFirstChild<Level>() is Level embeddedLevel)
+            return embeddedLevel.StartNumberingValue?.Val?.Value;
         if (lvlOverride?.StartOverrideNumberingValue?.Val?.Value is int overrideStart)
             return overrideStart;
 
         var abstractNumId = numInstance.AbstractNumId?.Val?.Value;
         if (abstractNumId == null) return null;
 
-        var abstractNum = numbering.Elements<AbstractNum>()
-            .FirstOrDefault(a => a.AbstractNumberId?.Value == abstractNumId);
+        var abstractNum = FindAbstractNum(numbering, abstractNumId);
         var level = abstractNum?.Elements<Level>()
             .FirstOrDefault(l => l.LevelIndex?.Value == ilvl);
 
@@ -1057,7 +1475,19 @@ public partial class WordHandler
         container ??= _doc.MainDocumentPart?.Document?.Body;
         if (container == null) return null;
 
-        var lastPara = container.Elements<Paragraph>().LastOrDefault(p => !ReferenceEquals(p, targetPara));
+        // Continue from the paragraph IMMEDIATELY before the target (the
+        // documented "immediately preceding list" rule). When the target is
+        // already in the tree (Set path), that is its previous Paragraph
+        // sibling; when it is still detached (Add path, inserted only after
+        // ApplyListStyle runs), the container's last paragraph IS the
+        // predecessor. The old code always took the container's LAST paragraph,
+        // so `set listStyle=ordered` on a mid-document paragraph compared
+        // against the document's final paragraph instead of the real
+        // predecessor and minted a fresh numId per call (1,1,2 for three
+        // adjacent items set one-by-one, instead of 1,2,3).
+        var lastPara = targetPara?.Parent != null
+            ? targetPara.ElementsBefore().OfType<Paragraph>().LastOrDefault()
+            : container.Elements<Paragraph>().LastOrDefault(p => !ReferenceEquals(p, targetPara));
         if (lastPara == null) return null;
 
         var numProps = lastPara.ParagraphProperties?.NumberingProperties;

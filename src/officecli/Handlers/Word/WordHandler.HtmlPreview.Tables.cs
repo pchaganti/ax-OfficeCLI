@@ -17,8 +17,15 @@ public partial class WordHandler
 {
     // ==================== Table Rendering ====================
 
-    private void RenderTableHtml(StringBuilder sb, Table table, string? dataPath = null, int depth = 0)
+    // olState threads the body walk's shared ordered-list counter into cell
+    // list items so a cell's <ol> continues the document-flow numbering instead
+    // of restarting at the level start. Null at isolated content roots
+    // (header/footer/footnote/textbox) — those pass a fresh per-table state so
+    // multi-item cell lists still advance 1./2./3. within the root, without
+    // crossing into the body counter. (CONSISTENCY(list-marker))
+    private void RenderTableHtml(StringBuilder sb, Table table, string? dataPath = null, int depth = 0, OrderedListNumberingState? olState = null)
     {
+        olState ??= new OrderedListNumberingState();
         // CONSISTENCY(dos-hardening): nested-table recursion has no structural
         // bound; a crafted deeply-nested table would overflow the stack
         // (uncatchable crash) during `view html`. See DocumentLimits.
@@ -108,8 +115,7 @@ public partial class WordHandler
         // Apply base table style rPr (font-size, color, alignment) to the <table>
         if (styleId != null)
         {
-            var baseStyle = _doc.MainDocumentPart?.StyleDefinitionsPart?.Styles
-                ?.Elements<Style>().FirstOrDefault(s => s.StyleId?.Value == styleId);
+            var baseStyle = FindStyleById(styleId);
             var baseRPr = baseStyle?.StyleRunProperties;
             if (baseRPr?.FontSize?.Val?.Value is string bsz && int.TryParse(bsz, out var bhp))
                 tableStyles.Add($"font-size:{bhp / 2.0:0.##}pt");
@@ -122,6 +128,12 @@ public partial class WordHandler
                 if (align != null) tableStyles.Add($"text-align:{align}");
             }
         }
+
+        // Set when an auto-layout (tblW=auto / no tblW) table carries a complete tblGrid: it then
+        // gets a definite width + table-layout:fixed so its colgroup proportions become hard column
+        // widths (prevents pure-text columns collapsing to 1-char vertical when a list-bearing cell
+        // would otherwise eat the row's width). See the auto-fit comment in the width block below.
+        bool autoGridFixable = false;
 
         // Table width: explicit tblW → use it; pct → percentage; otherwise sum gridCol widths
         var tblW = tblPr?.TableWidth;
@@ -137,8 +149,16 @@ public partial class WordHandler
         }
         else
         {
-            // No explicit tblW or type=auto: use gridCol sum as max-width (Word auto-fit behavior)
-            // auto layout tables in Word shrink to content; max-width lets browser do the same
+            // No explicit tblW or type=auto: use gridCol sum for the table width (Word auto-fit behavior).
+            // Word auto-fit does NOT let columns grow past their grid widths to the point of starving a
+            // neighbour — it fixes the column widths from the grid and wraps content inside each cell.
+            // A browser auto table-layout, in contrast, distributes width by content min/max, and with the
+            // page-body `overflow-wrap:anywhere` rule the min-content of every text column collapses to one
+            // character. A row whose middle/last cell carries long list content then steals the whole width,
+            // squeezing pure-text columns into a 1-char vertical strip ("P/a/g/e/St/r/u/c…") while long cells
+            // overflow the page edge. When the grid is complete we therefore pin a *definite* width plus
+            // table-layout:fixed (below) so the colgroup proportions become hard column widths and content
+            // wraps inside its column, matching Word. Tables with a partial/absent grid keep content sizing.
             var isFixed = tblPr?.TableLayout?.Type?.InnerText == "fixed";
             var grid = table.GetFirstChild<TableGrid>();
             var gridCols = grid?.Elements<GridColumn>().ToList();
@@ -155,7 +175,11 @@ public partial class WordHandler
                 }
                 if (allValid && totalTwips > 0)
                 {
-                    var prop = isFixed ? "width" : "max-width";
+                    // fixed layout already uses a definite width; auto layout with a complete grid now
+                    // also gets a definite width so the table-layout:fixed pin (below) can resolve the
+                    // colgroup percentages instead of falling back to content distribution.
+                    autoGridFixable = !isFixed;
+                    var prop = (isFixed || autoGridFixable) ? "width" : "max-width";
                     tableStyles.Add($"{prop}:{totalTwips / 20.0:0.##}pt");
                 }
             }
@@ -173,6 +197,36 @@ public partial class WordHandler
             tableStyles.Add("border-collapse:separate");
             tableStyles.Add($"border-spacing:{csTwips / 20.0:0.##}pt");
         }
+
+        // Table-level RTL (w:bidiVisual on tblPr): Word mirrors the column order
+        // so the first logical cell sits at the right edge (COL-C | COL-B | COL-A).
+        // CSS direction:rtl on the table reverses the table-cell layout order,
+        // reproducing that mirror. get already surfaces direction=rtl; this was a
+        // pure-render gap.
+        var tblBidiVisual = tblPr?.GetFirstChild<BiDiVisual>();
+        if (tblBidiVisual != null)
+        {
+            // CT_OnOff: no val (or a truthy val) is ON; an explicit falsey val
+            // is OFF. Read the raw attribute text, mirroring the Get-side
+            // readback in Navigation.cs so the render matches direction=rtl.
+            var bidiRaw = tblBidiVisual.Val?.InnerText;
+            if (bidiRaw is null || !(bidiRaw is "0" or "false" or "off"))
+                tableStyles.Add("direction:rtl");
+        }
+
+        // Fixed-layout tables (w:tblLayout type="fixed") encode hard per-column
+        // widths in tblGrid. Word treats those widths as upper bounds and wraps
+        // long cell content within the column. Without CSS table-layout:fixed the
+        // browser treats <col> widths as *minimums* and lets unbreakable content
+        // (esp. long header text) expand the column past its declared width, which
+        // overflows the page right edge. Pin table-layout:fixed so the colgroup
+        // widths become hard caps and over-long cell text wraps inside the column,
+        // matching Word. Only applied when an explicit tblGrid is present (autofit /
+        // no-grid tables keep their content-driven sizing).
+        var isTableFixedLayout = tblPr?.TableLayout?.Type?.InnerText == "fixed";
+        if ((isTableFixedLayout && table.GetFirstChild<TableGrid>()?.Elements<GridColumn>().Any() == true)
+            || autoGridFixable)
+            tableStyles.Add("table-layout:fixed");
 
         var tableClass = tableBordersNone ? "borderless" : "";
         var tableStyleAttr = tableStyles.Count > 0 ? $" style=\"{string.Join(";", tableStyles)}\"" : "";
@@ -391,7 +445,7 @@ public partial class WordHandler
                         var listStyle = GetParagraphListStyle(cellPara);
                         if (listStyle != null)
                         {
-                            RenderCellListItem(sb, cellPara, listStyle, ref cellListTag);
+                            RenderCellListItem(sb, cellPara, listStyle, ref cellListTag, olState);
                             continue;
                         }
                         CloseCellList();
@@ -410,7 +464,7 @@ public partial class WordHandler
                     else if (child is Table nestedTable)
                     {
                         CloseCellList();
-                        RenderTableHtml(sb, nestedTable, depth: depth + 1);
+                        RenderTableHtml(sb, nestedTable, depth: depth + 1, olState: olState);
                     }
                 }
                 CloseCellList();
@@ -462,8 +516,7 @@ public partial class WordHandler
         var currentId = styleId;
         while (currentId != null && visited.Add(currentId))
         {
-            var style = _doc.MainDocumentPart?.StyleDefinitionsPart?.Styles
-                ?.Elements<Style>().FirstOrDefault(s => s.StyleId?.Value == currentId);
+            var style = FindStyleById(currentId);
             if (style == null) break;
             var borders = style.StyleTableProperties?.TableBorders;
             if (borders != null) return borders;
@@ -536,8 +589,7 @@ public partial class WordHandler
         var chainStyles = new List<Style>();
         while (currentId != null && visited.Add(currentId))
         {
-            var style = _doc.MainDocumentPart?.StyleDefinitionsPart?.Styles
-                ?.Elements<Style>().FirstOrDefault(s => s.StyleId?.Value == currentId);
+            var style = FindStyleById(currentId);
             if (style == null) break;
             chainStyles.Add(style);
             currentId = style.BasedOn?.Val?.Value;
@@ -672,7 +724,7 @@ public partial class WordHandler
     /// nesting inside a cell collapses to one level (a known simplification;
     /// body-level lists remain the full-fidelity path).
     /// </summary>
-    private void RenderCellListItem(StringBuilder sb, Paragraph para, string listStyle, ref string? cellListTag)
+    private void RenderCellListItem(StringBuilder sb, Paragraph para, string listStyle, ref string? cellListTag, OrderedListNumberingState olState)
     {
         var resolvedNumPr = ResolveNumPrFromStyle(para);
         var ilvl = resolvedNumPr?.Ilvl ?? 0;
@@ -700,13 +752,9 @@ public partial class WordHandler
         else if (tag == "ul")
         {
             listStyleParts += ";list-style-image:none";
-            var bulletType = lvlText switch
-            {
-                "o" => "circle",
-                "◦" => "circle",
-                "" or "▪" => "square",
-                _ => "disc"
-            };
+            // CONSISTENCY(bullet-glyph-map): shared with body path and
+            // GetCustomListStyleString; null => disc.
+            var bulletType = BulletGlyphToCssKeyword(lvlText ?? "") ?? "disc";
             listStyleParts += $";list-style-type:{bulletType}";
         }
 
@@ -725,13 +773,12 @@ public partial class WordHandler
         var paraStyle = GetParagraphInlineCss(para, isListItem: true);
         if (tag == "ol")
         {
-            var template = string.IsNullOrEmpty(lvlText) ? $"%{ilvl + 1}" : lvlText!;
-            var counter = (GetStartValue(numId, ilvl) ?? 1);
-            var marker = System.Text.RegularExpressions.Regex.Replace(template, @"%(\d)", m =>
-            {
-                var lvlFmt = GetNumberingFormat(numId, ilvl);
-                return OfficeCli.Core.WordNumFmtRenderer.Render(counter, lvlFmt);
-            });
+            // Advance + render through the shared ordered-list engine (same as
+            // the body walk) so a cell's list continues document-flow numbering
+            // 1./2./3. instead of restarting at the level start on every item.
+            var seedAbsId = GetAbstractNumId(numId);
+            AdvanceOrderedCounter(olState, numId, seedAbsId, ilvl);
+            var marker = RenderOrderedMarker(olState, numId, ilvl, lvlText);
             var suff = GetLevelSuffix(numId, ilvl);
             var jc = GetLevelJustification(numId, ilvl);
             var markerWidth = hangingPt > 0 ? $"{hangingPt:0.#}pt" : "3em";
