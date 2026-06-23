@@ -3056,6 +3056,20 @@ public static partial class WordBatchEmitter
         // <w:sdtContent> / <w:sdtEndPr> don't match "<w:sdt" + space/'>'.)
         if (System.Text.RegularExpressions.Regex.Matches(sdtXml, "<w:sdt[ >]").Count > 1)
             return true;
+        // BUG-DUMP-H79: an SDT whose content carries a tracked change
+        // (<w:del>/<w:ins>/<w:moveFrom>/<w:moveTo>) cannot round-trip through the
+        // flat `add sdt text=` path — that path serializes only live text, so a
+        // del-only content paragraph (no live runs) flattens to empty and the
+        // deletion is silently dropped. None of the run/rPr/pPr triggers above
+        // fire for a pure <w:del> paragraph (the <w:r> sits inside <w:del>, the
+        // pPr is empty). Treat any tracked-change wrapper as rich → raw-set
+        // verbatim. (Same meta-pattern as the complex-field-result del fix: a
+        // tracked-change wrapper must force the verbatim path.)
+        if (sdtXml.Contains("<w:del", StringComparison.Ordinal)
+            || sdtXml.Contains("<w:ins", StringComparison.Ordinal)
+            || sdtXml.Contains("<w:moveFrom", StringComparison.Ordinal)
+            || sdtXml.Contains("<w:moveTo", StringComparison.Ordinal))
+            return true;
         return sdtXml.Contains("<w:hyperlink", StringComparison.Ordinal)
             || sdtXml.Contains("<w:fldChar", StringComparison.Ordinal)
             || sdtXml.Contains("w:instrText", StringComparison.Ordinal)
