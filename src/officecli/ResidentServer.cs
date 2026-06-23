@@ -1217,6 +1217,12 @@ public class ResidentServer : IDisposable
                     exportW = sw;
                     exportH = sh == 1200 ? Math.Max(1, (int)Math.Round(sw * (double)nativeH / nativeW)) : sh;
                 }
+                // -1 = auto: pick columns from slide count + aspect (mirrors CLI).
+                // Resolved BEFORE the native block's dispose so GetSlideCount is safe,
+                // and used by both the native and HTML paths.
+                int pptGridCols = gridCols < 0
+                    ? OfficeCli.Core.HtmlScreenshot.AutoGridColumns((pEnd ?? pptShotHandler.GetSlideCount()) - (pStart ?? 1) + 1, nativeW, nativeH)
+                    : gridCols;
                 if (renderMode != "html" && OperatingSystem.IsWindows())
                 {
                     // A read-only handler holds only read access with FileShare.ReadWrite,
@@ -1227,17 +1233,17 @@ public class ResidentServer : IDisposable
                     // count read doesn't touch a disposed handler.
                     var ps = pStart ?? 1;
                     int gGap = 12, gPad = 12, gCellW = 0, gCellH = 0, gEnd = 0;
-                    if (gridCols > 0)
+                    if (pptGridCols > 0)
                     {
-                        gCellW = Math.Max(1, (int)Math.Round((sw - 2 * gPad - (gridCols - 1) * gGap) / (double)gridCols));
+                        gCellW = Math.Max(1, (int)Math.Round((sw - 2 * gPad - (pptGridCols - 1) * gGap) / (double)pptGridCols));
                         gCellH = Math.Max(1, (int)Math.Round(gCellW * (double)nativeH / nativeW));
                         gEnd = pEnd ?? pptShotHandler.GetSlideCount();
                     }
                     if (_editable) _handler.Dispose();
                     try
                     {
-                        directPng = gridCols > 0
-                            ? OfficeCli.Core.PowerPointPngBackend.RenderGrid(_filePath, ps, gEnd, gCellW, gCellH, gridCols, gGap, gPad)
+                        directPng = pptGridCols > 0
+                            ? OfficeCli.Core.PowerPointPngBackend.RenderGrid(_filePath, ps, gEnd, gCellW, gCellH, pptGridCols, gGap, gPad)
                             : OfficeCli.Core.PowerPointPngBackend.Render(_filePath, ps, pEnd ?? ps, exportW, exportH);
                     }
                     catch { directPng = null; }
@@ -1254,7 +1260,7 @@ public class ResidentServer : IDisposable
                 }
                 if (directPng == null)
                 {
-                    html = pptShotHandler.ViewAsHtml(pStart, pEnd, gridCols, sw);
+                    html = pptShotHandler.ViewAsHtml(pStart, pEnd, pptGridCols, sw);
                     // Single slide: size the viewport to the slide's 96-DPI native
                     // pixels so the PNG is the slide, padding-free.
                     if (pStart == pEnd && gridCols == 0)
@@ -1266,33 +1272,33 @@ public class ResidentServer : IDisposable
             }
             else if (_handler is OfficeCli.Handlers.ExcelHandler excelShotHandler)
                 html = excelShotHandler.ViewAsHtml();
-            else if (_handler is OfficeCli.Handlers.WordHandler wordShotGrid && gridCols > 0)
+            else if (_handler is OfficeCli.Handlers.WordHandler wordShotGrid && gridCols != 0)
             {
                 // Contact-sheet grid (HTML-only, even on Windows) — mirrors
-                // CommandBuilder.View.cs's docx grid branch. See the
-                // CONSISTENCY(grid-html-only) note there.
+                // CommandBuilder.View.cs's docx grid branch (incl. -1 = auto). See
+                // the CONSISTENCY(grid-html-only) note there.
                 const int gGap = 12, gPad = 12, gMaxDim = 1920, gScrollbar = 17;
                 var (gNpW, gNpH) = wordShotGrid.GetPageNativePixels();
-                double gProvCellW = Math.Max(1.0, (sw - gPad * 2.0 - (gridCols - 1) * gGap) / gridCols);
                 int gPageCount = 1;
                 var gTmp = Path.Combine(Path.GetTempPath(), $"officecli_gridcount_{Path.GetFileNameWithoutExtension(_filePath)}_{Guid.NewGuid():N}.html");
                 try
                 {
-                    File.WriteAllText(gTmp, wordShotGrid.ViewAsHtml(null, gridCols, (int)Math.Round(gProvCellW)));
+                    File.WriteAllText(gTmp, wordShotGrid.ViewAsHtml(null));
                     gPageCount = OfficeCli.Core.HtmlScreenshot.GetPageCountFromDom(gTmp) ?? 1;
                 }
                 catch { /* fall back to 1 row */ }
                 finally { try { File.Delete(gTmp); } catch { /* ignore */ } }
 
-                int gRows = Math.Max(1, (gPageCount + gridCols - 1) / gridCols);
+                int gCols = gridCols < 0 ? OfficeCli.Core.HtmlScreenshot.AutoGridColumns(gPageCount, gNpW, gNpH) : gridCols;
+                int gRows = Math.Max(1, (gPageCount + gCols - 1) / gCols);
                 double gVpW = sw;
-                double gCellW = Math.Max(1.0, (gVpW - gScrollbar - gPad * 2.0 - (gridCols - 1) * gGap) / gridCols);
+                double gCellW = Math.Max(1.0, (gVpW - gScrollbar - gPad * 2.0 - (gCols - 1) * gGap) / gCols);
                 double gCellH = gCellW * gNpH / gNpW;
                 double gVpH = gPad * 2 + gRows * gCellH + (gRows - 1) * gGap;
                 double gOver = Math.Max(gVpW, gVpH) / gMaxDim;
                 if (gOver > 1.0) { gVpW /= gOver; gCellW /= gOver; gCellH /= gOver; gVpH /= gOver; }
 
-                html = wordShotGrid.ViewAsHtml(null, gridCols, (int)Math.Round(gCellW));
+                html = wordShotGrid.ViewAsHtml(null, gCols, (int)Math.Round(gCellW));
                 sw = Math.Max(1, (int)Math.Round(gVpW));
                 sh = Math.Max(1, (int)Math.Ceiling(gVpH));
             }

@@ -69,6 +69,22 @@ internal static class HtmlScreenshot
     public static int? GetPageCountFromDom(string htmlPath, int timeoutMs = 60000)
         => GetPaginationFromDom(htmlPath, timeoutMs)?.TotalPages;
 
+    /// <summary>
+    /// Pick a column count for a <paramref name="count"/>-item thumbnail contact
+    /// sheet so the composed image is roughly square — used by `--grid auto`.
+    /// Each cell is <paramref name="cellW"/>×<paramref name="cellH"/>; the grid
+    /// image has aspect (rows·cellH)/(cols·cellW) = (count/cols²)·(cellH/cellW),
+    /// so cols ≈ √(count·aspect) makes it ≈ 1. Portrait pages (aspect &gt; 1) get
+    /// more columns, landscape slides (aspect &lt; 1) fewer. Clamped to [1, count].
+    /// </summary>
+    public static int AutoGridColumns(int count, double cellW, double cellH)
+    {
+        if (count <= 1) return 1;
+        double aspect = cellH / Math.Max(1.0, cellW);
+        int cols = (int)Math.Round(Math.Sqrt(count * aspect));
+        return Math.Clamp(cols, 1, count);
+    }
+
     public static Result Capture(string htmlPath, string outPath, int width = 1600, int height = 1200)
     {
         var url = new Uri(Path.GetFullPath(htmlPath)).AbsoluteUri + "#screenshot";

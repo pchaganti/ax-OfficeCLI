@@ -294,16 +294,20 @@ public static class McpServer
                 exportW = width;
                 exportH = height == 1200 ? Math.Max(1, (int)Math.Round(width * (double)nativeH / nativeW)) : height;
             }
+            // -1 = auto: pick columns from slide count + aspect (mirrors CLI).
+            int pptGrid = grid < 0
+                ? OfficeCli.Core.HtmlScreenshot.AutoGridColumns((end ?? ppt.GetSlideCount()) - pStart + 1, nativeW, nativeH)
+                : grid;
             if (renderMode != "html" && OperatingSystem.IsWindows())
             {
                 try
                 {
-                    if (grid > 0)
+                    if (pptGrid > 0)
                     {
                         const int gap = 12, pad = 12;
-                        int cellW = Math.Max(1, (int)Math.Round((width - 2 * pad - (grid - 1) * gap) / (double)grid));
+                        int cellW = Math.Max(1, (int)Math.Round((width - 2 * pad - (pptGrid - 1) * gap) / (double)pptGrid));
                         int cellH = Math.Max(1, (int)Math.Round(cellW * (double)nativeH / nativeW));
-                        directPng = OfficeCli.Core.PowerPointPngBackend.RenderGrid(file, pStart, end ?? ppt.GetSlideCount(), cellW, cellH, grid, gap, pad);
+                        directPng = OfficeCli.Core.PowerPointPngBackend.RenderGrid(file, pStart, end ?? ppt.GetSlideCount(), cellW, cellH, pptGrid, gap, pad);
                     }
                     else
                     {
@@ -316,7 +320,7 @@ public static class McpServer
                 throw new ArgumentException("render=native requires Windows with Microsoft PowerPoint installed.");
             if (directPng == null)
             {
-                html = ppt.ViewAsHtml(pStart, pEnd, grid, width);
+                html = ppt.ViewAsHtml(pStart, pEnd, pptGrid, width);
                 if (pStart == pEnd && grid == 0)
                 {
                     if (width == 1600 && height == 1200) { width = nativeW; height = nativeH; }
@@ -325,32 +329,33 @@ public static class McpServer
             }
         }
         else if (handler is Handlers.ExcelHandler ex) html = ex.ViewAsHtml();
-        else if (handler is Handlers.WordHandler whGrid && grid > 0)
+        else if (handler is Handlers.WordHandler whGrid && grid != 0)
         {
-            // Contact-sheet grid (HTML-only) — mirrors CommandBuilder.View.cs's
-            // docx grid branch. See its CONSISTENCY(grid-html-only) note.
+            // Contact-sheet grid (HTML-only, incl. -1 = auto) — mirrors
+            // CommandBuilder.View.cs's docx grid branch. See its
+            // CONSISTENCY(grid-html-only) note.
             const int gap = 12, pad = 12, maxDim = 1920, scrollbar = 17;
             var (npW, npH) = whGrid.GetPageNativePixels();
-            double provCellW = Math.Max(1.0, (width - pad * 2.0 - (grid - 1) * gap) / grid);
             int pageCount = 1;
             var tmpForCount = Path.Combine(Path.GetTempPath(), $"officecli_gridcount_{Path.GetFileNameWithoutExtension(file)}_{Guid.NewGuid():N}.html");
             try
             {
-                File.WriteAllText(tmpForCount, whGrid.ViewAsHtml(null, grid, (int)Math.Round(provCellW)));
+                File.WriteAllText(tmpForCount, whGrid.ViewAsHtml(null));
                 pageCount = OfficeCli.Core.HtmlScreenshot.GetPageCountFromDom(tmpForCount) ?? 1;
             }
             catch { /* fall back to 1 row */ }
             finally { try { File.Delete(tmpForCount); } catch { /* ignore */ } }
 
-            int rows = Math.Max(1, (pageCount + grid - 1) / grid);
+            int cols = grid < 0 ? OfficeCli.Core.HtmlScreenshot.AutoGridColumns(pageCount, npW, npH) : grid;
+            int rows = Math.Max(1, (pageCount + cols - 1) / cols);
             double vpW = width;
-            double cellW = Math.Max(1.0, (vpW - scrollbar - pad * 2.0 - (grid - 1) * gap) / grid);
+            double cellW = Math.Max(1.0, (vpW - scrollbar - pad * 2.0 - (cols - 1) * gap) / cols);
             double cellH = cellW * npH / npW;
             double vpH = pad * 2 + rows * cellH + (rows - 1) * gap;
             double over = Math.Max(vpW, vpH) / maxDim;
             if (over > 1.0) { vpW /= over; cellW /= over; cellH /= over; vpH /= over; }
 
-            html = whGrid.ViewAsHtml(null, grid, (int)Math.Round(cellW));
+            html = whGrid.ViewAsHtml(null, cols, (int)Math.Round(cellW));
             width = Math.Max(1, (int)Math.Round(vpW));
             height = Math.Max(1, (int)Math.Ceiling(vpH));
         }
@@ -783,7 +788,7 @@ Paths are 1-based: /slide[1]/shape[2], /body/p[3], /Sheet1/A1. Props are key=val
         // screenshot_width / screenshot_height / grid (screenshot mode)
         w.WriteStartObject("screenshot_width"); w.WriteString("type", "number"); w.WriteString("description", "Viewport width for screenshot mode (default 1600)"); w.WriteEndObject();
         w.WriteStartObject("screenshot_height"); w.WriteString("type", "number"); w.WriteString("description", "Viewport height for screenshot mode (default 1200)"); w.WriteEndObject();
-        w.WriteStartObject("grid"); w.WriteString("type", "number"); w.WriteString("description", "Tile pages/slides into N-column thumbnail contact sheet (screenshot mode, pptx + docx; 0 = off)"); w.WriteEndObject();
+        w.WriteStartObject("grid"); w.WriteString("type", "number"); w.WriteString("description", "Tile pages/slides into a thumbnail contact sheet (screenshot mode, pptx + docx). N = column count; -1 = auto (pick columns to keep the sheet roughly square); 0 = off."); w.WriteEndObject();
         // depth
         w.WriteStartObject("depth"); w.WriteString("type", "number"); w.WriteString("description", "Child depth for get (default 1)"); w.WriteEndObject();
         // index
