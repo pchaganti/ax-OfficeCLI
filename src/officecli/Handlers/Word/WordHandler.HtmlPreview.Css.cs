@@ -121,6 +121,13 @@ public partial class WordHandler
             tint: hasTint, shade: hasShade, lumMod: hasLumMod, lumOff: hasLumOff);
     }
 
+    // CONSISTENCY(shape-fill-css): this solidFill/gradFill/pattFill → CSS mapping
+    // is ~70% structurally duplicated by PowerPointHandler.GetShapeFillCss
+    // (Pptx/PowerPointHandler.HtmlPreview.Css.cs). They diverge on element access
+    // (untyped LocalName scan here vs SDK-typed GetFirstChild there) and ride
+    // different tint/shade extraction before both delegate to ColorMath. Deferred
+    // Core consolidation (e.g. Core/ShapeFillCss) — do NOT land as a one-handler
+    // special case; unify cross-handler in one pass once the docx fix-storm settles.
     private string ResolveShapeFillCss(OpenXmlElement? spPr)
     {
         if (spPr == null) return "";
@@ -1998,17 +2005,28 @@ public partial class WordHandler
                         child.InnerXml, @"val=""([0-9A-Fa-f]{6})""");
                     var color = colorMatch.Success ? $"#{colorMatch.Groups[1].Value}" : "#000000";
                     var blurEmu = attrs.TryGetValue("blurRad", out var br) && long.TryParse(br, out var blurVal) ? blurVal : 0;
-                    var blurPx = blurEmu / EmuConverter.EmuPerPointF * 1.333;
+                    // Word renders w14:shadow on body text far more subtly than a
+                    // literal EMU→px translation suggests: the default preset
+                    // (blurRad=38100, dist=19050, dk1 @ full alpha) is barely
+                    // visible behind glyphs, not the heavy "1.4px 1.4px 4px"
+                    // smudge a direct mapping produces. Cap offset/blur to small
+                    // values and clamp opacity low so a document full of default
+                    // shadows reads clean instead of dirty/embossed.
+                    var blurPx = Math.Min(blurEmu / EmuConverter.EmuPerPointF * 1.333, 1.5);
                     var distEmu = attrs.TryGetValue("dist", out var dist) && long.TryParse(dist, out var distLong) ? distLong : 0;
                     var dirVal = attrs.TryGetValue("dir", out var dir) && long.TryParse(dir, out var dirLong) ? dirLong : 0;
                     var angleRad = dirVal / 60000.0 * Math.PI / 180.0;
-                    var distPx = distEmu / EmuConverter.EmuPerPointF * 1.333;
+                    var distPx = Math.Min(distEmu / EmuConverter.EmuPerPointF * 1.333, 0.8);
                     var xPx = distPx * Math.Sin(angleRad);
                     var yPx = distPx * Math.Cos(angleRad);
                     var alphaMatch = System.Text.RegularExpressions.Regex.Match(
                         child.InnerXml, @"alpha[^>]*val=""(\d+)""");
-                    if (alphaMatch.Success && double.TryParse(alphaMatch.Groups[1].Value, out var alphaVal) && alphaVal < 100000)
-                        color = HexToRgba(color, alphaVal / 100000.0);
+                    // Author alpha (if any) is a *ceiling*; Word never shows the
+                    // body-text shadow at full strength, so clamp to <=0.30.
+                    var shadowAlpha = alphaMatch.Success && double.TryParse(alphaMatch.Groups[1].Value, out var alphaVal)
+                        ? alphaVal / 100000.0
+                        : 1.0;
+                    color = HexToRgba(color, Math.Min(shadowAlpha, 0.30));
                     textShadows.Add($"{xPx:0.#}px {yPx:0.#}px {blurPx:0.#}px {color}");
                     break;
                 }
@@ -2437,31 +2455,36 @@ public partial class WordHandler
     /// <summary>Resolve a diagonal cell border's color + stroke width (pt) the
     /// same way RenderBorderCss resolves box borders (sz eighths-of-pt, hex or
     /// themeColor with tint/shade, fallback black).</summary>
+    /// <summary>
+    /// Resolve a literal-or-theme color to a CSS color string, handling the
+    /// "#hex (unless auto) else themeColor + themeTint/themeShade else null"
+    /// chain shared by cell/diagonal borders and run color. Callers supply the
+    /// literal color and theme name (their attribute names differ — borders use
+    /// w:color/w:themeColor, run color uses w:val/typed ThemeColor) and the
+    /// fallback for the null case. themeTint/themeShade are read generically
+    /// off <paramref name="element"/>.
+    /// </summary>
+    private string? ResolveThemeAwareColor(OpenXmlElement element, string? literalColor, string? themeName)
+    {
+        if (literalColor != null && !literalColor.Equals("auto", StringComparison.OrdinalIgnoreCase) && IsHexColor(literalColor))
+            return $"#{literalColor}";
+        if (themeName != null && GetThemeColors().TryGetValue(themeName, out var tcHex))
+        {
+            var tint = element.GetAttributes().FirstOrDefault(a => a.LocalName == "themeTint").Value;
+            var shade = element.GetAttributes().FirstOrDefault(a => a.LocalName == "themeShade").Value;
+            return ApplyTintShade(tcHex, tint, shade);
+        }
+        return null;
+    }
+
     private (string color, double widthPt) ResolveDiagonalLine(OpenXmlElement border)
     {
         var sz = border.GetAttributes().FirstOrDefault(a => a.LocalName == "sz").Value;
         var color = border.GetAttributes().FirstOrDefault(a => a.LocalName == "color").Value;
+        var themeColor = border.GetAttributes().FirstOrDefault(a => a.LocalName == "themeColor").Value;
         var widthPt = sz != null && int.TryParse(sz, out var s) ? Math.Max(0.5, s / 8.0) : 1.0;
 
-        string cssColor;
-        if (color != null && !color.Equals("auto", StringComparison.OrdinalIgnoreCase) && IsHexColor(color))
-        {
-            cssColor = $"#{color}";
-        }
-        else
-        {
-            var themeColor = border.GetAttributes().FirstOrDefault(a => a.LocalName == "themeColor").Value;
-            if (themeColor != null && GetThemeColors().TryGetValue(themeColor, out var tcHex))
-            {
-                var tint = border.GetAttributes().FirstOrDefault(a => a.LocalName == "themeTint").Value;
-                var shade = border.GetAttributes().FirstOrDefault(a => a.LocalName == "themeShade").Value;
-                cssColor = ApplyTintShade(tcHex, tint, shade);
-            }
-            else
-            {
-                cssColor = "#000";
-            }
-        }
+        var cssColor = ResolveThemeAwareColor(border, color, themeColor) ?? "#000";
         return (cssColor, widthPt);
     }
 
@@ -2494,26 +2517,8 @@ public partial class WordHandler
         var width = $"{widthPt:0.##}pt";
 
         // Resolve color: try direct color, then themeColor with tint/shade
-        string cssColor;
-        if (color != null && !color.Equals("auto", StringComparison.OrdinalIgnoreCase)
-            && IsHexColor(color))
-        {
-            cssColor = $"#{color}";
-        }
-        else
-        {
-            var themeColor = border.GetAttributes().FirstOrDefault(a => a.LocalName == "themeColor").Value;
-            if (themeColor != null && GetThemeColors().TryGetValue(themeColor, out var tcHex))
-            {
-                var tint = border.GetAttributes().FirstOrDefault(a => a.LocalName == "themeTint").Value;
-                var shade = border.GetAttributes().FirstOrDefault(a => a.LocalName == "themeShade").Value;
-                cssColor = ApplyTintShade(tcHex, tint, shade);
-            }
-            else
-            {
-                cssColor = "#000";
-            }
-        }
+        var themeColor = border.GetAttributes().FirstOrDefault(a => a.LocalName == "themeColor").Value;
+        var cssColor = ResolveThemeAwareColor(border, color, themeColor) ?? "#000";
 
         parts.Add($"{cssProp}:{width} {style} {cssColor}");
 
@@ -2530,17 +2535,7 @@ public partial class WordHandler
     private string? ResolveRunColor(DocumentFormat.OpenXml.Wordprocessing.Color? color)
     {
         if (color == null) return null;
-        var colorVal = color.Val?.Value;
-        if (colorVal != null && colorVal != "auto" && IsHexColor(colorVal))
-            return $"#{colorVal}";
-        var tcName = color.ThemeColor?.InnerText;
-        if (tcName != null && GetThemeColors().TryGetValue(tcName, out var tcHex))
-        {
-            var tint = color.GetAttributes().FirstOrDefault(a => a.LocalName == "themeTint").Value;
-            var shade = color.GetAttributes().FirstOrDefault(a => a.LocalName == "themeShade").Value;
-            return ApplyTintShade(tcHex, tint, shade);
-        }
-        return null;
+        return ResolveThemeAwareColor(color, color.Val?.Value, color.ThemeColor?.InnerText);
     }
 
     /// <summary>
