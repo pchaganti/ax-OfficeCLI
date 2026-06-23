@@ -4613,6 +4613,15 @@ public static partial class WordBatchEmitter
             || sdtXml.Contains("<w:moveFrom", StringComparison.Ordinal)
             || sdtXml.Contains("<w:moveTo", StringComparison.Ordinal))
             return true;
+        // BUG-DUMP-H94: a run-level SDT whose content carries a range/anchor marker
+        // (<w:bookmarkStart/End>, <w:commentRangeStart/End> / <w:commentReference>,
+        // <w:permStart/End>) loses those markers through the flat `add sdt text=`
+        // path (seeds only text). Inline-path counterpart of the IsRichBlockSdt
+        // fix; force the verbatim raw-set path.
+        if (sdtXml.Contains("<w:bookmark", StringComparison.Ordinal)
+            || sdtXml.Contains("<w:comment", StringComparison.Ordinal)
+            || sdtXml.Contains("<w:perm", StringComparison.Ordinal))
+            return true;
         return sdtXml.Contains("<w:hyperlink", StringComparison.Ordinal)
             || sdtXml.Contains("<w:fldChar", StringComparison.Ordinal)
             || sdtXml.Contains("w:instrText", StringComparison.Ordinal)
