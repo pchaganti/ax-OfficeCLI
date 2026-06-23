@@ -2011,7 +2011,24 @@ public partial class PowerPointHandler
         var cxnRotTransform = "";
         if (xfrm?.Rotation != null && xfrm.Rotation.Value != 0)
             cxnRotTransform = $";transform:rotate({xfrm.Rotation.Value / 60000.0:0.##}deg)";
-        sb.AppendLine($"    <div class=\"connector\"{dataPathAttr} style=\"left:{Units.EmuToPt(renderX)}pt;top:{Units.EmuToPt(renderY)}pt;width:{widthPt}pt;height:{heightPt}pt{cxnRotTransform}\">");
+        // Effects (outer shadow / glow / blur) — connectors carry a:effectLst on their
+        // spPr just like shapes/pictures and PowerPoint renders the shadow beneath the
+        // line. RenderConnector previously dropped it entirely; mirror the shape path
+        // (the SVG sits in an overflow:visible div, so filter:drop-shadow applies to the
+        // stroke). Inner shadow has no CSS-filter equivalent on a line, so skip it.
+        var cxnEffectList = spPr?.GetFirstChild<Drawing.EffectList>();
+        var cxnFilterParts = new List<string>();
+        var cxnShadowCss = EffectListToShadowCss(cxnEffectList, themeColors);
+        if (!string.IsNullOrEmpty(cxnShadowCss) && !cxnShadowCss.StartsWith("box-shadow:"))
+            cxnFilterParts.Add(cxnShadowCss.Replace("filter:", ""));
+        var cxnGlowCss = EffectListToGlowCss(cxnEffectList, themeColors);
+        if (!string.IsNullOrEmpty(cxnGlowCss))
+            cxnFilterParts.Add(cxnGlowCss.Replace("filter:", ""));
+        var cxnBlurCss = EffectListToBlurCss(cxnEffectList);
+        if (!string.IsNullOrEmpty(cxnBlurCss))
+            cxnFilterParts.Add(cxnBlurCss);
+        var cxnFilter = cxnFilterParts.Count > 0 ? $";filter:{string.Join(" ", cxnFilterParts)}" : "";
+        sb.AppendLine($"    <div class=\"connector\"{dataPathAttr} style=\"left:{Units.EmuToPt(renderX)}pt;top:{Units.EmuToPt(renderY)}pt;width:{widthPt}pt;height:{heightPt}pt{cxnRotTransform}{cxnFilter}\">");
 
         if (preset.StartsWith("bentConnector", StringComparison.Ordinal))
         {
