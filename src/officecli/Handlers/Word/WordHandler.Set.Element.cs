@@ -2855,7 +2855,12 @@ public partial class WordHandler
                     tpp.BottomFromText = ParseTblpFromTextShort(value, key);
                     break;
                 }
+                // BUG-DUMP-H89: `tbloverlap.val` is the Get readback key; accept it
+                // (and bare `tbloverlap`) as aliases for `overlap` so dump→batch
+                // round-trips instead of silently ignoring the emitted key.
                 case "overlap":
+                case "tbloverlap.val":
+                case "tbloverlap":
                 {
                     tblPr.RemoveAllChildren<TableOverlap>();
                     if (!value.Equals("none", StringComparison.OrdinalIgnoreCase))

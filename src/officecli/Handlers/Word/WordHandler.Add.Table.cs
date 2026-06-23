@@ -285,7 +285,9 @@ public partial class WordHandler
             "padding", "padding.top", "padding.bottom", "padding.left", "padding.right",
             "style", "shd", "shading", "cellShading", "direction", "dir", "bidi",
             // CONSISTENCY(add-set-symmetry): mirror Set's tblPr-level cases.
-            "overlap", "caption", "description",
+            // BUG-DUMP-H89: `tblOverlap.val` is the Get readback key (Navigation.cs);
+            // accept it as an alias for `overlap` so dump→batch round-trips.
+            "overlap", "tblOverlap.val", "tblOverlap", "caption", "description",
             // BUG-DUMP-R36-2: band stripe widths.
             "rowbandsize", "colbandsize", "columnbandsize",
             // BUG-DUMP-R40-5: tblLook bitmask + decomposed facets. Without these
@@ -498,7 +500,12 @@ public partial class WordHandler
                         tblProps.Shading = ParseShadingValue(tv);
                     }
                     break;
+                // BUG-DUMP-H89: `tbloverlap.val` is the Get readback key; accept it
+                // (and bare `tbloverlap`) as aliases for `overlap` so the dump's
+                // emitted key round-trips through batch instead of being ignored.
                 case "overlap":
+                case "tbloverlap.val":
+                case "tbloverlap":
                 {
                     // CONSISTENCY(add-set-symmetry): mirror Set's overlap case
                     // (Set.Element.cs:1752). CT_TblPr schema:
