@@ -2164,7 +2164,42 @@ public partial class WordHandler
                 RenderParagraphHtml(sb, para);
             }
             else if (child is Table tbl)
-                RenderTableHtml(sb, tbl);
+                RenderTableHtmlPaged(sb, tbl);
+        }
+    }
+
+    /// <summary>
+    /// Render a top-level (body) table, then neutralize any page-break markers
+    /// that originated inside its cells.
+    ///
+    /// R130: a <c>&lt;w:br w:type="page"/&gt;</c> inside a table cell emits the
+    /// <c>&lt;!--PAGE_BREAK--&gt;</c> marker via <see cref="RenderParagraphContentHtml"/>
+    /// (it can't know it's inside a cell). When the body buffer is later split on
+    /// that marker (<see cref="ViewAsHtmlCore"/>), the page-wrapper/page/page-body
+    /// boundary divs would be injected while the <c>&lt;td&gt;</c>/<c>&lt;table&gt;</c>
+    /// is still open — producing invalid nested HTML AND two bogus blank A4 pages.
+    /// Real Word renders an in-cell page break as a soft line/paragraph break and
+    /// keeps the whole table on one page (a table can't be split mid-cell across a
+    /// hard page boundary the way the body flow can).
+    ///
+    /// Every PAGE_BREAK marker produced during a table render is necessarily
+    /// in-cell (tables themselves never emit the marker — only the per-paragraph
+    /// content renderer does, and inside a table that only runs for cell
+    /// paragraphs). The in-cell emit shape is <c>&lt;/p&gt;&lt;!--PAGE_BREAK--&gt;&lt;p…&gt;</c>,
+    /// so dropping just the marker leaves a valid <c>&lt;/p&gt;&lt;p…&gt;</c>
+    /// paragraph boundary inside the cell. Body-level page breaks are unaffected:
+    /// they are emitted directly into the body buffer outside any table wrapper.
+    /// </summary>
+    private void RenderTableHtmlPaged(StringBuilder sb, Table table, string? dataPath = null, OrderedListNumberingState? olState = null)
+    {
+        int start = sb.Length;
+        RenderTableHtml(sb, table, dataPath: dataPath, olState: olState);
+        // Strip in-cell page-break markers from just-appended table fragment.
+        var fragment = sb.ToString(start, sb.Length - start);
+        if (fragment.Contains("<!--PAGE_BREAK-->"))
+        {
+            sb.Length = start;
+            sb.Append(fragment.Replace("<!--PAGE_BREAK-->", ""));
         }
     }
 
@@ -3093,7 +3128,7 @@ public partial class WordHandler
                 // Thread the body walk's ordered-list counter so a table cell's
                 // <ol> continues document-flow numbering (Word advances the
                 // counter through table paragraphs too). (CONSISTENCY(list-marker))
-                RenderTableHtml(sb, table, dataPath: $"/body/table[{wTableCount}]", olState: olState);
+                RenderTableHtmlPaged(sb, table, dataPath: $"/body/table[{wTableCount}]", olState: olState);
             }
             else if (element is AltChunk altChunk)
             {
