@@ -2951,6 +2951,17 @@ public static partial class WordBatchEmitter
         // the inner paragraph style (and the showingPlcHdr placeholder) survive.
         if (sdtXml.Contains("<w:pStyle", StringComparison.Ordinal))
             return true;
+        // BUG-DUMP-SDT-PPR: a content paragraph carrying direct paragraph-level
+        // formatting (jc / ind / framePr / keepNext / spacing / cnfStyle / numPr /
+        // suppressLineNumbers / the CJK kinsoku family / …) in its <w:pPr> cannot
+        // round-trip through the flat `add sdt text=` path — AddSdt seeds a
+        // default paragraph and drops ALL pPr. The pStyle/rPr triggers above only
+        // cover styled or run/mark-formatted paragraphs; a plain-run paragraph with
+        // rich pPr fell to the lossy path. Any <w:pPr> with a child element means
+        // direct paragraph formatting is present → raw-set verbatim. (An empty
+        // <w:pPr/> or <w:pPr></w:pPr> has no children and won't match.)
+        if (System.Text.RegularExpressions.Regex.IsMatch(sdtXml, "<w:pPr>\\s*<w:"))
+            return true;
         return sdtXml.Contains("<w:hyperlink", StringComparison.Ordinal)
             || sdtXml.Contains("<w:fldChar", StringComparison.Ordinal)
             || sdtXml.Contains("w:instrText", StringComparison.Ordinal)
