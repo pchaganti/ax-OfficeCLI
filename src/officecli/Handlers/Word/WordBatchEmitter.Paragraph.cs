@@ -2914,6 +2914,16 @@ public static partial class WordBatchEmitter
                 var blipInner = CapturePicBlipInnerXml(picXml);
                 if (!string.IsNullOrEmpty(blipInner))
                     picProps["blipEffects"] = blipInner!;
+                // BUG-R13C consistency: CapturePicBlipInnerXml/StripRelReferencingBlipExts
+                // drops the SVG companion (<asvg:svgBlip r:embed=…>) because its dangling
+                // relationship would abort the whole `add picture`; the PNG raster
+                // fallback still renders, so content is conserved but the VECTOR layer is
+                // lost. Surface that as a warning — mirroring the theme-image / OLE
+                // fallback-drop warnings — instead of dropping it silently.
+                if (picXml.Contains("svgBlip", StringComparison.Ordinal))
+                    ctx?.Warnings.Add(new DocxUnsupportedWarning(
+                        "picture", run.Path,
+                        "SVG vector layer (svgBlip) dropped on round-trip; PNG raster fallback preserved"));
                 var spEffectLst = CapturePicSpPrEffectLst(picXml);
                 if (!string.IsNullOrEmpty(spEffectLst))
                     picProps["spEffects"] = spEffectLst!;
