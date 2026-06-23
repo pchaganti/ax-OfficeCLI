@@ -2057,10 +2057,18 @@ public partial class WordHandler
             if (ei > 0 && elements[ei - 1] is Paragraph prevP
                 && prevP.ParagraphProperties?.GetFirstChild<SectionProperties>() is SectionProperties prevInlineSectPr)
             {
-                var sectType = prevInlineSectPr.GetFirstChild<SectionType>();
-                if (sectType?.Val?.Value == SectionMarkValues.NextPage
-                    || sectType?.Val?.Value == SectionMarkValues.EvenPage
-                    || sectType?.Val?.Value == SectionMarkValues.OddPage)
+                // ECMA-376 §17.6.22: an omitted <w:type> defaults to
+                // "nextPage" — the section break still starts a new page.
+                // Only "continuous" and the same-page "nextColumn" variant
+                // stay on the current page. Treating a missing type as
+                // "no break" merged consecutive sections onto one page, so the
+                // page's LAST <!--SECT:N--> marker (picked by sectMatches[^1])
+                // pointed at a later section than the page's real owner —
+                // flipping page-1 header/footer selection to the wrong
+                // section's variant.
+                var sectTypeVal = prevInlineSectPr.GetFirstChild<SectionType>()?.Val?.Value;
+                if (sectTypeVal != SectionMarkValues.Continuous
+                    && sectTypeVal != SectionMarkValues.NextColumn)
                 {
                     sb.Append("<!--PAGE_BREAK-->");
                 }
