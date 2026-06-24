@@ -595,6 +595,14 @@ public partial class PowerPointHandler
         var scheme = schemeEl?.Val?.InnerText;
         if (scheme != null && themeColors.TryGetValue(scheme, out var tc))
             return ApplyColorTransforms(tc, schemeEl!);
+        // Preset/named color stop (<a:gs><a:prstClr val="red"/>): mirror ResolveFillColor's
+        // prstClr support so a named-color gradient stop isn't dropped to transparent.
+        var prstEl = gs.GetFirstChild<Drawing.PresetColor>();
+        if (prstEl?.Val?.HasValue == true)
+        {
+            var h = ParseHelpers.TryGetNamedColorHex(prstEl.Val!.InnerText);
+            if (h != null) return ApplyColorTransforms(h, prstEl);
+        }
         return "transparent";
     }
 
@@ -637,7 +645,13 @@ public partial class PowerPointHandler
                         color = ApplyColorTransforms(tc, schemeEl!);
                     }
                     else
-                        color = "transparent";
+                    {
+                        // Preset/named color stop (<a:prstClr val="...">) — was dropped to
+                        // transparent, blanking the whole gradient fill.
+                        var prstEl = gs.GetFirstChild<Drawing.PresetColor>();
+                        var ph = prstEl?.Val?.HasValue == true ? ParseHelpers.TryGetNamedColorHex(prstEl.Val!.InnerText) : null;
+                        color = ph != null ? ApplyColorTransforms(ph, prstEl!) : "transparent";
+                    }
                 }
             }
             var pos = gs.Position?.Value;
@@ -2829,6 +2843,15 @@ public partial class PowerPointHandler
             var schemeName = schemeColor.Val!.InnerText;
             if (schemeName != null && themeColors.TryGetValue(schemeName, out var themeHex))
                 return ApplyColorTransforms(themeHex, schemeColor);
+        }
+
+        // Preset/named bullet color (<a:buClr><a:prstClr val="red"/>): was dropped to null,
+        // so the bullet glyph inherited the text color instead of its named color.
+        var prstColor = buClr.GetFirstChild<Drawing.PresetColor>();
+        if (prstColor?.Val?.HasValue == true)
+        {
+            var hex = ParseHelpers.TryGetNamedColorHex(prstColor.Val!.InnerText);
+            if (hex != null) return ApplyColorTransforms(hex, prstColor);
         }
 
         return null;
