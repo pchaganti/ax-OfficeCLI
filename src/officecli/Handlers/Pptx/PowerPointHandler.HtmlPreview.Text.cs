@@ -1164,6 +1164,22 @@ public partial class PowerPointHandler
             // R26-3: inherit master/layout defRPr bold/italic for a run with no rPr.
             if (inheritedBold == true) styles.Add("font-weight:bold");
             if (inheritedItalic == true) styles.Add("font-style:italic");
+            // Inherited caps / underline / strike / spacing for a run with NO rPr.
+            // The rp != null branch above consumes these (inheritedCap/Underline/
+            // Strike/Spacing), but this branch was never updated as each was added,
+            // so a bare run dropped an inherited all-caps / underline / strike /
+            // tracking that PowerPoint applies (e.g. an all-caps title style or a
+            // defRPr with spc on a run that carries no rPr of its own).
+            if (inheritedCap == Drawing.TextCapsValues.All) styles.Add("text-transform:uppercase");
+            else if (inheritedCap == Drawing.TextCapsValues.Small) styles.Add("font-variant-caps:small-caps");
+            var inhDeco = new List<string>();
+            if (inheritedUnderline != null && inheritedUnderline != Drawing.TextUnderlineValues.None)
+                inhDeco.Add("underline");
+            if (inheritedStrike != null && inheritedStrike != Drawing.TextStrikeValues.NoStrike)
+                inhDeco.Add("line-through");
+            if (inhDeco.Count > 0) styles.Add($"text-decoration:{string.Join(" ", inhDeco)}");
+            if (inheritedSpacing.HasValue)
+                styles.Add($"letter-spacing:{inheritedSpacing.Value / 100.0:0.##}pt");
         }
 
         // Auto-style hyperlink runs that lack explicit color/underline. Uses
