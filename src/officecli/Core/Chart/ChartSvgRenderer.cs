@@ -2866,6 +2866,7 @@ internal partial class ChartSvgRenderer
         public string LegendPos { get; set; } = "r";
         public string LegendFontSize { get; set; } = "8pt";
         public string? LegendFontColor { get; set; }
+        public bool LegendFontBold { get; set; }
         public int ValFontPx { get; set; } = 9;
         public string? ValFontColor { get; set; }
         public int CatFontPx { get; set; } = 9;
@@ -3438,6 +3439,12 @@ internal partial class ChartSvgRenderer
             if (legendFontSize != null && int.TryParse(legendFontSize, out var lfs))
                 info.LegendFontSize = $"{lfs / 100.0:0.##}pt";
             info.LegendFontColor = ExtractFontColor(legendRPr, themeColors);
+            // Legend font bold (<c:legend><c:txPr>…<a:rPr b="1"/> or defRPr): the renderer
+            // emitted size+color but never font-weight, so a bold legend rendered normal.
+            // Mirrors the chart-title bold path. legendRPr is RunProperties|DefaultRunProperties;
+            // read the "b" attribute generically.
+            var legendBold = legendRPr?.GetAttributes().FirstOrDefault(a => a.LocalName == "b").Value;
+            info.LegendFontBold = legendBold == "1" || legendBold == "true";
             // #7f: honor <c:legendPos w:val="r|l|t|b|tr"/>.
             var posEl = legendEl.Elements().FirstOrDefault(e => e.LocalName == "legendPos");
             var posVal = posEl?.GetAttributes().FirstOrDefault(a => a.LocalName == "val").Value;
@@ -4301,7 +4308,7 @@ internal partial class ChartSvgRenderer
         // reject anything outside the schema to stop an adversarial
         // <c:legendPos val='x" onclick=..."'/> from escaping the attr.
         var safePos = info.LegendPos is "r" or "l" or "t" or "b" or "tr" or "ctr" ? info.LegendPos : "";
-        sb.Append($"<div class=\"chart-legend\" data-legend-pos=\"{safePos}\" style=\"{layoutCss};font-size:{info.LegendFontSize};color:{legendColor}\">");
+        sb.Append($"<div class=\"chart-legend\" data-legend-pos=\"{safePos}\" style=\"{layoutCss};font-size:{info.LegendFontSize};color:{legendColor}{(info.LegendFontBold ? ";font-weight:bold" : "")}\">");
         if (isPieType && info.Categories.Length > 0)
         {
             for (int i = 0; i < info.Categories.Length; i++)
