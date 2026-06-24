@@ -445,17 +445,24 @@ internal partial class ChartSvgRenderer
             double TickX(double tFrac) => isReversed
                 ? plotOx + (double)plotPw * (1 - tFrac)
                 : plotOx + (double)plotPw * tFrac;
+            // Gridlines at the tick VALUES on the value scale (ValToX), matching the bars
+            // — not even pixel fractions, which diverge when an explicit axisMax isn't a
+            // multiple of tickStep. No-op when nTicks*tickStep==span.
             if (ShowValMinorGridlines && ValAxisVisible)
             for (int t = 0; t < nTicks; t++)
                 for (int m = 1; m < MinorGridlineCount; m++)
                 {
-                    var gx = TickX((t + (double)m / MinorGridlineCount) / nTicks);
+                    var minorVal = niceMin + tickStep * (t + (double)m / MinorGridlineCount);
+                    if (minorVal > niceMax + 1e-9) continue;
+                    var gx = ValToX(minorVal);
                     sb.AppendLine($"        <line x1=\"{gx:0.#}\" y1=\"{oy}\" x2=\"{gx:0.#}\" y2=\"{oy + ph}\" stroke=\"{GridColor}\" stroke-width=\"0.25\" opacity=\"0.5\"/>");
                 }
             if (ShowValGridlines && ValAxisVisible)
             for (int t = 0; t <= nTicks; t++)
             {
-                var gx = TickX((double)t / nTicks);
+                var tickVal = niceMin + tickStep * t;
+                if (tickVal > niceMax + 1e-9) continue;
+                var gx = ValToX(tickVal);
                 sb.AppendLine($"        <line x1=\"{gx:0.#}\" y1=\"{oy}\" x2=\"{gx:0.#}\" y2=\"{oy + ph}\" stroke=\"{GridColor}\" stroke-width=\"{GridlineWidthPx:0.##}\"{ValGridDashAttr}/>");
             }
             // Category-axis major gridlines (horizontal) — at the category-slot
@@ -638,7 +645,7 @@ internal partial class ChartSvgRenderer
                 var val = isLog ? Math.Pow(logB, logMinExp + t) : niceMin + tickStep * t;
                 if (val > niceMax + 1e-9) continue; // BUG1(R25): no label past axisMax
                 var label = percentStacked ? $"{(int)val}%" : FmtValAxis(val, valNumFmt);
-                var tx = TickX((double)t / nTicks);
+                var tx = ValToX(val);
                 // Horizontal bars: value axis is HORIZONTAL at the bottom (y=oy+ph).
                 if (TickMarkVisible(ValMajorTickMark))
                     EmitHAxisTick(sb, tx, oy + ph, ValMajorTickMark!);
@@ -692,17 +699,27 @@ internal partial class ChartSvgRenderer
                 : oy + ph - (double)ph * tFrac;
             // Zero-baseline Y coordinate within the plot (== oy+ph when niceMin==0).
             var plotZeroY = ValToY(0);
+            // Gridlines sit at the tick VALUES on the value scale (via ValToY), not at
+            // even pixel fractions (TickY). These coincide when nTicks*tickStep == span,
+            // but an explicit axisMax that isn't a multiple of tickStep breaks that, and
+            // pixel-even gridlines then diverge from the value-proportional bars (a bar
+            // would overshoot its own labeled gridline). ValToY keeps gridline, label,
+            // and bar in agreement; the >niceMax guard drops a tick past the axis top.
             if (ShowValGridlines && ValAxisVisible)
             for (int t = 0; t <= nTicks; t++)
             {
-                var gy = TickY((double)t / nTicks);
+                var tickVal = niceMin + tickStep * t;
+                if (tickVal > niceMax + 1e-9) continue;
+                var gy = ValToY(tickVal);
                 sb.AppendLine($"        <line x1=\"{ox}\" y1=\"{gy:0.#}\" x2=\"{ox + pw}\" y2=\"{gy:0.#}\" stroke=\"{GridColor}\" stroke-width=\"{GridlineWidthPx:0.##}\"{ValGridDashAttr}/>");
             }
             if (ShowValMinorGridlines && ValAxisVisible)
             for (int t = 0; t < nTicks; t++)
                 for (int m = 1; m < MinorGridlineCount; m++)
                 {
-                    var gy = TickY((t + (double)m / MinorGridlineCount) / nTicks);
+                    var minorVal = niceMin + tickStep * (t + (double)m / MinorGridlineCount);
+                    if (minorVal > niceMax + 1e-9) continue;
+                    var gy = ValToY(minorVal);
                     sb.AppendLine($"        <line x1=\"{ox}\" y1=\"{gy:0.#}\" x2=\"{ox + pw}\" y2=\"{gy:0.#}\" stroke=\"{GridColor}\" stroke-width=\"0.25\" opacity=\"0.5\"/>");
                 }
             // Category-axis major gridlines (vertical) — at the category-slot
@@ -934,7 +951,9 @@ internal partial class ChartSvgRenderer
                 // omits any label past the axis top. Skip it.
                 if (val > niceMax + 1e-9) continue;
                 var label = percentStacked ? $"{(int)val}%" : FmtValAxis(val, valNumFmt);
-                var ty = TickY((double)t / nTicks);
+                // Position the label at the VALUE on the scale (matches the gridlines and
+                // bars) rather than an even pixel fraction; no-op when nTicks*tickStep==span.
+                var ty = ValToY(val);
                 // Vertical columns: value axis is VERTICAL on the left (x=ox).
                 if (TickMarkVisible(ValMajorTickMark))
                     EmitVAxisTick(sb, ox, ty, ValMajorTickMark!);
@@ -1988,17 +2007,25 @@ internal partial class ChartSvgRenderer
         // the fill to the axis bottom rather than letting it run off-plot).
         double ClampY(double v) => Math.Clamp(DataToY(v), oy, oy + ph);
 
+        // Gridlines at tick VALUES (niceMin + tickInterval*t), matching the value-axis
+        // LABELS below (which use the same expression) and the area fills. Previously the
+        // gridlines stepped by axisRange/nTicks, which diverges from tickInterval*t when an
+        // explicit axisMax isn't a multiple of tickInterval. No-op when they coincide.
         if (ShowValGridlines && ValAxisVisible)
         for (int t = 1; t <= nTicks; t++)
         {
-            var gy = DataToY(niceMin + axisRange * t / nTicks);
+            var gridVal = niceMin + tickInterval * t;
+            if (gridVal > niceMax + 1e-9) continue;
+            var gy = DataToY(gridVal);
             sb.AppendLine($"        <line x1=\"{ox}\" y1=\"{gy:0.#}\" x2=\"{ox + pw}\" y2=\"{gy:0.#}\" stroke=\"{GridColor}\" stroke-width=\"{GridlineWidthPx:0.##}\"{ValGridDashAttr}/>");
         }
         if (ShowValMinorGridlines && ValAxisVisible)
         for (int t = 0; t < nTicks; t++)
             for (int m = 1; m < MinorGridlineCount; m++)
             {
-                var gy = DataToY(niceMin + axisRange * (t + (double)m / MinorGridlineCount) / nTicks);
+                var minorVal = niceMin + tickInterval * (t + (double)m / MinorGridlineCount);
+                if (minorVal > niceMax + 1e-9) continue;
+                var gy = DataToY(minorVal);
                 sb.AppendLine($"        <line x1=\"{ox}\" y1=\"{gy:0.#}\" x2=\"{ox + pw}\" y2=\"{gy:0.#}\" stroke=\"{GridColor}\" stroke-width=\"0.25\" opacity=\"0.5\"/>");
             }
         // Category-axis major gridlines (vertical) — at the category-slot
