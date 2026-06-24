@@ -2937,7 +2937,8 @@ internal partial class ChartSvgRenderer
 
         // --- Axis features ---
         public double? LogBase { get; set; }
-        public bool IsReversed { get; set; }
+        public bool IsReversed { get; set; }       // value axis maxMin
+        public bool IsCatReversed { get; set; }    // category axis maxMin
 
         // --- Line elements ---
         public bool HasDropLines { get; set; }
@@ -3351,6 +3352,13 @@ internal partial class ChartSvgRenderer
         }
         if (catAxis != null)
         {
+            // Category axis orientation (<c:catAx><c:scaling><c:orientation val="maxMin"/>):
+            // reverses the category order. The value-axis equivalent (IsReversed) was read
+            // above; the catAx one was dropped, so a reversed category axis rendered forward.
+            var catScaling = catAxis.Elements().FirstOrDefault(e => e.LocalName == "scaling");
+            var catOrientEl = catScaling?.Elements().FirstOrDefault(e => e.LocalName == "orientation");
+            var catOrientVal = catOrientEl?.GetAttributes().FirstOrDefault(a => a.LocalName == "val").Value;
+            info.IsCatReversed = catOrientVal == "maxMin";
             info.CatMajorGridlines = catAxis.Elements().Any(e => e.LocalName == "majorGridlines");
             info.CatMinorGridlines = catAxis.Elements().Any(e => e.LocalName == "minorGridlines");
             var catTickEl = catAxis.Elements().FirstOrDefault(e => e.LocalName == "majorTickMark");
@@ -3661,6 +3669,27 @@ internal partial class ChartSvgRenderer
             var rsEl = radarChartEl.Elements().FirstOrDefault(e => e.LocalName == "radarStyle");
             var rsVal = rsEl?.GetAttributes().FirstOrDefault(a => a.LocalName == "val").Value;
             info.RadarStyle = rsVal ?? "marker";
+        }
+
+        // Reversed category axis (catAx maxMin): reverse the category order centrally so
+        // every chart type (column/bar/line/area) renders the flipped order forward —
+        // PowerPoint draws categories right-to-left (e.g. Mar,Feb,Jan). Reverse the
+        // category labels, each series' values, and the per-point color overrides (keyed
+        // by category index) in lockstep. Cat axis reversal doesn't apply to pie/doughnut
+        // (no catAx orientation), and the horizontal-bar renderer's existing
+        // first-category-at-bottom flip composes correctly (first category moves to top).
+        if (info.IsCatReversed && info.Categories.Length > 1)
+        {
+            int n = info.Categories.Length;
+            Array.Reverse(info.Categories);
+            for (int i = 0; i < info.Series.Count; i++)
+            {
+                var v = info.Series[i].values;
+                Array.Reverse(v);
+                if (i < info.PerPointColors.Count && info.PerPointColors[i].Count > 0)
+                    info.PerPointColors[i] = info.PerPointColors[i]
+                        .ToDictionary(kv => n - 1 - kv.Key, kv => kv.Value);
+            }
         }
 
         return info;
