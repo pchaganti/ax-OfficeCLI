@@ -1369,6 +1369,11 @@ internal partial class ChartSvgRenderer
             if (majorUnit.HasValue && majorUnit.Value > 0)
             {
                 tickStep = majorUnit.Value;
+                // Round the top up to a multiple of majorUnit (headroom above the
+                // data), matching PowerPoint — parity with the bar/column path.
+                // Skip when an explicit max pins the top or the floor is negative.
+                if (!axisMax.HasValue && niceMin >= 0)
+                    niceMax = Math.Ceiling(ComputeNiceAxis(dataMax).niceMax / tickStep) * tickStep;
                 nTicks = (int)Math.Ceiling((niceMax - niceMin) / tickStep);
             }
             else if (niceMin < 0)
