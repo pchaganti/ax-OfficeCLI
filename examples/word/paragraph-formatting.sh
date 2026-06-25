@@ -8,8 +8,9 @@
 # Note: paragraph-level `bold` etc. apply to all runs in the paragraph and read
 # back on the paragraph; `markRPr.bold` formats only the paragraph mark and is
 # distinct. Both are settable + gettable.
-set -e
-
+# NOTE: intentionally NO `set -e`. Like the SDK twin's doc.batch, this script
+# tolerates forward-compat 'UNSUPPORTED props' warnings (officecli exit 2) and
+# keeps building so the full document is produced.
 DOCX="$(dirname "$0")/paragraph-formatting.docx"
 echo "Building $DOCX ..."
 rm -f "$DOCX"

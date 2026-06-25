@@ -3,8 +3,9 @@
 # Contains 8 chart types: combo chart, 3D bar, scatter+trendline, 3D pie, bubble, stock OHLC, filled radar, multi-ring doughnut
 # 4 Sheets: monthly sales, analysis data, stock data, capability assessment
 
-set -e
-
+# NOTE: intentionally NO `set -e`. Like the SDK twin's doc.batch, this script
+# tolerates forward-compat 'UNSUPPORTED props' warnings (officecli exit 2) and
+# keeps building so the full document is produced.
 XLSX="$(dirname "$0")/charts.xlsx"
 echo ""
 echo "=========================================="

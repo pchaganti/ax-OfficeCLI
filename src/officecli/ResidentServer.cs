@@ -1155,24 +1155,30 @@ public class ResidentServer : IDisposable
             {
                 // CONSISTENCY(view-html-stdout): mirror CommandBuilder.View.cs — default
                 // mode writes HTML to stdout so `officecli view file html > out.html`
-                // captures actual content. Only --browser writes a temp file and opens it.
+                // captures actual content. --out writes to the requested path; --browser
+                // writes a temp file (or --out, if given) and opens it.
                 var browser = req.GetArgOrNull("browser");
                 var wantBrowser = browser != null && (browser == "true" || browser == "1");
-                if (wantBrowser)
+                var outArg = req.GetArgOrNull("out");
+                if (outArg != null || wantBrowser)
                 {
-                    // SECURITY: include a random token so the preview path is not predictable.
-                    // Without it, a predictable path enables a symlink pre-placement attack that
-                    // causes File.WriteAllText to clobber an arbitrary victim file. See
-                    // CommandBuilder.View.cs for the same fix.
-                    var htmlPath = Path.Combine(Path.GetTempPath(), $"officecli_preview_{Path.GetFileNameWithoutExtension(_filePath)}_{DateTime.Now:HHmmss}_{Guid.NewGuid():N}.html");
+                    // SECURITY: when falling back to a temp file, include a random token so
+                    // the preview path is not predictable. Without it, a predictable path
+                    // enables a symlink pre-placement attack that causes File.WriteAllText
+                    // to clobber an arbitrary victim file. See CommandBuilder.View.cs for
+                    // the same fix.
+                    var htmlPath = outArg ?? Path.Combine(Path.GetTempPath(), $"officecli_preview_{Path.GetFileNameWithoutExtension(_filePath)}_{DateTime.Now:HHmmss}_{Guid.NewGuid():N}.html");
                     File.WriteAllText(htmlPath, html);
-                    Console.WriteLine(htmlPath);
-                    try
+                    Console.WriteLine(Path.GetFullPath(htmlPath));
+                    if (wantBrowser)
                     {
-                        var psi = new System.Diagnostics.ProcessStartInfo(htmlPath) { UseShellExecute = true };
-                        System.Diagnostics.Process.Start(psi);
+                        try
+                        {
+                            var psi = new System.Diagnostics.ProcessStartInfo(htmlPath) { UseShellExecute = true };
+                            System.Diagnostics.Process.Start(psi);
+                        }
+                        catch { /* silently ignore if browser can't be opened */ }
                     }
-                    catch { /* silently ignore if browser can't be opened */ }
                 }
                 else
                 {

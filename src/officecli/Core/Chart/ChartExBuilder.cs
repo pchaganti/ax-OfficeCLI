@@ -486,7 +486,31 @@ internal static partial class ChartExBuilder
         var effects = new Drawing.EffectList();
         effects.AppendChild(DrawingEffectsHelper.BuildOuterShadow(
             value, DrawingEffectsHelper.BuildRgbColor));
-        rPr.AppendChild(effects);
+        // CT_TextCharacterProperties order: ln, fill, effectLst|effectDag,
+        // highlight, uLn/u, strike, latin, ea, cs, sym, hlinkClick,
+        // hlinkMouseOver, rtl, extLst. effectLst MUST precede the
+        // highlight/underline/latin/ea/cs group — appending after latin
+        // makes the validator report "unexpected child element
+        // 'a:effectLst'". Insert before the first element that schema-orders
+        // after effectLst.
+        OpenXmlElement? insertBefore =
+            (OpenXmlElement?)rPr.GetFirstChild<Drawing.Highlight>()
+            ?? (OpenXmlElement?)rPr.GetFirstChild<Drawing.UnderlineFollowsText>()
+            ?? (OpenXmlElement?)rPr.GetFirstChild<Drawing.Underline>()
+            ?? (OpenXmlElement?)rPr.GetFirstChild<Drawing.UnderlineFill>()
+            ?? (OpenXmlElement?)rPr.GetFirstChild<Drawing.UnderlineFillText>()
+            ?? (OpenXmlElement?)rPr.GetFirstChild<Drawing.LatinFont>()
+            ?? (OpenXmlElement?)rPr.GetFirstChild<Drawing.EastAsianFont>()
+            ?? (OpenXmlElement?)rPr.GetFirstChild<Drawing.ComplexScriptFont>()
+            ?? (OpenXmlElement?)rPr.GetFirstChild<Drawing.SymbolFont>()
+            ?? (OpenXmlElement?)rPr.GetFirstChild<Drawing.HyperlinkOnClick>()
+            ?? (OpenXmlElement?)rPr.GetFirstChild<Drawing.HyperlinkOnHover>()
+            ?? (OpenXmlElement?)rPr.GetFirstChild<Drawing.RightToLeft>()
+            ?? (OpenXmlElement?)rPr.GetFirstChild<Drawing.ExtensionList>();
+        if (insertBefore != null)
+            rPr.InsertBefore(effects, insertBefore);
+        else
+            rPr.AppendChild(effects);
     }
 
     /// <summary>

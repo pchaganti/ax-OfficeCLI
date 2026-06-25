@@ -3,8 +3,9 @@
 # Includes merged cells, multi-level headers, formulas, charts, and other complex scenarios
 # For testing officecli's table processing capabilities
 
-set -e
-
+# NOTE: intentionally NO `set -e`. Like the SDK twin's doc.batch, this script
+# tolerates forward-compat 'UNSUPPORTED props' warnings (officecli exit 2) and
+# keeps building so the full document is produced.
 echo "Using CLI: officecli"
 
 DIR="$(dirname "$0")"

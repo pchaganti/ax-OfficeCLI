@@ -2,8 +2,9 @@
 # Generate complex textbox test document
 # Includes 10 textbox scenarios for testing officecli compatibility with complex textbox cases
 
-set -e
-
+# NOTE: intentionally NO `set -e`. Like the SDK twin's doc.batch, this script
+# tolerates forward-compat 'UNSUPPORTED props' warnings (officecli exit 2) and
+# keeps building so the full document is produced.
 OUT="$(dirname "$0")/textbox.docx"
 
 echo "Using CLI: officecli"

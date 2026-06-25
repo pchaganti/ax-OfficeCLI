@@ -3,8 +3,9 @@
 # Contains 6 chart types: clustered bar, smooth line, pie, stacked area, radar, doughnut
 # Demonstrates officecli's Excel chart generation capabilities
 
-set -e
-
+# NOTE: intentionally NO `set -e`. Like the SDK twin's doc.batch, this script
+# tolerates forward-compat 'UNSUPPORTED props' warnings (officecli exit 2) and
+# keeps building so the full document is produced.
 XLSX="$(dirname "$0")/charts-demo.xlsx"
 echo ""
 echo "=========================================="

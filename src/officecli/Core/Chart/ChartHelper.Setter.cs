@@ -414,11 +414,11 @@ internal static partial class ChartHelper
                             // positionValues is declared above the validation block.
                             var isPositionValue = parts.Any(p => positionValues.Contains(p));
                             var showVal = parts.Contains("value") || parts.Contains("true") || parts.Contains("all") || isPositionValue;
-                            dl.AppendChild(new C.ShowLegendKey { Val = false });
-                            dl.AppendChild(new C.ShowValue { Val = showVal });
-                            dl.AppendChild(new C.ShowCategoryName { Val = parts.Contains("category") || parts.Contains("all") });
-                            dl.AppendChild(new C.ShowSeriesName { Val = parts.Contains("series") || parts.Contains("all") });
-                            dl.AppendChild(new C.ShowPercent { Val = parts.Contains("percent") || parts.Contains("all") });
+                            // Per CT_DLbls (EG_DLblShared) schema order, dLblPos
+                            // MUST precede showLegendKey/showVal/... Build the
+                            // position element first and append it before the
+                            // show* group; otherwise the validator reports
+                            // "unexpected child element 'c:dLblPos'".
                             // If a position value was given, apply it as dLblPos —
                             // but ONLY when the chartType's CT_DLbls accepts the
                             // requested value per ST_DLblPos*. Otherwise the
@@ -479,6 +479,12 @@ internal static partial class ChartHelper
                                 // drop the label position.
                                 dl.AppendChild(new C.DataLabelPosition { Val = preservedDLblPos });
                             }
+                            // show* group follows dLblPos per schema order.
+                            dl.AppendChild(new C.ShowLegendKey { Val = false });
+                            dl.AppendChild(new C.ShowValue { Val = showVal });
+                            dl.AppendChild(new C.ShowCategoryName { Val = parts.Contains("category") || parts.Contains("all") });
+                            dl.AppendChild(new C.ShowSeriesName { Val = parts.Contains("series") || parts.Contains("all") });
+                            dl.AppendChild(new C.ShowPercent { Val = parts.Contains("percent") || parts.Contains("all") });
                             // Insert dLbls before dropLines/hiLowLines/upDownBars/gapWidth/overlap/
                             // showMarker/holeSize/firstSliceAngle/axId per schema order. CT_StockChart
                             // and CT_LineChart both place dLbls before dropLines/hiLowLines/upDownBars;
@@ -1835,7 +1841,13 @@ internal static partial class ChartHelper
                     scaling.RemoveAllChildren<C.Orientation>();
                     var orient = (ParseHelpers.IsValidBooleanString(value) && ParseHelpers.IsTruthy(value)) || value.Equals("maxmin", StringComparison.OrdinalIgnoreCase)
                         ? C.OrientationValues.MaxMin : C.OrientationValues.MinMax;
-                    scaling.PrependChild(new C.Orientation { Val = orient });
+                    // CT_Scaling order is logBase, orientation, max, min — orientation
+                    // must follow logBase, so insert after it when a log scale exists
+                    // (a bare PrependChild would push orientation ahead of logBase).
+                    var orientEl = new C.Orientation { Val = orient };
+                    var existingLogBase = scaling.GetFirstChild<C.LogBase>();
+                    if (existingLogBase != null) scaling.InsertAfter(orientEl, existingLogBase);
+                    else scaling.PrependChild(orientEl);
                     break;
                 }
 
@@ -2986,7 +2998,20 @@ internal static partial class ChartHelper
                     var legendEl = chart.GetFirstChild<C.Legend>();
                     if (legendEl == null) { unsupported.Add(key); break; }
                     legendEl.RemoveAllChildren<C.Overlay>();
-                    legendEl.AppendChild(new C.Overlay { Val = ParseHelpers.IsTruthy(value) });
+                    // CT_Legend order: legendPos, legendEntry*, layout,
+                    // overlay, spPr, txPr, extLst. Insert overlay BEFORE the
+                    // first spPr/txPr/extLst so the validator doesn't report
+                    // "unexpected child element 'c:overlay'".
+                    var newLegendOverlay = new C.Overlay { Val = ParseHelpers.IsTruthy(value) };
+                    OpenXmlElement? legendInsertBefore =
+                        (OpenXmlElement?)legendEl.GetFirstChild<C.ShapeProperties>()
+                        ?? legendEl.GetFirstChild<C.ChartShapeProperties>()
+                        ?? (OpenXmlElement?)legendEl.GetFirstChild<C.TextProperties>()
+                        ?? (OpenXmlElement?)legendEl.GetFirstChild<C.ExtensionList>();
+                    if (legendInsertBefore != null)
+                        legendEl.InsertBefore(newLegendOverlay, legendInsertBefore);
+                    else
+                        legendEl.AppendChild(newLegendOverlay);
                     break;
                 }
 
