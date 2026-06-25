@@ -4174,6 +4174,21 @@ internal partial class ChartSvgRenderer
             var firstGs = gsLst?.Elements().FirstOrDefault(e => e.LocalName == "gs");
             var gsSrgb = firstGs?.Elements().FirstOrDefault(e => e.LocalName == "srgbClr");
             v = gsSrgb?.GetAttributes().FirstOrDefault(a => a.LocalName == "val").Value;
+            // First stop may be a schemeClr (e.g. accent2): resolve through the theme map,
+            // mirroring the solidFill schemeClr branch above. Without this a gradient series
+            // whose first stop is a theme color dropped to the wrong fallback-palette accent.
+            if (v == null && themeColors != null && firstGs != null)
+            {
+                var gsScheme = firstGs.Elements().FirstOrDefault(e => e.LocalName == "schemeClr");
+                var gsName = gsScheme?.GetAttributes().FirstOrDefault(a => a.LocalName == "val").Value;
+                if (!string.IsNullOrEmpty(gsName))
+                {
+                    var canonical = ParseHelpers.NormalizeSchemeColorName(gsName) ?? gsName;
+                    if (themeColors.TryGetValue(canonical, out var themeHex)
+                        || themeColors.TryGetValue(gsName, out themeHex))
+                        v = themeHex;
+                }
+            }
         }
         // pattFill fallback: a pattern-filled series (Format Data Series -> Pattern Fill)
         // has no solidFill. SVG bar fills are flat, so approximate with the pattern's
