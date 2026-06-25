@@ -1645,6 +1645,12 @@ internal partial class ChartSvgRenderer
         var total = values.Sum();
         if (total <= 0) return;
 
+        // PowerPoint draws a thin separator (the chart-area background, white by
+        // default) between adjacent pie/doughnut slices. Without it slices touch
+        // edge-to-edge — invisible for monochrome (varyColors=false) pies. Emit a
+        // default white slice stroke to match.
+        const string sliceStroke = " stroke=\"#FFFFFF\" stroke-width=\"2\"";
+
         var cx = svgW / 2.0;
         var cy = svgH / 2.0;
         var r = Math.Min(svgW, svgH) * 0.42;
@@ -1697,7 +1703,7 @@ internal partial class ChartSvgRenderer
                 // to catch float rounding.
                 if (sliceAngle >= 2 * Math.PI - 1e-6)
                 {
-                    sb.AppendLine($"        <path d=\"M {cx0 - r:0.#},{cy0:0.#} A {r:0.#},{r:0.#} 0 1,1 {cx0 + r:0.#},{cy0:0.#} A {r:0.#},{r:0.#} 0 1,1 {cx0 - r:0.#},{cy0:0.#} Z M {cx0 - innerR:0.#},{cy0:0.#} A {innerR:0.#},{innerR:0.#} 0 1,1 {cx0 + innerR:0.#},{cy0:0.#} A {innerR:0.#},{innerR:0.#} 0 1,1 {cx0 - innerR:0.#},{cy0:0.#} Z\" fill=\"{color}\" fill-rule=\"evenodd\" opacity=\"{sliceOpacity}\"/>");
+                    sb.AppendLine($"        <path d=\"M {cx0 - r:0.#},{cy0:0.#} A {r:0.#},{r:0.#} 0 1,1 {cx0 + r:0.#},{cy0:0.#} A {r:0.#},{r:0.#} 0 1,1 {cx0 - r:0.#},{cy0:0.#} Z M {cx0 - innerR:0.#},{cy0:0.#} A {innerR:0.#},{innerR:0.#} 0 1,1 {cx0 + innerR:0.#},{cy0:0.#} A {innerR:0.#},{innerR:0.#} 0 1,1 {cx0 - innerR:0.#},{cy0:0.#} Z\" fill=\"{color}\" fill-rule=\"evenodd\" opacity=\"{sliceOpacity}\"{sliceStroke}/>");
                 }
                 else
                 {
@@ -1706,7 +1712,7 @@ internal partial class ChartSvgRenderer
                     var ix1 = cx0 + innerR * Math.Cos(endAngle); var iy1 = cy0 + innerR * Math.Sin(endAngle);
                     var ix2 = cx0 + innerR * Math.Cos(startAngle); var iy2 = cy0 + innerR * Math.Sin(startAngle);
                     var largeArc = sliceAngle > Math.PI ? 1 : 0;
-                    sb.AppendLine($"        <path d=\"M {ox1:0.#},{oy1:0.#} A {r:0.#},{r:0.#} 0 {largeArc},1 {ox2:0.#},{oy2:0.#} L {ix1:0.#},{iy1:0.#} A {innerR:0.#},{innerR:0.#} 0 {largeArc},0 {ix2:0.#},{iy2:0.#} Z\" fill=\"{color}\" opacity=\"{sliceOpacity}\"/>");
+                    sb.AppendLine($"        <path d=\"M {ox1:0.#},{oy1:0.#} A {r:0.#},{r:0.#} 0 {largeArc},1 {ox2:0.#},{oy2:0.#} L {ix1:0.#},{iy1:0.#} A {innerR:0.#},{innerR:0.#} 0 {largeArc},0 {ix2:0.#},{iy2:0.#} Z\" fill=\"{color}\" opacity=\"{sliceOpacity}\"{sliceStroke}/>");
                 }
             }
             else
@@ -1714,7 +1720,7 @@ internal partial class ChartSvgRenderer
                 var x1 = cx0 + r * Math.Cos(startAngle); var y1 = cy0 + r * Math.Sin(startAngle);
                 var x2 = cx0 + r * Math.Cos(endAngle); var y2 = cy0 + r * Math.Sin(endAngle);
                 var largeArc = sliceAngle > Math.PI ? 1 : 0;
-                sb.AppendLine($"        <path d=\"M {cx0:0.#},{cy0:0.#} L {x1:0.#},{y1:0.#} A {r:0.#},{r:0.#} 0 {largeArc},1 {x2:0.#},{y2:0.#} Z\" fill=\"{color}\" opacity=\"{sliceOpacity}\"/>");
+                sb.AppendLine($"        <path d=\"M {cx0:0.#},{cy0:0.#} L {x1:0.#},{y1:0.#} A {r:0.#},{r:0.#} 0 {largeArc},1 {x2:0.#},{y2:0.#} Z\" fill=\"{color}\" opacity=\"{sliceOpacity}\"{sliceStroke}/>");
             }
             startAngle = endAngle;
         }
@@ -1785,6 +1791,8 @@ internal partial class ChartSvgRenderer
     {
         var firstSliceOffset = FirstSliceAngle * Math.PI / 180.0;
         var bandWidth = (r - innerR) / series.Count;
+        // Default white separator between adjacent slices (see RenderPieChartSvg).
+        const string sliceStroke = " stroke=\"#FFFFFF\" stroke-width=\"2\"";
 
         for (int s = 0; s < series.Count; s++)
         {
@@ -1807,7 +1815,7 @@ internal partial class ChartSvgRenderer
 
                 if (sliceAngle >= 2 * Math.PI - 1e-6)
                 {
-                    sb.AppendLine($"        <path d=\"M {cx - bandOuter:0.#},{cy:0.#} A {bandOuter:0.#},{bandOuter:0.#} 0 1,1 {cx + bandOuter:0.#},{cy:0.#} A {bandOuter:0.#},{bandOuter:0.#} 0 1,1 {cx - bandOuter:0.#},{cy:0.#} Z M {cx - bandInner:0.#},{cy:0.#} A {bandInner:0.#},{bandInner:0.#} 0 1,1 {cx + bandInner:0.#},{cy:0.#} A {bandInner:0.#},{bandInner:0.#} 0 1,1 {cx - bandInner:0.#},{cy:0.#} Z\" fill=\"{color}\" fill-rule=\"evenodd\" opacity=\"{sliceOpacity}\"/>");
+                    sb.AppendLine($"        <path d=\"M {cx - bandOuter:0.#},{cy:0.#} A {bandOuter:0.#},{bandOuter:0.#} 0 1,1 {cx + bandOuter:0.#},{cy:0.#} A {bandOuter:0.#},{bandOuter:0.#} 0 1,1 {cx - bandOuter:0.#},{cy:0.#} Z M {cx - bandInner:0.#},{cy:0.#} A {bandInner:0.#},{bandInner:0.#} 0 1,1 {cx + bandInner:0.#},{cy:0.#} A {bandInner:0.#},{bandInner:0.#} 0 1,1 {cx - bandInner:0.#},{cy:0.#} Z\" fill=\"{color}\" fill-rule=\"evenodd\" opacity=\"{sliceOpacity}\"{sliceStroke}/>");
                 }
                 else
                 {
@@ -1816,7 +1824,7 @@ internal partial class ChartSvgRenderer
                     var ix1 = cx + bandInner * Math.Cos(endAngle); var iy1 = cy + bandInner * Math.Sin(endAngle);
                     var ix2 = cx + bandInner * Math.Cos(startAngle); var iy2 = cy + bandInner * Math.Sin(startAngle);
                     var largeArc = sliceAngle > Math.PI ? 1 : 0;
-                    sb.AppendLine($"        <path d=\"M {ox1:0.#},{oy1:0.#} A {bandOuter:0.#},{bandOuter:0.#} 0 {largeArc},1 {ox2:0.#},{oy2:0.#} L {ix1:0.#},{iy1:0.#} A {bandInner:0.#},{bandInner:0.#} 0 {largeArc},0 {ix2:0.#},{iy2:0.#} Z\" fill=\"{color}\" opacity=\"{sliceOpacity}\"/>");
+                    sb.AppendLine($"        <path d=\"M {ox1:0.#},{oy1:0.#} A {bandOuter:0.#},{bandOuter:0.#} 0 {largeArc},1 {ox2:0.#},{oy2:0.#} L {ix1:0.#},{iy1:0.#} A {bandInner:0.#},{bandInner:0.#} 0 {largeArc},0 {ix2:0.#},{iy2:0.#} Z\" fill=\"{color}\" opacity=\"{sliceOpacity}\"{sliceStroke}/>");
                 }
                 startAngle = endAngle;
             }
