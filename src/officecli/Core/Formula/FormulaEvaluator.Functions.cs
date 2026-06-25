@@ -997,7 +997,8 @@ internal partial class FormulaEvaluator
             try
             {
                 var wsPart = (DocumentFormat.OpenXml.Packaging.WorksheetPart)_workbookPart!.GetPartById(sheets[i].Id!.Value!);
-                if (ReferenceEquals(wsPart.Worksheet.GetFirstChild<DocumentFormat.OpenXml.Spreadsheet.SheetData>(), _sheetData))
+                var sheetData = wsPart.Worksheet?.GetFirstChild<DocumentFormat.OpenXml.Spreadsheet.SheetData>();
+                if (sheetData != null && ReferenceEquals(sheetData, _sheetData))
                     return i + 1;
             }
             catch { /* malformed rel — skip */ }
