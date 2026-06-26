@@ -1710,21 +1710,14 @@ public class ResidentServer : IDisposable
         // The handler selector branch throws on an empty match, so no silent no-op.
         // Agent-safety: reject a bare unscoped selector (mirrors CommandBuilder).
         OfficeCli.Core.MutationSelectorGuard.EnsureScoped(path, "set");
-        var unsupported = _handler.Set(path, properties);
-        // CONSISTENCY(unsupported-key-extract): mirrored in CommandBuilder.Set.cs.
-        // Handler entries may be "key (reason)" or "key=value (reason)" (e.g.
-        // geometry=invalid_preset). Trim trailing help text, then strip the
-        // optional "=value" so the membership test below matches the raw
-        // property key in `properties`.
-        var unsupportedKeys = unsupported
-            .Select(u =>
-            {
-                var head = u.Contains(' ') ? u[..u.IndexOf(' ')] : u;
-                var eq = head.IndexOf('=');
-                return eq >= 0 ? head[..eq] : head;
-            })
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var applied = properties.Where(kv => !unsupportedKeys.Contains(kv.Key)).ToList();
+        // Shared core: apply + prop-autocorrect + categorise — one copy across
+        // CLI / batch / MCP / resident (CommandBuilder.ApplySetWithCorrection).
+        // This also gives the resident the distance-1 typo auto-correction it
+        // previously lacked, so `set colot=color` behaves the same whether or
+        // not a resident is alive. The resident's own envelope (find-count,
+        // selector-count, watch, overflow, --json wrapping) stays below.
+        var (applied, unsupported, autoCorrected) =
+            CommandBuilder.ApplySetWithCorrection(_handler, path, properties);
 
         // CONSISTENCY(find-match-count): mirrored in CommandBuilder.Set.cs.
         // The resident path is hit whenever a resident process is open
@@ -1762,6 +1755,12 @@ public class ResidentServer : IDisposable
             : (unsupported.Count > 0 ? $"No properties applied to {path}" : $"Updated {path}");
 
         var warnings = new List<OfficeCli.Core.CliWarning>();
+        foreach (var ac in autoCorrected)
+            warnings.Add(new OfficeCli.Core.CliWarning
+            {
+                Message = $"Auto-corrected '{ac.Original}' to '{ac.Corrected}'",
+                Code = "auto_corrected",
+            });
         if (findMatchCount is 0)
         {
             warnings.Add(new OfficeCli.Core.CliWarning
@@ -1797,6 +1796,8 @@ public class ResidentServer : IDisposable
         else
         {
             if (applied.Count > 0 || unsupported.Count > 0) Console.WriteLine(message);
+            foreach (var ac in autoCorrected)
+                Console.Error.WriteLine($"WARNING: Auto-corrected '{ac.Original}' to '{ac.Corrected}'");
             if (findMatchCount is 0)
                 Console.Error.WriteLine($"WARNING: find pattern matched 0 occurrences at {path}");
             if (overflow != null)
