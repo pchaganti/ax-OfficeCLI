@@ -170,7 +170,18 @@ def _send_win(pipe_path, line, connect_timeout):
                 raise
             time.sleep(0.02)
     try:
-        f.write(line)
+        # FileIO.write (raw, buffering=0) issues a single WriteFile and may
+        # return a short count, so loop until the whole request is out — a
+        # truncated request leaves the resident blocking for a newline that
+        # never comes, deadlocking the (untimed) reply read. Mirrors _send_unix's
+        # sendall() and the C# client's Stream.Write.
+        view = memoryview(line)
+        sent = 0
+        while sent < len(view):
+            n = f.write(view[sent:])
+            if n is None:                  # non-blocking handle not ready (shouldn't happen)
+                continue
+            sent += n
         buf = b""
         while not buf.endswith(b"\n"):     # blocking read, like PipeReadLine
             chunk = f.read(65536)
