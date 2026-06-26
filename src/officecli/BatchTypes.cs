@@ -11,9 +11,29 @@ internal class LenientStringDictionaryConverter : JsonConverter<Dictionary<strin
     public override Dictionary<string, string>? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
     {
         if (reader.TokenType == JsonTokenType.Null) return null;
-        if (reader.TokenType != JsonTokenType.StartObject)
-            throw new JsonException("Expected object for props");
         var dict = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        // Array form: ["key=value", ...]. This mirrors the single-command MCP
+        // `props` argument and the CLI `--prop key=value` flag, so an agent that
+        // learned props from `set`/`add` produces the same shape inside a batch
+        // item. Before this, batch props was object-only and every array-form
+        // batch failed with "Expected object for props" — observed as a 100%
+        // batch-failure for models that (correctly) reused the single-command
+        // props shape. Lenient split on the first '=' matches McpServer.ParseProps.
+        if (reader.TokenType == JsonTokenType.StartArray)
+        {
+            while (reader.Read())
+            {
+                if (reader.TokenType == JsonTokenType.EndArray) return dict;
+                if (reader.TokenType != JsonTokenType.String)
+                    throw new JsonException("Expected \"key=value\" string in props array");
+                var kv = reader.GetString()!;
+                var eq = kv.IndexOf('=');
+                if (eq > 0) dict[kv[..eq]] = kv[(eq + 1)..];  // skip malformed, as ParseProps does
+            }
+            throw new JsonException("Unexpected end of JSON");
+        }
+        if (reader.TokenType != JsonTokenType.StartObject)
+            throw new JsonException("Expected object or [\"key=value\"] array for props");
         while (reader.Read())
         {
             if (reader.TokenType == JsonTokenType.EndObject) return dict;
