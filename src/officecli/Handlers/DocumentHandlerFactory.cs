@@ -13,6 +13,22 @@ public static class DocumentHandlerFactory
 {
     public static IDocumentHandler Open(string filePath, bool editable = false)
     {
+        // An empty/whitespace path otherwise falls through to File.Exists →
+        // "File not found: " with a blank tail, which actively misleads: the
+        // caller can't tell the file is *missing as an argument* from *present
+        // but wrong*. The single most common way to hit this is an MCP/batch
+        // call that omits the top-level `file` (e.g. a model that replicates the
+        // single-command shape and puts `file` inside each batch item instead).
+        // Give one clear, project-wide message at the shared open chokepoint.
+        if (string.IsNullOrWhiteSpace(filePath))
+            throw new CliException("No document file specified — the file path is required. "
+                + "In MCP/batch, pass `file` as the top-level argument (it applies to every command); "
+                + "do not put `file` inside individual batch commands.")
+            {
+                Code = "file_required",
+                Suggestion = "Provide the document path as the top-level file argument."
+            };
+
         if (!File.Exists(filePath))
             throw new CliException($"File not found: {filePath}")
             {
