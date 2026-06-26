@@ -260,7 +260,7 @@ For any document with 3+ headings:
 officecli add "$FILE" /body --type toc --prop levels="1-3" --prop title="Table of Contents" --prop hyperlinks=true --index 0
 ```
 
-Page numbers render automatically (`--prop pageNumbers=true` toggles them explicitly). Address the TOC directly (1.0.60+): `/toc[1]` or `/tableofcontents` resolve to the first TOC field for `get`/`set`/`remove` without hand-walking XPath.
+Page numbers render automatically (`--prop pageNumbers=true` toggles them explicitly). Address the TOC directly: `/toc[1]` or `/tableofcontents` resolve to the first TOC field for `get`/`set`/`remove` without hand-walking XPath.
 
 **TOC delivery step (mandatory before handoff).** The live TOC field is a placeholder until recalculated. Some viewers populate it on first open; others show the literal `Update field to see table of contents` until the reader recalculates. Pick by recipient:
 
@@ -324,7 +324,7 @@ officecli add "$FILE" /body --type pagebreak --index <N>          # 1. pagebreak
 officecli set "$FILE" "/body/p[<N+1>]" --prop pageBreakBefore=true # 2. on the heading itself
 ```
 
-`--prop break=newPage` (1.0.61+) is a shorter alias for `pageBreakBefore=true` (accepts `newPage|page|nextPage|pageBreak`). Same XML, same belt-and-suspenders rule. Preview with `view html` and count pages.
+`--prop break=newPage` is a shorter alias for `pageBreakBefore=true` (accepts `newPage|page|nextPage|pageBreak`). Same XML, same belt-and-suspenders rule. Preview with `view html` and count pages.
 
 ### Report-level recipes
 
@@ -433,7 +433,7 @@ Three tiers of precision; use the lowest that does the job.
 - **L2 — dotted-attr fallback** (`pbdr.top=`, `ind.left=`, `shd.fill=`, `padding.top=`, `font.size=`): when L1 lacks the knob. Example: `--prop pbdr.bottom="single;6;1F4E79;0"`. Emits schema-valid XML.
 - **L3 — `raw-set` with XML**: last resort, no schema protection. Use for internal hyperlinks, composite fields, and other shapes the typed verbs can't express (see XML appendix).
 
-Borders use the format `style;size;color;space`: `single;4;FF0000;1`. Hex colors never start with `#`: `FF0000`. Scheme color names (`accent1..6`, `dark1`/`dark2`, `light1`/`light2`, `hyperlink`) are accepted anywhere a hex color is (1.0.60+) — prefer hex for stable colors across themes.
+Borders use the format `style;size;color;space`: `single;4;FF0000;1`. Hex colors never start with `#`: `FF0000`. Scheme color names (`accent1..6`, `dark1`/`dark2`, `light1`/`light2`, `hyperlink`) are accepted anywhere a hex color is — prefer hex for stable colors across themes.
 
 ## QA (Required)
 
