@@ -520,9 +520,12 @@ public static class McpServer
                     handler is OfficeCli.Handlers.ExcelHandler
                     && OfficeCli.Handlers.ExcelHandler.SelectorTargetsCells(selector)
                         ? OfficeCli.Handlers.ExcelHandler.ResolveCellAttributeAlias : null;
-                var (results, _) = AttributeFilter.FilterSelector(selector, handler.Query, keyResolver);
+                var (results, queryWarnings) = AttributeFilter.FilterSelector(selector, handler.Query, keyResolver);
                 if (!string.IsNullOrEmpty(textFilter))
-                    results = results.Where(n => n.Text != null && n.Text.Contains(textFilter, StringComparison.OrdinalIgnoreCase)).ToList();
+                    // MatchesTextFilter (not plain Contains) so the text filter
+                    // honours r"regex" the same way the CLI and resident query do.
+                    results = results.Where(n => n.Text != null && AttributeFilter.MatchesTextFilter(n.Text, textFilter)).ToList();
+                foreach (var w in queryWarnings) Console.Error.WriteLine(w);
                 return OutputFormatter.FormatNodes(results, OutputFormat.Json);
             }
             case "set":
@@ -536,11 +539,13 @@ public static class McpServer
             {
                 var after = Arg("after");
                 var before = Arg("before");
+                var fromArg = Arg("from");
                 return ExecuteMutation(Arg("file"), new BatchItem
                 {
                     Command = "add",
                     Parent = Arg("parent"),
                     Type = Arg("type"),
+                    From = string.IsNullOrEmpty(fromArg) ? null : fromArg,
                     Index = ArgIntOpt("index"),
                     After = string.IsNullOrEmpty(after) ? null : after,
                     Before = string.IsNullOrEmpty(before) ? null : before,
@@ -799,6 +804,8 @@ Paths are 1-based: /slide[1]/shape[2], /body/p[3], /Sheet1/A1. Props are key=val
         w.WriteStartObject("parent"); w.WriteString("type", "string"); w.WriteString("description", "Parent DOM path for add"); w.WriteEndObject();
         // type
         w.WriteStartObject("type"); w.WriteString("type", "string"); w.WriteString("description", "Element type for add (slide, shape, paragraph, run, table, picture, chart, etc.)"); w.WriteEndObject();
+        // from (add: copy an existing element instead of creating a new one)
+        w.WriteStartObject("from"); w.WriteString("type", "string"); w.WriteString("description", "Source DOM path for add: copy an existing element to the parent instead of creating a new one (mutually exclusive with type)"); w.WriteEndObject();
         // selector
         w.WriteStartObject("selector"); w.WriteString("type", "string"); w.WriteString("description", "CSS-like selector for query. Valid element types per handler: PPT — shape, textbox, title, picture, table, chart, placeholder, connector, group, zoom, ole, equation (NOT 'slide' — use 'slide[N]>shape' to scope); Excel — cell, sheet, row, column, table, chart, image; Word — paragraph, run, table, image, hyperlink, heading, list. Supports attribute filters ('shape[text=Hello]', 'paragraph[style=Normal] > run[font!=Arial]'), pseudo-selectors (:contains(...), :empty), and Excel cell aliases (bold, size → font.bold, font.size). Path-style selectors starting with '/' are rejected except '/slide[N]/...' scoping in PPT."); w.WriteEndObject();
         // text (query post-filter)

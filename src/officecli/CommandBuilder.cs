@@ -609,7 +609,9 @@ static partial class CommandBuilder
                         ? OfficeCli.Handlers.ExcelHandler.ResolveCellAttributeAlias : null;
                 var (results, warnings) = OfficeCli.Core.AttributeFilter.FilterSelector(selector, handler.Query, keyResolver);
                 if (item.Text is { } textFilter && !string.IsNullOrEmpty(textFilter))
-                    results = results.Where(n => n.Text != null && n.Text.Contains(textFilter, StringComparison.OrdinalIgnoreCase)).ToList();
+                    // MatchesTextFilter (not plain Contains) so a batch query
+                    // text filter honours r"regex" like the CLI and resident do.
+                    results = results.Where(n => n.Text != null && OfficeCli.Core.AttributeFilter.MatchesTextFilter(n.Text, textFilter)).ToList();
                 foreach (var w in warnings) Console.Error.WriteLine(w);
                 return OfficeCli.Core.OutputFormatter.FormatNodes(results, format);
             }
