@@ -47,7 +47,8 @@ static partial class CommandBuilder
             if (ResidentClient.TryConnect(filePath, out _))
             {
                 ResidentClient.SendSetIdleTimeout(filePath, DefaultOpenIdleSeconds);
-                var msg = $"Opened {file.Name} (reusing running resident, idle timeout set to 12min)";
+                var msg = $"Opened {file.Name} (reusing running resident, idle timeout set to 12min). "
+                        + $"Still pass the file path on every command (e.g. get \"{file.Name}\" /body); run 'close {file.Name}' when done.";
                 if (json) Console.WriteLine(OutputFormatter.WrapEnvelopeText(msg));
                 else Console.WriteLine(msg);
                 return 0;
@@ -56,7 +57,8 @@ static partial class CommandBuilder
             if (!TryStartResidentProcess(filePath, idleSeconds: null, out var startError))
                 throw new InvalidOperationException(startError);
 
-            var startedMsg = $"Opened {file.Name} (remember to call close when done)";
+            var startedMsg = $"Opened {file.Name} (resident started). "
+                           + $"Still pass the file path on every command (e.g. get \"{file.Name}\" /body); run 'close {file.Name}' when done.";
             if (json) Console.WriteLine(OutputFormatter.WrapEnvelopeText(startedMsg));
             else Console.WriteLine(startedMsg);
             return 0;
