@@ -105,13 +105,17 @@ def _dotnet_tempdir():
 
 def _canonical_path(file_path):
     """Match the path officecli's resident hashes into the pipe name. On Windows
-    it uses the file's CANONICAL path, with 8.3 short components (RUNNER~1, or any
-    user name > 8 chars under %TEMP%) expanded to their long form. os.path.abspath
-    does NOT expand 8.3, so a short path hashes to a different pipe and every
-    connect fails with ENOENT. realpath needs the file to exist; fall back to the
-    abspath when it doesn't. Windows only — on unix officecli uses GetFullPath
-    (no symlink resolution), so realpath would diverge (e.g. /tmp -> /private/tmp
-    on macOS)."""
+    it derives the name from GetFullPath, which expands 8.3 short components
+    (RUNNER~1, or any user name > 8 chars under %TEMP%) to their long form.
+    os.path.abspath does NOT expand 8.3, so a short path hashes to a different
+    pipe and every connect fails with ENOENT — hence realpath, which does expand
+    it. realpath needs the file to exist; fall back to the abspath when it
+    doesn't. realpath ALSO resolves symlinks/junctions, which GetFullPath does
+    not; harmless here because we hand this resolved path to the resident, so the
+    server's GetFullPath sees the already-resolved string and both sides hash the
+    same thing. Windows only — on unix officecli uses GetFullPath (no symlink
+    resolution), so realpath would diverge there (e.g. /tmp -> /private/tmp on
+    macOS)."""
     resolved = os.path.abspath(file_path)
     if _IS_WIN:
         try:
