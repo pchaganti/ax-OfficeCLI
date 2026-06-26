@@ -707,22 +707,32 @@ static partial class CommandBuilder
                 else
                 {
                     var type = item.Type ?? "";
-                    var resultPath = handler.Add(parentPath, type, pos, props);
+                    // Wrap props in a tracking dict (matches CLI/resident add): a
+                    // key the handler reads is consumed, so UnusedKeys after Add
+                    // is the generic unsupported-prop set across ALL handlers.
+                    // Previously batch/MCP add saw only Word's curated
+                    // LastAddUnsupportedProps, silently dropping an unknown prop
+                    // on a pptx/xlsx add that the CLI/resident would report.
+                    var tracking = new OfficeCli.Core.TrackingPropertyDictionary(props);
+                    var resultPath = handler.Add(parentPath, type, pos, tracking);
                     var addMsg = $"Added {type} at {resultPath}";
-
-                    // Surface silent-drop props that the curated Add helper
-                    // could not consume. AddStyle / AddParagraph / AddRun
-                    // populate LastAddUnsupportedProps. Use the curated
-                    // hint formatter (no raw-set recommendation) so users
-                    // learn the right curated alternative instead of being
-                    // pushed to the escape hatch. Scope label = result path
-                    // truncated to the meaningful prefix (/styles,
-                    // /body/p[N], /body/p[N]/r[N]).
-                    if (handler is OfficeCli.Handlers.WordHandler addWh
-                        && addWh.LastAddUnsupportedProps.Count > 0)
+                    var addUnsupported = tracking.UnusedKeys.ToList();
+                    if (handler is OfficeCli.Handlers.WordHandler addWh)
+                        addUnsupported.AddRange(addWh.LastAddUnsupportedProps);
+                    if (addUnsupported.Count > 0)
                     {
-                        var scope = ScopeLabelForWordPath(resultPath);
-                        var hint = OfficeCli.Core.StyleUnsupportedHints.Format(addWh.LastAddUnsupportedProps, scope);
+                        // Word → curated hints (keyed off the result path so a
+                        // /styles add gets style vocabulary); other handlers →
+                        // the generic scoped formatter.
+                        string? hint;
+                        if (handler is OfficeCli.Handlers.WordHandler)
+                            hint = OfficeCli.Core.StyleUnsupportedHints.Format(addUnsupported, ScopeLabelForWordPath(resultPath));
+                        else
+                        {
+                            string? addScope = handler is OfficeCli.Handlers.ExcelHandler ? "excel"
+                                : handler is OfficeCli.Handlers.PowerPointHandler ? "pptx" : null;
+                            hint = FormatUnsupported(addUnsupported, addScope);
+                        }
                         if (hint != null) addMsg += "\nWARNING: " + hint;
                     }
                     return addMsg;
@@ -746,7 +756,9 @@ static partial class CommandBuilder
                 if (item.Index.HasValue) movePos = InsertPosition.AtIndex(item.Index.Value);
                 else if (!string.IsNullOrEmpty(item.After)) movePos = InsertPosition.AfterElement(item.After);
                 else if (!string.IsNullOrEmpty(item.Before)) movePos = InsertPosition.BeforeElement(item.Before);
-                var resultPath = handler.Move(path, item.To, movePos);
+                // Pass props to the 4-arg Move like the CLI and resident do; the
+                // batch/MCP path previously dropped move-time properties.
+                var resultPath = handler.Move(path, item.To, movePos, props.Count > 0 ? props : null);
                 return $"Moved to {resultPath}";
             }
             case "swap":

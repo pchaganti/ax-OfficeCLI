@@ -572,6 +572,7 @@ public static class McpServer
                     Index = ArgIntOpt("index"),
                     After = string.IsNullOrEmpty(mvAfter) ? null : mvAfter,
                     Before = string.IsNullOrEmpty(mvBefore) ? null : mvBefore,
+                    Props = ParseProps(ArgStringArray("props")),
                 });
             }
             case "validate":
