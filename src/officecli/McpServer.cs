@@ -23,14 +23,21 @@ public static class McpServer
         using var reader = new StreamReader(Console.OpenStandardInput());
         using var writer = new StreamWriter(Console.OpenStandardOutput()) { AutoFlush = true };
 
-        // MCP is non-resident by design: every command opens, applies, and
-        // eager-saves directly (the inline handlers always called Open(), never
-        // TryResident). When a command is dispatched through the shared CLI root
-        // (RunCli), the CLI handlers DO call TryResident — and with no resident
-        // running that auto-spawns a subprocess, which blocks this single
-        // long-lived stdio process. Default the opt-out on so shared-grammar
-        // dispatch stays non-resident, matching the legacy MCP behaviour. An
-        // explicit user value (e.g. to opt INTO residents) is respected.
+        // Default this stdio process to NOT auto-spawn a resident. This opts
+        // out of spawning only — it does NOT bypass an existing one: TryResident
+        // still routes through a resident another officecli already holds for the
+        // file (probe-then-TrySend in CommandBuilder.TryResident), so two writers
+        // never fight over the file and no update is lost. The effect of the
+        // opt-out:
+        //   - no resident holds the file -> the command opens, applies, and
+        //     eager-saves directly, so the mutation is on disk by the time the
+        //     response returns;
+        //   - a resident already holds the file -> the command routes through it
+        //     and follows that resident's deferred flush (on disk at its
+        //     save/close/idle), same as any other client of that resident.
+        // Defaulting the opt-out on keeps a lone MCP session from leaving a
+        // spawned resident (and its deferred-flush surprise) behind it. An
+        // explicit user value (e.g. to opt INTO spawning residents) is respected.
         if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("OFFICECLI_NO_AUTO_RESIDENT")))
             Environment.SetEnvironmentVariable("OFFICECLI_NO_AUTO_RESIDENT", "1");
 
