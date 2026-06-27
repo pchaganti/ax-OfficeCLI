@@ -270,11 +270,7 @@ public static class McpServer
             return new[] { new McpContent("text", Text: HandleSkillCommand(argv)) };
         if (IsScreenshot(argv))
             return RunScreenshotArgv(argv);
-        var r = RunCliRaw(argv);
-        if (r.Exit != 0)
-            throw new ArgumentException(StripErrPrefix(FirstNonEmpty(r.Stderr.Trim(), r.Stdout.Trim())));
-        var outText = r.Stdout.TrimEnd('\n', '\r');
-        return new[] { new McpContent("text", Text: outText.Length == 0 ? "(ok)" : outText) };
+        return SurfaceCliResult(RunCliRaw(argv));
     }
 
     private static string[] ExtractArgv(JsonElement args)
@@ -399,6 +395,33 @@ public static class McpServer
         try { Console.SetOut(so); Console.SetError(se); exit = pr.Invoke(); }
         finally { Console.SetOut(prevOut); Console.SetError(prevErr); }
         return new CliResult(exit, so.ToString(), se.ToString());
+    }
+
+    // Translate a CLI invocation's (exit, stdout, stderr) into MCP content.
+    //
+    // Always surface stdout AND stderr together when both are present, so the
+    // caller never loses context — neither the "Added/Updated …" success line nor
+    // an advisory caveat. A dangling-style add/set exits 0 with the warning on
+    // stderr; both now report success WITH the warning visible (the warning was
+    // previously dropped on the exit-0 path).
+    //
+    // Only a genuine failure raises: exit 1 (e.g. path not found, nothing applied),
+    // or exit 2 with no stdout (goto/mark emit a usage error to stderr and write
+    // no success line). An exit-2 add/set with a populated stdout is the CLI's
+    // "applied with caveats" path — the element was added (envelope success:true)
+    // and only an unsupported property was dropped; surfacing that as a hard error
+    // makes agents re-issue an op that already landed. Scripts still see exit 2
+    // from the CLI itself — fail-fast is preserved there, not on the MCP surface.
+    private static IReadOnlyList<McpContent> SurfaceCliResult(CliResult r)
+    {
+        var stdout = r.Stdout.TrimEnd('\n', '\r');
+        var stderr = r.Stderr.Trim();
+        var combined = stdout.Length > 0 && stderr.Length > 0 ? $"{stdout}\n{stderr}"
+                     : stdout.Length > 0 ? stdout : stderr;
+        bool hardError = r.Exit != 0 && !(r.Exit == 2 && stdout.Length > 0);
+        if (hardError)
+            throw new ArgumentException(StripErrPrefix(combined.Length > 0 ? combined : "Command failed."));
+        return new[] { new McpContent("text", Text: combined.Length == 0 ? "(ok)" : combined) };
     }
 
     private static string FirstNonEmpty(params string[] xs) =>
