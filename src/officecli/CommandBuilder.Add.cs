@@ -250,6 +250,12 @@ static partial class CommandBuilder
 
                 // Advisory warnings from the Word handler (e.g. unknown styleId
                 // referenced as-is, unresolved styleName with spaces skipped).
+                // These do NOT flip the exit code: the requested value was still
+                // written (the styleId is stored as-is), so the mutation
+                // succeeded — exit 0 with the warning on stderr, mirroring Set's
+                // identical "style '…' not found — referenced as-is" path. Exit
+                // is reserved for "the value did not get written" (unsupported
+                // property below → 2; missing element → not_found).
                 if (handler is OfficeCli.Handlers.WordHandler addWhWarn
                     && addWhWarn.LastAddWarnings.Count > 0)
                 {
@@ -261,7 +267,6 @@ static partial class CommandBuilder
                             Code = "advisory",
                         });
                     }
-                    hadWarnings = true;
                 }
 
                 if (json)
