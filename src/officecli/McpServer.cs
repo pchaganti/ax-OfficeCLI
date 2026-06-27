@@ -944,7 +944,8 @@ public static class McpServer
     // *document model* exposes.
     private const string McpHelpStrategy = @"## Strategy
 Use view (outline/stats/issues/annotated) to understand the document first, then get/query to inspect details, then set/add/remove to modify.
-View modes: text, annotated, outline, stats, issues, html, svg (pptx only), forms (docx only).
+View modes: text, annotated, outline, stats, issues, html, svg (pptx only), screenshot, forms (docx only).
+Before delivering, pass the delivery gate (see the tool description): validate clean, view issues clean, and — if you can view images — view mode=screenshot to visually verify the rendered layout (the only way to catch overlap/overflow/off-slide/dark-on-dark that text modes cannot show).
 For 3+ mutations on the same file, use batch (one open/save cycle) instead of separate calls.
 Get output keys can be used directly as Set input keys (round-trip safe).
 Colors: FF0000, red, rgb(255,0,0), accent1. Sizes: 24pt. Positions: 2cm, 1in, 72pt, or raw EMU.
@@ -956,7 +957,12 @@ Paths are 1-based: /slide[1]/shape[2], /body/p[3], /Sheet1/A1.
 
 Commands: create (file), view (file, mode: text|annotated|outline|stats|issues|html|svg|screenshot|forms), get (file, path, depth), query (file, selector), set (file, path, props[]), add (file, parent, type, props[], index/after/before), remove (file, path), move (file, path, to, index/after/before), swap (file, path, path2), validate (file), batch (file, commands), raw (file, part), help (format: docx|xlsx|pptx, optional type=<element> for full schema), load_skill (no name: lists all skills with the triggers that say when to use each; name=<pptx|word|excel|word-form|morph-ppt|morph-ppt-3d|pitch-deck|academic-paper|data-dashboard|financial-model>: returns that skill's SKILL.md + a manifest of its reference files; add path=<relpath> to fetch one reference file, e.g. path=reference/decision-rules.md).
 
-Paths are 1-based: /slide[1]/shape[2], /body/p[3], /Sheet1/A1. Props are key=value strings. Call help with format= to list elements, then help with format= and type= to drill into a specific element's schema (properties, aliases, examples).";
+Paths are 1-based: /slide[1]/shape[2], /body/p[3], /Sheet1/A1. Props are key=value strings. Call help with format= to list elements, then help with format= and type= to drill into a specific element's schema (properties, aliases, examples).
+
+Delivery gate (before reporting a document finished — any failure = fix and re-check, do NOT deliver; validate passing is NOT delivery, 'looks like a real document' is):
+1. Schema: validate -> clean, no errors.
+2. Content: view mode=issues -> no overflow/format/structure issues; and scan view mode=text for leftover placeholders (xxxx, lorem/ipsum, <TODO>, {{...}}, $VAR$, empty ()/[]).
+3. Visual audit (MANDATORY if you can view images): view mode=screenshot renders the page/slide and returns it as an image shown to you (use --page N per slide, or --grid auto for a whole-doc contact sheet). Judge it adversarially — assume problems exist; finding none means you did not look hard enough — for overlap, text overflow, off-slide shapes, dark-on-dark, narrow-box wrapping, misalignment. Fix positions/sizes (set x/y/width/height) and screenshot again until it looks right. text/outline/issues modes cannot see rendering, so the screenshot is the only visual proof; with no headless browser available, say 'not visually verified' rather than claiming the layout is correct.";
 
     private static void WriteToolDefinitions(Utf8JsonWriter w)
     {
@@ -996,7 +1002,7 @@ Paths are 1-based: /slide[1]/shape[2], /body/p[3], /Sheet1/A1. Props are key=val
         w.WriteStartObject("items"); w.WriteString("type", "string"); w.WriteEndObject();
         w.WriteString("description", "key=value pairs (e.g. bold=true, color=FF0000, text=Hello)"); w.WriteEndObject();
         // mode
-        w.WriteStartObject("mode"); w.WriteString("type", "string"); w.WriteString("description", "View mode: text, annotated, outline, stats, issues, html, svg (pptx), screenshot (PNG via headless browser; needs playwright/chrome/firefox; takes seconds), forms (docx)"); w.WriteEndObject();
+        w.WriteStartObject("mode"); w.WriteString("type", "string"); w.WriteString("description", "View mode: text, annotated, outline, stats, issues, html, svg (pptx), screenshot, forms (docx). screenshot renders the page/slide to a PNG and returns it as an image you can look at — use it to VISUALLY verify layout (overlap, overflow, off-slide shapes, styling) that text modes cannot show. Needs a headless browser (playwright/chrome/firefox); takes seconds."); w.WriteEndObject();
         // screenshot_width / screenshot_height / grid (screenshot mode)
         w.WriteStartObject("screenshot_width"); w.WriteString("type", "number"); w.WriteString("description", "Viewport width for screenshot mode (default 1600)"); w.WriteEndObject();
         w.WriteStartObject("screenshot_height"); w.WriteString("type", "number"); w.WriteString("description", "Viewport height for screenshot mode (default 1200)"); w.WriteEndObject();
