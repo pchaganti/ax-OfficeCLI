@@ -576,27 +576,33 @@ internal static class GenericXmlQuery
 
             // Insert. Explicit index → manual positional insertion.
             //
-            // No index: the `add` verb means "append a NEW element", so a
-            // schema-repeatable type must produce a DISTINCT sibling. But
-            // OpenXmlCompositeElement.AddChild places by particle slot and, for
-            // some repeatable CT_* members (e.g. a second <w:tblStylePr> in a
-            // table style), COLLAPSES the new element onto the existing one —
-            // silently dropping it. This is the latent bug the dump→batch
-            // recursive-decomposition path exposes; single hand-authored adds
-            // never stacked repeatable children, so it stayed hidden, and a
-            // batch replay of such a sequence would drop them identically.
+            // No index: the placement depends on the child's schema cardinality
+            // and whether a same-name sibling already exists.
             //
-            // Fix without regressing first-occurrence positioning:
-            //   • A same-name sibling already exists → insert right AFTER the
-            //     last one. Repeatable members are contiguous in a CT_ sequence,
-            //     so this keeps the group together and in its correct slot
-            //     relative to other element types, and never collapses.
-            //   • No same-name sibling → AddChild, which positions the element
-            //     in its correct CT_ slot (and cannot collapse — nothing to
-            //     merge onto). This preserves AddChild's ordering for cases the
+            // OpenXmlCompositeElement.AddChild places by particle slot and
+            // REPLACES a same-name child. That is correct for a SINGLETON
+            // (maxOccurs == 1, e.g. <w:tblInd> in tblPr) — re-adding it should
+            // overwrite — but WRONG for a REPEATABLE member (e.g. a second
+            // <w:tblStylePr> in a table style, or <w:lvl>/<w:abstractNum>),
+            // which it silently collapses onto the first. The collapse is the
+            // latent bug the dump→batch recursive decomposition exposes; a batch
+            // replay of repeated same-name adds would drop them identically.
+            //
+            // So, with no index:
+            //   • No same-name sibling yet → AddChild: positions the element in
+            //     its correct CT_ slot and cannot collapse (nothing to merge
+            //     onto). Preserves AddChild's ordering for particles the
             //     reflection-based SchemaOrder comparator can't order (e.g.
-            //     DrawingML/Chart particles, where Compare returns null), so the
-            //     first <c:dPt> still lands before <c:cat>/<c:val> as before.
+            //     DrawingML/Chart, where the first <c:dPt> must precede
+            //     <c:cat>/<c:val>).
+            //   • Same-name sibling exists AND the child is a singleton
+            //     (maxOccurs == 1) → AddChild again: it overwrites the existing
+            //     one (the intended replace).
+            //   • Same-name sibling exists AND the child is repeatable (or its
+            //     cardinality can't be resolved) → insert right AFTER the last
+            //     same-name sibling. Repeatable members are contiguous in a CT_
+            //     sequence, so this keeps the group together and in its correct
+            //     slot, and never collapses.
             if (index.HasValue)
             {
                 var children = parent.ChildElements.ToList();
@@ -607,15 +613,26 @@ internal static class GenericXmlQuery
             }
             else
             {
-                var lastSameName = parent.ChildElements.LastOrDefault(e =>
+                var sameName = parent.ChildElements.Where(e =>
                     e.LocalName == newChild.LocalName
-                    && e.NamespaceUri == newChild.NamespaceUri);
-                if (lastSameName != null)
+                    && e.NamespaceUri == newChild.NamespaceUri).ToList();
+                bool isSingleton = sameName.Count > 0
+                    && SchemaOrder.GetMaxOccurs(parent, newChild) == 1;
+                if (sameName.Count > 0 && !isSingleton)
                 {
-                    lastSameName.InsertAfterSelf(newChild);
+                    // Repeatable (or unknown cardinality) with an existing
+                    // sibling → append a distinct sibling; never collapse.
+                    sameName[^1].InsertAfterSelf(newChild);
                 }
                 else if (parent is OpenXmlCompositeElement composite)
                 {
+                    // Singleton re-add → drop the existing one first (true
+                    // replace; AddChild alone refuses an already-filled
+                    // single-occurrence slot and falls through to append).
+                    if (isSingleton)
+                        foreach (var ex in sameName) ex.Remove();
+                    // First occurrence or post-removal: AddChild positions in the
+                    // correct CT_ slot.
                     if (!composite.AddChild(newChild, throwOnError: false))
                     {
                         parent.AppendChild(newChild); // schema doesn't define this child
