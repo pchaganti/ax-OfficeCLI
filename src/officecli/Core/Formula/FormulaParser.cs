@@ -1431,18 +1431,20 @@ internal static class FormulaParser
                     if (rowsMatrix == null)
                         return matrixEl;
 
-                    // Multiple alignment points (>1 "&" in some row, i.e. >2 cells)
-                    // cannot be represented by m:eqArr, which models only a vertical
-                    // stack with a single alignment point. LaTeX align lays out
-                    // alternating right/left columns (a &= b & c &= d → r l r l), so
-                    // route these to a borderless matrix with alternating m:mcJc
-                    // justification. This reverses to \begin{array}{rlrl…} (the m:m
-                    // colSpec path), which renders identically — a canonical-
-                    // equivalent collapse, like \cfrac→\frac. Single-/no-alignment
-                    // rows keep the eqArr path unchanged (no regression).
+                    // An alignment point ("&") splits a row into ≥2 cells. m:eqArr
+                    // models only a vertically-stacked CENTERED column with no
+                    // alignment point, so any row carrying a "&" renders centered
+                    // and drops the "&" — wrong for align/aligned/alignat, which
+                    // must align AT the "&" (a &= b → right-justify "a", left-
+                    // justify "= b"). Route every ≥2-cell case to a borderless
+                    // matrix with alternating right/left m:mcJc justification
+                    // (a &= b & c &= d → r l r l). This reverses to
+                    // \begin{array}{rl…} (the m:m colSpec path) and truly aligns.
+                    // Rows with NO "&" (a single cell, e.g. gather/gathered/
+                    // multline) keep the eqArr path — centered is correct there.
                     var matRows = rowsMatrix.Elements<M.MatrixRow>().ToList();
                     var maxCells = matRows.Count == 0 ? 0 : matRows.Max(r => r.Elements<M.Base>().Count());
-                    if (maxCells > 2)
+                    if (maxCells >= 2)
                     {
                         // Pad short rows to equal column count with empty cells.
                         foreach (var mr in matRows)
