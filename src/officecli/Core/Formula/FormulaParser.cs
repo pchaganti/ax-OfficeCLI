@@ -1683,15 +1683,43 @@ internal static class FormulaParser
                 // \emph → m:sty=b/i (renders upright bold/italic for letters,
                 // same as \mathbf/\mathit); \texttt/\textsf → m:scr; plain
                 // \text/\textrm keep bare m:nor for upright text.
+                //
+                // R2-bt-2: a NESTED text-style command (\textbf{\textit{x}})
+                // parses the inner command first, so `content`'s run already
+                // carries an m:sty (i here). ExtractText only pulls the text,
+                // dropping that axis, so the outer command would emit sty=b and
+                // lose the italic. Read the inner run's existing m:sty/m:scr and
+                // COMPOSE: bold+italic → "bi".
+                // ParseBracedArg returns the single inner node directly (so
+                // {\textit{x}} yields the inner M.Run itself), or an OfficeMath
+                // wrapper for multi-node groups. Handle both: the node itself,
+                // then any descendant run.
+                var innerRun = content as M.Run
+                    ?? content.Descendants<M.Run>().FirstOrDefault();
+                var innerRPr = innerRun?.GetFirstChild<M.RunProperties>();
+                var innerSty = innerRPr?.GetFirstChild<M.Style>()?.Val?.Value;
+                var innerScr = innerRPr?.GetFirstChild<M.Script>()?.Val?.Value;
+                bool innerBold = innerSty is M.StyleValues v1 && (v1 == M.StyleValues.Bold || v1 == M.StyleValues.BoldItalic);
+                bool innerItalic = innerSty is M.StyleValues v2 && (v2 == M.StyleValues.Italic || v2 == M.StyleValues.BoldItalic);
+
+                static M.StyleValues ComposeStyle(bool bold, bool italic) =>
+                    (bold, italic) switch
+                    {
+                        (true, true) => M.StyleValues.BoldItalic,
+                        (true, false) => M.StyleValues.Bold,
+                        (false, true) => M.StyleValues.Italic,
+                        _ => M.StyleValues.Plain,
+                    };
+
                 M.RunProperties rPr;
                 switch (cmd)
                 {
                     case "textbf":
-                        rPr = new M.RunProperties(new M.Style { Val = M.StyleValues.Bold });
+                        rPr = new M.RunProperties(new M.Style { Val = ComposeStyle(true, innerItalic) });
                         break;
                     case "textit":
                     case "emph":
-                        rPr = new M.RunProperties(new M.Style { Val = M.StyleValues.Italic });
+                        rPr = new M.RunProperties(new M.Style { Val = ComposeStyle(innerBold, true) });
                         break;
                     case "texttt":
                         rPr = new M.RunProperties(new M.Script { Val = M.ScriptValues.Monospace });
@@ -1699,8 +1727,14 @@ internal static class FormulaParser
                     case "textsf":
                         rPr = new M.RunProperties(new M.Script { Val = M.ScriptValues.SansSerif });
                         break;
-                    default: // "text", "textrm": plain upright, no extra axis.
-                        rPr = new M.RunProperties(new M.NormalText());
+                    default: // "text", "textrm": carry an inner weight if one was
+                             // composed (e.g. \text{\textbf{x}}); else bare m:nor.
+                        if (innerBold || innerItalic)
+                            rPr = new M.RunProperties(new M.Style { Val = ComposeStyle(innerBold, innerItalic) });
+                        else if (innerScr != null)
+                            rPr = new M.RunProperties(new M.Script { Val = innerScr });
+                        else
+                            rPr = new M.RunProperties(new M.NormalText());
                         break;
                 }
                 return new M.Run(
