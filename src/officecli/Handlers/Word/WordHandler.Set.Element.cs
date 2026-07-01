@@ -3236,6 +3236,20 @@ public partial class WordHandler
         OpenXmlElement? AChild(OpenXmlElement parent, string local) =>
             parent.ChildElements.FirstOrDefault(e => e.LocalName == local && e.NamespaceUri == ANs);
 
+        // On the SET path an unparseable size is a caller error and must be
+        // rejected (mirrors the pptx group). ParseDrawingSize swallows the parse
+        // exception and returns the fallback — fine for ADD (fill in a default),
+        // but on SET that silently reports success while changing nothing.
+        long ParseSizeStrict(string raw, string label)
+        {
+            try { return ParseEmu(raw); }
+            catch
+            {
+                throw new ArgumentException(
+                    $"Invalid {label} '{raw}': expected a length like '6cm', '2in', '72pt' or a raw EMU integer.");
+            }
+        }
+
         var grpSpPr = wgp.ChildElements.FirstOrDefault(e => e.LocalName == "grpSpPr");
         var xfrm = grpSpPr != null ? AChild(grpSpPr, "xfrm") : null;
         var ext = xfrm != null ? AChild(xfrm, "ext") : null;
@@ -3247,8 +3261,8 @@ public partial class WordHandler
             long preCx = ReadUnqualifiedLong(ext, "cx") ?? 0;
             long preCy = ReadUnqualifiedLong(ext, "cy") ?? 0;
 
-            long? newCx = widthRaw  != null ? ParseDrawingSize(widthRaw,  preCx > 0 ? preCx : 914_400) : null;
-            long? newCy = heightRaw != null ? ParseDrawingSize(heightRaw, preCy > 0 ? preCy : 914_400) : null;
+            long? newCx = widthRaw  != null ? ParseSizeStrict(widthRaw,  "width")  : null;
+            long? newCy = heightRaw != null ? ParseSizeStrict(heightRaw, "height") : null;
             // Reject non-positive: a negative <a:ext> is dropped by the SDK and
             // corrupts the file (schema MinInclusive); zero makes an invisible
             // group. Mirrors the pptx group's rejection.
@@ -3297,10 +3311,10 @@ public partial class WordHandler
             {
                 if (xRaw != null)
                     SetAnchorAxisOffset(anchor.GetFirstChild<DW.HorizontalPosition>(),
-                        ParseDrawingSize(xRaw, 914_400));
+                        ParseSizeStrict(xRaw, "x"));
                 if (yRaw != null)
                     SetAnchorAxisOffset(anchor.GetFirstChild<DW.VerticalPosition>(),
-                        ParseDrawingSize(yRaw, 914_400));
+                        ParseSizeStrict(yRaw, "y"));
             }
         }
 
