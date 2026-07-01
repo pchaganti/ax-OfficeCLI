@@ -412,6 +412,17 @@ public partial class PowerPointHandler
                     );
                 }
 
+                // 3D on the picture's spPr — verbatim <a:scene3d>/<a:sp3d>
+                // carriers from PictureToNode (a 3D-rotated picture replayed
+                // flat without them). Schema order puts scene3d before sp3d;
+                // append in that order right after the geometry.
+                if (properties.TryGetValue("scene3dRaw", out var picScene3dRaw)
+                    && !string.IsNullOrWhiteSpace(picScene3dRaw))
+                    picture.ShapeProperties.AppendChild(new Drawing.Scene3DType(picScene3dRaw));
+                if (properties.TryGetValue("sp3dRaw", out var picSp3dRaw)
+                    && !string.IsNullOrWhiteSpace(picSp3dRaw))
+                    picture.ShapeProperties.AppendChild(new Drawing.Shape3DType(picSp3dRaw));
+
                 // CONSISTENCY(shape-picture-parity): rotation lives on the
                 // same Transform2D as shape/connector/group; PowerPoint
                 // applies it identically to pictures. Set.Media already

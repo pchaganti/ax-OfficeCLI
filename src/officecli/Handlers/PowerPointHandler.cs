@@ -3823,7 +3823,11 @@ public partial class PowerPointHandler : IDocumentHandler, Rendering.IRenderMode
         string OleContentType,
         string OleExtension,
         byte[] ThumbnailBytes,
-        string ThumbnailContentType);
+        string ThumbnailContentType,
+        // Linked (TargetMode=External) OLE: no embedded payload; the emitter
+        // recreates the external rel instead of an add-part ole payload.
+        string? LinkedTarget = null,
+        string? LinkedRelType = null);
 
     internal IReadOnlyList<OleInfo> GetOlesOnSlide(int slideIdx)
     {
@@ -3857,7 +3861,19 @@ public partial class PowerPointHandler : IDocumentHandler, Rendering.IRenderMode
             var uri = gd?.Attribute("uri")?.Value;
             if (uri == null || !uri.Equals(oleUri, StringComparison.Ordinal)) continue;
 
-            var oleObj = gd!.Element(pNs + "oleObj");
+            // The oleObj may sit directly under graphicData OR wrapped in
+            // <mc:AlternateContent><mc:Choice Requires="v">…</mc:Choice>
+            // <mc:Fallback>…</mc:Fallback> (legacy VML-annotated OLE,
+            // graphic-stroke). Choice and Fallback share the same r:id, so
+            // any descendant works for rel resolution; the slice carries the
+            // whole wrapper verbatim either way.
+            // Prefer the oleObj that carries the thumbnail <p:pic> (the
+            // mc:Fallback one) — the mc:Choice twin holds only <p:link/> and
+            // would trip the no-thumbnail legacy skip below.
+            var oleObj = gd!.Element(pNs + "oleObj")
+                ?? gd.Descendants(pNs + "oleObj")
+                     .OrderByDescending(o => o.Descendants(aNs + "blip").Any())
+                     .FirstOrDefault();
             if (oleObj == null) continue;
             var oleRidAttr = oleObj.Attribute(rNs + "id");
             if (oleRidAttr == null) continue;
@@ -3902,7 +3918,47 @@ public partial class PowerPointHandler : IDocumentHandler, Rendering.IRenderMode
                 }
             }
             catch { }
-            if (oleBytes == null || string.IsNullOrEmpty(oleCT)) continue;
+            if (oleBytes == null || string.IsNullOrEmpty(oleCT))
+            {
+                // LINKED OLE: the r:id is a TargetMode="External" relationship
+                // (file:// link with <p:link/> inside p:oleObj) — there is no
+                // embedded payload part to carry. Round-trip the graphicFrame
+                // verbatim plus the external rel and the thumbnail image, or
+                // the whole object silently vanishes (graphic-stroke).
+                var extRel = slidePart.ExternalRelationships.FirstOrDefault(r => r.Id == oleRid);
+                if (extRel != null)
+                {
+                    byte[]? linkThumbBytes = null;
+                    string? linkThumbCT = null;
+                    try
+                    {
+                        if (slidePart.GetPartById(thumbRid!) is ImagePart lip)
+                        {
+                            using var ls = lip.GetStream();
+                            using var lms = new MemoryStream();
+                            ls.CopyTo(lms);
+                            linkThumbBytes = lms.ToArray();
+                            linkThumbCT = lip.ContentType;
+                        }
+                    }
+                    catch { }
+                    if (linkThumbBytes != null && linkThumbCT != null)
+                    {
+                        result.Add(new OleInfo(
+                            GraphicFrameXml: slice,
+                            OleRelId: oleRid,
+                            ThumbnailRelId: thumbRid!,
+                            OleBytes: Array.Empty<byte>(),
+                            OleContentType: "",
+                            OleExtension: "",
+                            ThumbnailBytes: linkThumbBytes,
+                            ThumbnailContentType: linkThumbCT,
+                            LinkedTarget: extRel.Uri.OriginalString,
+                            LinkedRelType: extRel.RelationshipType));
+                    }
+                }
+                continue;
+            }
 
             // Resolve the thumbnail icon ImagePart bytes.
             byte[]? thumbBytes = null;

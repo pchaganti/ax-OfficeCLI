@@ -2685,6 +2685,18 @@ public partial class PowerPointHandler
         if (picCustGeom != null)
             node.Format["customGeometryXml"] = picCustGeom.OuterXml;
 
+        // 3D on a picture: <a:scene3d>/<a:sp3d> on the pic's spPr (camera
+        // rotation + extrusion/bevel). ShapeToNode reads these semantically
+        // for shapes, but pictures had no readback at all — a 3D-rotated
+        // picture replayed flat (Scene3d_pureImage). Verbatim carriers,
+        // spliced back by AddPicture.
+        var picScene3d = pic.ShapeProperties?.GetFirstChild<Drawing.Scene3DType>();
+        if (picScene3d != null)
+            node.Format["scene3dRaw"] = picScene3d.OuterXml;
+        var picSp3d = pic.ShapeProperties?.GetFirstChild<Drawing.Shape3DType>();
+        if (picSp3d != null)
+            node.Format["sp3dRaw"] = picSp3d.OuterXml;
+
         // CONSISTENCY(zorder): mirror shape/connector — emit for any
         // ShapeTree-rooted picture so Add(picture, zorder=N) round-trips.
         if (pic.Parent is ShapeTree picZTree)

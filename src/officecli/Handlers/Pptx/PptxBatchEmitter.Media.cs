@@ -460,6 +460,49 @@ public static partial class PptxBatchEmitter
 
         foreach (var o in oles)
         {
+            if (o.LinkedTarget != null)
+            {
+                // LINKED OLE (TargetMode=External, <p:link/>): no payload part;
+                // recreate the external relationship + the thumbnail image so
+                // the verbatim graphicFrame's r:id / r:embed resolve.
+                items.Add(new BatchItem
+                {
+                    Command = "add-part",
+                    Parent = slidePath,
+                    Type = "extrel",
+                    Props = new Dictionary<string, string>(StringComparer.Ordinal)
+                    {
+                        ["rid"] = o.OleRelId,
+                        ["rel-type"] = o.LinkedRelType ?? "http://schemas.openxmlformats.org/officeDocument/2006/relationships/oleObject",
+                        ["target"] = o.LinkedTarget,
+                    },
+                });
+                items.Add(new BatchItem
+                {
+                    Command = "add-part",
+                    Parent = slidePath,
+                    Type = "image",
+                    Props = new Dictionary<string, string>(StringComparer.Ordinal)
+                    {
+                        ["rid"] = o.ThumbnailRelId,
+                        ["content-type"] = o.ThumbnailContentType,
+                        ["data"] = Convert.ToBase64String(o.ThumbnailBytes),
+                    },
+                });
+                string lgfCanon;
+                try { lgfCanon = NormalizeSlideRawSlice(o.GraphicFrameXml); }
+                catch { lgfCanon = o.GraphicFrameXml; }
+                items.Add(new BatchItem
+                {
+                    Command = "raw-set",
+                    Part = slidePath,
+                    Xpath = "/p:sld/p:cSld/p:spTree",
+                    Action = "append",
+                    Xml = lgfCanon,
+                });
+                continue;
+            }
+
             var props = new Dictionary<string, string>(StringComparer.Ordinal)
             {
                 ["data"] = Convert.ToBase64String(o.OleBytes),
