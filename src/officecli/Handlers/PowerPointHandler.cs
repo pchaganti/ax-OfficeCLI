@@ -1717,6 +1717,61 @@ public partial class PowerPointHandler : IDocumentHandler, Rendering.IRenderMode
                 return (epRid, parentPartPath);
             }
 
+            case "activex":
+            {
+                // Carry an ActiveX control part for round-trip: activeX{N}.xml
+                // (rel type .../control on the slide, pinned rId matching the
+                // <p:control r:id>) + its child activeX{N}.bin (the control's own
+                // .rels, activeXControlBinary rel, pinned rId matching the
+                // activeX xml's internal r:id). Without the parts the rIds in the
+                // round-tripped <p:controls> block dangle → 0x80070570.
+                var axm = System.Text.RegularExpressions.Regex.Match(parentPartPath, @"^/slide\[(\d+)\]$");
+                if (!axm.Success)
+                    throw new ArgumentException("add-part activex: parent must be /slide[N]");
+                var axIdx = int.Parse(axm.Groups[1].Value);
+                var axParts = GetSlideParts().ToList();
+                if (axIdx < 1 || axIdx > axParts.Count)
+                    throw new ArgumentException($"slide index {axIdx} out of range");
+                var axSlide = axParts[axIdx - 1];
+
+                if (properties == null
+                    || !properties.TryGetValue("rid", out var axRid) || string.IsNullOrEmpty(axRid))
+                    throw new ArgumentException("add-part activex requires property 'rid'");
+                if (!properties.TryGetValue("xml", out var axXmlB64) || string.IsNullOrEmpty(axXmlB64))
+                    throw new ArgumentException("add-part activex requires property 'xml' (base64)");
+                byte[] axXmlBytes;
+                try { axXmlBytes = Convert.FromBase64String(axXmlB64); }
+                catch (FormatException) { throw new ArgumentException("add-part activex: 'xml' is not valid base64"); }
+
+                const string ControlRelType = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/control";
+                const string ActiveXCT = "application/vnd.ms-office.activeX+xml";
+                const string BinRelType = "http://schemas.microsoft.com/office/2006/relationships/activeXControlBinary";
+                const string BinCT = "application/vnd.ms-office.activeX";
+
+                if (axSlide.ExternalRelationships.Any(r => r.Id == axRid)
+                    || axSlide.HyperlinkRelationships.Any(r => r.Id == axRid))
+                    return (axRid, parentPartPath);
+                ReHomeCollidingRel(axSlide, axRid);
+                var axPart = axSlide.AddExtendedPart(ControlRelType, ActiveXCT, ".xml", axRid);
+                using (var axStream = new MemoryStream(axXmlBytes))
+                    axPart.FeedData(axStream);
+
+                if (properties.TryGetValue("bin", out var axBinB64) && !string.IsNullOrEmpty(axBinB64)
+                    && properties.TryGetValue("bin-rid", out var axBinRid) && !string.IsNullOrEmpty(axBinRid))
+                {
+                    byte[] axBinBytes;
+                    try { axBinBytes = Convert.FromBase64String(axBinB64); }
+                    catch (FormatException) { axBinBytes = Array.Empty<byte>(); }
+                    if (axBinBytes.Length > 0)
+                    {
+                        var binPart = axPart.AddExtendedPart(BinRelType, BinCT, ".bin", axBinRid);
+                        using var binStream = new MemoryStream(axBinBytes);
+                        binPart.FeedData(binStream);
+                    }
+                }
+                return (axRid, parentPartPath);
+            }
+
             case "extrel":
             {
                 // Re-create an EXTERNAL relationship (TargetMode=External) with a
@@ -2793,6 +2848,97 @@ public partial class PowerPointHandler : IDocumentHandler, Rendering.IRenderMode
             catch { /* dangling in source too — skip */ }
         }
         return result;
+    }
+
+    // ActiveX controls on a slide. Producers put a <p:controls>
+    // block in <p:cSld> (sibling of the shape tree) holding one
+    // <mc:AlternateContent> per control (Choice = <p:control> VML fallback,
+    // Fallback = <p:control><p:pic> the rendered image). The control references
+    // an activeX{N}.xml part (rel type .../control), which in turn references a
+    // .bin blob via its OWN .rels. The fallback pic references a WMF image.
+    // NodeBuilder does not surface any of this, so the whole block + its parts
+    // were dropped on dump → the slide replayed blank. Carry the controls XML
+    // verbatim plus every referenced part (activeX xml + its bin child + WMF
+    // images) with pinned rIds.
+    internal readonly record struct ActiveXControlPart(string ControlRid, byte[] Xml, string? BinRid, byte[]? Bin);
+    internal readonly record struct ActiveXImage(string Rid, string ContentType, string Ext, byte[] Bytes);
+
+    internal (string? ControlsXml,
+              IReadOnlyList<ActiveXControlPart> Controls,
+              IReadOnlyList<ActiveXImage> Images) GetActiveXOnSlide(int slideIdx)
+    {
+        var noControls = ((string?)null,
+            (IReadOnlyList<ActiveXControlPart>)Array.Empty<ActiveXControlPart>(),
+            (IReadOnlyList<ActiveXImage>)Array.Empty<ActiveXImage>());
+        var parts = GetSlideParts().ToList();
+        if (slideIdx < 1 || slideIdx > parts.Count) return noControls;
+        var slidePart = parts[slideIdx - 1];
+
+        string slideXml;
+        try
+        {
+            using var s = slidePart.GetStream(FileMode.Open, FileAccess.Read);
+            using var r = new StreamReader(s);
+            slideXml = r.ReadToEnd();
+        }
+        catch { return noControls; }
+
+        var cm = System.Text.RegularExpressions.Regex.Match(slideXml,
+            @"<p:controls>.*?</p:controls>", System.Text.RegularExpressions.RegexOptions.Singleline);
+        if (!cm.Success) return noControls;
+        var controlsXml = cm.Value;
+
+        const string ControlRelType = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/control";
+        const string ImageRelType = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image";
+
+        // rIds referenced inside <p:controls> (control r:id + pic blip r:embed).
+        var refIds = new HashSet<string>(StringComparer.Ordinal);
+        foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(
+            controlsXml, @"r:(?:id|embed)=""(rId\d+)"""))
+            refIds.Add(m.Groups[1].Value);
+
+        var controls = new List<ActiveXControlPart>();
+        var images = new List<ActiveXImage>();
+        var seenImg = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var rel in slidePart.Parts)
+        {
+            if (!refIds.Contains(rel.RelationshipId)) continue;
+            try
+            {
+                if (rel.OpenXmlPart.RelationshipType == ControlRelType)
+                {
+                    byte[] axXml;
+                    using (var ps = rel.OpenXmlPart.GetStream(FileMode.Open, FileAccess.Read))
+                    using (var ms = new MemoryStream()) { ps.CopyTo(ms); axXml = ms.ToArray(); }
+                    // The control's .bin child (activeXControlBinary), if any.
+                    string? binRid = null; byte[]? bin = null;
+                    var binPair = rel.OpenXmlPart.Parts.FirstOrDefault();
+                    if (binPair.OpenXmlPart != null)
+                    {
+                        binRid = binPair.RelationshipId;
+                        using var bs = binPair.OpenXmlPart.GetStream(FileMode.Open, FileAccess.Read);
+                        using var bms = new MemoryStream(); bs.CopyTo(bms); bin = bms.ToArray();
+                    }
+                    controls.Add(new ActiveXControlPart(rel.RelationshipId, axXml, binRid, bin));
+                }
+                else if (rel.OpenXmlPart.RelationshipType == ImageRelType)
+                {
+                    if (!seenImg.Add(rel.RelationshipId)) continue;
+                    byte[] bytes;
+                    using (var ps = rel.OpenXmlPart.GetStream(FileMode.Open, FileAccess.Read))
+                    using (var ms = new MemoryStream()) { ps.CopyTo(ms); bytes = ms.ToArray(); }
+                    var ct = string.IsNullOrEmpty(rel.OpenXmlPart.ContentType) ? "image/x-wmf" : rel.OpenXmlPart.ContentType;
+                    var ext = Path.GetExtension(rel.OpenXmlPart.Uri?.OriginalString ?? "");
+                    if (string.IsNullOrEmpty(ext)) ext = ".wmf";
+                    images.Add(new ActiveXImage(rel.RelationshipId, ct, ext, bytes));
+                }
+            }
+            catch { /* skip malformed */ }
+        }
+
+        if (controls.Count == 0) return noControls;
+        return (controlsXml, controls, images);
     }
 
     internal IReadOnlyList<SmartArtInfo> GetSmartArtsOnSlide(int slideIdx)

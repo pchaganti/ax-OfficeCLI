@@ -846,6 +846,12 @@ public static partial class PptxBatchEmitter
             });
         }
 
+        // ActiveX controls: <p:controls> in <p:cSld> (holding the controls +
+        // their fallback pics) + the activeX xml/bin parts + WMF fallback
+        // images. NodeBuilder surfaces none of this, so the whole block + parts
+        // were dropped → the slide replayed blank. Carry them verbatim.
+        EmitActiveXForSlide(ppt, slideNum, slidePath, items, ctx);
+
         // Phase 3c-3d: am3d 3D-model AlternateContent blocks with their
         // underlying ExtendedPart .glb + thumbnail ImagePart, mirroring
         // the video/audio passthrough. The typed walk skipped
@@ -1674,6 +1680,64 @@ public static partial class PptxBatchEmitter
     // pass as the slide-slice path; both passes need to be idempotent so
     // first emit (raw XML from source) and second emit (raw XML from
     // post-replay SDK-roundtripped doc) compare byte-equal.
+    // ActiveX controls carrier — see PowerPointHandler.GetActiveXOnSlide. Emit
+    // the activeX xml/bin parts + WMF fallback images (pinned rIds) first, then
+    // raw-set the <p:controls> block into <p:cSld> so its rIds resolve.
+    private static void EmitActiveXForSlide(PowerPointHandler ppt, int slideNum,
+                                            string slidePath, List<BatchItem> items,
+                                            SlideEmitContext ctx)
+    {
+        (string? controlsXml, var controls, var images) = ppt.GetActiveXOnSlide(slideNum);
+        if (controlsXml == null || controls.Count == 0) return;
+
+        const string ImageRelType = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image";
+
+        foreach (var c in controls)
+        {
+            var props = new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["rid"] = c.ControlRid,
+                ["xml"] = Convert.ToBase64String(c.Xml),
+            };
+            if (c.BinRid != null && c.Bin != null)
+            {
+                props["bin-rid"] = c.BinRid;
+                props["bin"] = Convert.ToBase64String(c.Bin);
+            }
+            items.Add(new BatchItem { Command = "add-part", Parent = slidePath, Type = "activex", Props = props });
+        }
+
+        foreach (var img in images)
+        {
+            items.Add(new BatchItem
+            {
+                Command = "add-part",
+                Parent = slidePath,
+                Type = "extpart",
+                Props = new Dictionary<string, string>(StringComparer.Ordinal)
+                {
+                    ["rid"] = img.Rid,
+                    ["rel-type"] = ImageRelType,
+                    ["content-type"] = img.ContentType,
+                    ["ext"] = img.Ext,
+                    ["data"] = Convert.ToBase64String(img.Bytes),
+                },
+            });
+        }
+
+        string controlsCanon;
+        try { controlsCanon = NormalizeSlideRawSlice(controlsXml); }
+        catch { controlsCanon = controlsXml; }
+        items.Add(new BatchItem
+        {
+            Command = "raw-set",
+            Part = slidePath,
+            Xpath = "/p:sld/p:cSld",
+            Action = "append",
+            Xml = controlsCanon,
+        });
+    }
+
     private static void EmitSmartArtsForSlide(PowerPointHandler ppt, int slideNum,
                                               string slidePath, List<BatchItem> items,
                                               SlideEmitContext ctx)
