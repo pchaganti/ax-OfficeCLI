@@ -419,6 +419,40 @@ public static partial class PptxBatchEmitter
             Props = props.Count > 0 ? props : null,
         });
 
+        // CONSISTENCY(shape-style-rawset), placeholder variant: a slide
+        // placeholder may carry its own <p:style> theme-reference block
+        // (lnRef/fillRef/effectRef/fontRef) — e.g. a body placeholder styled
+        // fillRef→accent2 with fontRef→lt1 white text. EmitShape has this hook
+        // but placeholders route through here, so the block was silently
+        // dropped and the placeholder replayed with no fill and default-dark
+        // text. Same raw-set append as EmitShape's.
+        if (System.Text.RegularExpressions.Regex.Match(replayPath,
+                @"^/slide\[\d+\]((?:/group\[\d+\])*)/(?:shape|textbox|title|equation|placeholder)\[(\d+)\]$")
+            is { Success: true } phStyleM)
+        {
+            var phStyleProbe = ppt.GetShapeStyleXmlWithOrdinal(phNode.Path ?? "");
+            if (phStyleProbe.HasValue)
+            {
+                var (phStyleXml, phSpOrd) = phStyleProbe.Value;
+                var phSlideRoot = System.Text.RegularExpressions.Regex.Match(
+                    replayPath, @"^/slide\[\d+\]").Value;
+                var phStyleXpath = new System.Text.StringBuilder("/p:sld/p:cSld/p:spTree");
+                foreach (System.Text.RegularExpressions.Match gm in
+                         System.Text.RegularExpressions.Regex.Matches(
+                             phStyleM.Groups[1].Value, @"/group\[(\d+)\]"))
+                    phStyleXpath.Append($"/p:grpSp[{gm.Groups[1].Value}]");
+                phStyleXpath.Append($"/p:sp[{phSpOrd}]");
+                items.Add(new BatchItem
+                {
+                    Command = "raw-set",
+                    Part = phSlideRoot,
+                    Xpath = phStyleXpath.ToString(),
+                    Action = "append",
+                    Xml = phStyleXml,
+                });
+            }
+        }
+
         // Restore a tiled image fill (must run after the add op above created
         // the stretched blipFill on replay).
         EmitBlipTileReplace(ppt, phNode.Path, replayPath, items);
