@@ -53,7 +53,10 @@ public static class SequenceLayout
     public static SequenceDiagram Parse(string text)
     {
         var d = new SequenceDiagram();
-        foreach (var raw in text.Split('\n'))
+        // Split on ';' as well as newlines so the single-line form
+        // ("sequenceDiagram; A->>B: hi; B-->>A: ok") parses — same statement
+        // separator the flowchart parser already accepts.
+        foreach (var raw in text.Split('\n', ';'))
         {
             var line = raw.Trim();
             if (line.Length == 0 || line.StartsWith("%%") ||
