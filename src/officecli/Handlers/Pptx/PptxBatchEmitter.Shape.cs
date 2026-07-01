@@ -466,6 +466,22 @@ public static partial class PptxBatchEmitter
         var full = ppt.Get(cxnNode.Path, depth: 3);
         var props = FilterEmittableProps(full.Format);
 
+        // The <p:style> theme-reference block round-trips via a raw-set append
+        // below (see CONSISTENCY(shape-style-rawset), connector variant). Probe
+        // it up front: when the connector carries a style AND the dump surfaced
+        // no explicit line colour/width, signal AddConnector to skip its default
+        // black 1pt stroke — otherwise the forced <a:solidFill srgbClr=000000>
+        // overrides the style's lnRef (e.g. accent1) and the line replays black.
+        var cxnStyleProbe = ppt.GetConnectorStyleXmlWithOrdinal(cxnNode.Path ?? "");
+        if (cxnStyleProbe.HasValue
+            && !props.ContainsKey("color") && !props.ContainsKey("line")
+            && !props.ContainsKey("lineColor") && !props.ContainsKey("line.color")
+            && !props.ContainsKey("lineWidth") && !props.ContainsKey("line.width")
+            && !props.ContainsKey("line.gradient"))
+        {
+            props["styledLine"] = "true";
+        }
+
         // R57 bt-4: PowerPoint allows a <p:txBody> child on <p:cxnSp> to render
         // an in-line label between the connector's endpoints. NodeBuilder
         // surfaces paragraphs / runs under the connector node; replay them
@@ -564,6 +580,40 @@ public static partial class PptxBatchEmitter
                 Path = replayPath,
                 Props = deferredArrows,
             });
+        }
+
+        // CONSISTENCY(shape-style-rawset), connector variant: the <p:style>
+        // theme-reference block (<a:lnRef>/<a:fillRef>/<a:effectRef>/<a:fontRef>)
+        // sits between <p:spPr> and <p:txBody> under <p:cxnSp> and has no typed
+        // Add/Set vocabulary. Without this, a connector whose line colour comes
+        // from lnRef (e.g. accent1) replayed with the theme's default near-black
+        // stroke. Pull the verbatim block and raw-set append it onto the freshly
+        // added connector — emitted BEFORE the text-body walk below so the child
+        // order stays spPr → style → txBody. Mirrors EmitShape's style hook.
+        if (System.Text.RegularExpressions.Regex.Match(parentSlidePath + $"/connector[{connectorOrdinal}]",
+                @"^/slide\[\d+\]((?:/group\[\d+\])*)/connector\[(\d+)\]$")
+            is { Success: true } cxnStyleM)
+        {
+            if (cxnStyleProbe.HasValue)
+            {
+                var (cxnStyleXml, cxnOrd) = cxnStyleProbe.Value;
+                var slideRoot = System.Text.RegularExpressions.Regex.Match(
+                    parentSlidePath, @"^/slide\[\d+\]").Value;
+                var cxnStyleXpath = new System.Text.StringBuilder("/p:sld/p:cSld/p:spTree");
+                foreach (System.Text.RegularExpressions.Match gm in
+                         System.Text.RegularExpressions.Regex.Matches(
+                             cxnStyleM.Groups[1].Value, @"/group\[(\d+)\]"))
+                    cxnStyleXpath.Append($"/p:grpSp[{gm.Groups[1].Value}]");
+                cxnStyleXpath.Append($"/p:cxnSp[{cxnOrd}]");
+                items.Add(new BatchItem
+                {
+                    Command = "raw-set",
+                    Part = slideRoot,
+                    Xpath = cxnStyleXpath.ToString(),
+                    Action = "append",
+                    Xml = cxnStyleXml,
+                });
+            }
         }
 
         // R57 bt-4: emit follow-up paragraph/run ops for connector labels that

@@ -3137,6 +3137,13 @@ public partial class PowerPointHandler
         if (xfrm?.Rotation?.HasValue == true && xfrm.Rotation.Value != 0)
             node.Format["rotation"] = $"{xfrm.Rotation.Value / 60000.0:0.######}";
 
+        // Flip — a bent/elbow connector's actual routing depends on flipH/flipV
+        // (they mirror the path within its bounding box). AddConnector already
+        // honors both; ConnectorToNode previously read only rotation, so a
+        // flipped connector round-tripped with mirrored routing (wrong bends).
+        if (xfrm?.HorizontalFlip?.Value == true) node.Format["flipH"] = true;
+        if (xfrm?.VerticalFlip?.Value == true) node.Format["flipV"] = true;
+
         // Z-order (1-based position among content elements: 1 = back, N = front).
         // CONSISTENCY(zorder): shape/picture/group all emit zorder when parent is a
         // ShapeTree; connector belongs to the same set and was previously omitted —

@@ -243,6 +243,17 @@ public partial class PowerPointHandler
                     || properties.ContainsKey("miter.limit") || properties.ContainsKey("line.miterlimit");
                 bool skipOutline = bareLine && !hasAnyLineInput;
 
+                // A connector whose colour/width comes from its <p:style> lnRef
+                // (round-tripped as a raw-set append after this Add) must NOT get
+                // a synthetic default black solidFill + 1pt width — the explicit
+                // outline would override the theme reference and replay black.
+                // The emitter sets `styledLine` only when a style is present and
+                // no explicit line colour/width was supplied, so any other line.*
+                // input (tailEnd, dash, cap, …) still lands on a bare <a:ln> that
+                // inherits colour/width from lnRef.
+                bool styledLine = IsTruthy(properties.GetValueOrDefault("styledLine"))
+                                  || IsTruthy(properties.GetValueOrDefault("styledline"));
+
                 // Line style
                 var cxnOutline = new Drawing.Outline { Width = 12700 }; // 1pt default
                 // line.gradient parity with Set side — accept gradient outline at Add time
@@ -256,7 +267,7 @@ public partial class PowerPointHandler
                     || properties.TryGetValue("line", out cxnColor2) || properties.TryGetValue("color", out cxnColor2)
                     || properties.TryGetValue("line.color", out cxnColor2))
                     cxnOutline.AppendChild(BuildSolidFill(cxnColor2));
-                else
+                else if (!styledLine)
                     cxnOutline.AppendChild(BuildSolidFill("000000"));
                 if (properties.TryGetValue("linewidth", out var lwVal) || properties.TryGetValue("lineWidth", out lwVal)
                     || properties.TryGetValue("line.width", out lwVal))
