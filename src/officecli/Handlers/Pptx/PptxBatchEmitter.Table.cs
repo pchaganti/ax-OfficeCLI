@@ -121,7 +121,27 @@ public static partial class PptxBatchEmitter
                 // Set tc accepts text= for replacing the cell's text body.
                 if (hasRawBody)
                 {
-                    // raw body is authoritative; no text= companion.
+                    // raw body is authoritative; no text= companion. It also
+                    // fully specifies every run/paragraph's formatting, so drop
+                    // the companion text-body semantic props (size, font, align,
+                    // lineSpacing, space*, bold, …). Left in, the `set` applies
+                    // them across the WHOLE cell and flattens per-run values —
+                    // e.g. a cell with a big "±" run (25pt) and a small caption
+                    // run (7pt) collapsed to a single 25pt via a companion
+                    // size=25pt, ballooning the row (sample14). Keep only
+                    // cell-level (tcPr) props the txBody does NOT carry:
+                    // padding.* (marL/R/T/B), valign (anchor), border*, fill*,
+                    // and cell spans.
+                    foreach (var k in cellProps.Keys.ToList())
+                    {
+                        if (k == "txBodyRaw") continue;
+                        bool cellLevel = k.StartsWith("padding.", StringComparison.Ordinal)
+                            || k.StartsWith("border", StringComparison.Ordinal)
+                            || k.StartsWith("fill", StringComparison.Ordinal)
+                            || k is "valign" or "anchor" or "rowSpan" or "gridSpan"
+                                 or "colSpan" or "rowspan" or "gridspan" or "vMerge" or "hMerge";
+                        if (!cellLevel) cellProps.Remove(k);
+                    }
                 }
                 else if (!string.IsNullOrEmpty(cell.Text))
                     cellProps["text"] = cell.Text!;
