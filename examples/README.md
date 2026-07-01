@@ -18,12 +18,15 @@ examples/
 │   ├── run-formatting.{md,sh,py,docx}       # run/character property surface
 │   ├── paragraph-formatting.{md,sh,py,docx} # paragraph property surface
 │   ├── document-formatting.{md,sh,py,docx}  # document-level property surface
+│   ├── sections.{md,sh,py,docx}             # section layout — multi-column, footnote/endnote props, per-section page setup
 │   ├── numbering.{md,sh,py,docx}            # list/numbering styles
 │   └── revisions.{md,sh,py,docx}            # tracked-change (revision) API
 ├── excel/                                 # 📊 Excel examples — *.{md,sh,py,xlsx}
 │   ├── cell-formatting.{md,sh,py,xlsx}      # full cell property surface (fonts/fills/borders/numFmt/data)
 │   ├── conditional-formatting.{md,sh,py,xlsx}
 │   ├── data-validation.{md,sh,py,xlsx}        # dropdown lists, number/date/text/custom rules, input & error messages
+│   ├── sheet-settings.{md,sh,py,xlsx}         # freeze panes, print area/titles, headers/footers, display & protection
+│   ├── sparklines.{md,sh,py,xlsx}             # in-cell line/column/win-loss mini charts + point markers
 │   ├── workbook-settings.{md,sh,py,xlsx}
 │   ├── pivot-tables.{md,sh,py,xlsx}
 │   ├── charts.{md,sh,py,xlsx}               # master chart showcase
