@@ -578,6 +578,23 @@ public static partial class PptxBatchEmitter
             Props = slideProps.Count > 0 ? slideProps : null,
         });
 
+        // showMasterShapes=false is a Set-only key (`add slide` doesn't
+        // consume it) — emit a follow-up set so <p:sld showMasterSp="0">
+        // survives replay (themes.pptx: master graphics reappeared over an
+        // overridden background).
+        if (slideProps.Remove("showMasterShapes"))
+        {
+            items.Add(new BatchItem
+            {
+                Command = "set",
+                Path = slidePath,
+                Props = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["showMasterShapes"] = "false",
+                },
+            });
+        }
+
         // Picture-bullet image carrier. A paragraph/shape whose bullet glyph is an
         // image (<a:buBlip><a:blip r:embed="rIdN">) round-trips its bullet markup
         // verbatim via bulletRaw/lstStyleRaw, but the slide ImagePart it points at

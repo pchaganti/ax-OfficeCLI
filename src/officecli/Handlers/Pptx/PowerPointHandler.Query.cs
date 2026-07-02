@@ -1310,6 +1310,12 @@ public partial class PowerPointHandler
             if (!string.IsNullOrEmpty(slideName)) slideNode.Format["name"] = slideName;
             if (slide.Show?.Value == false)
                 slideNode.Format["hidden"] = true;
+            // <p:sld showMasterSp="0"> suppresses master decoration shapes;
+            // dropping it on dump→replay brought the master graphics back
+            // over an overridden background (themes.pptx). Set already
+            // accepts showMasterShapes=false.
+            if (slide.ShowMasterShapes?.Value == false)
+                slideNode.Format["showMasterShapes"] = false;
             ReadSlideBackground(slide, slideNode, targetSlidePart);
             ReadSlideTransition(targetSlidePart, slideNode);
             ReadSlideHeaderFooter(slide, slideNode);
