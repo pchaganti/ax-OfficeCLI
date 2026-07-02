@@ -163,6 +163,20 @@ public partial class ExcelHandler
                     "; remove it before adding a new one or pick a different name.");
         }
 
+        // Mirror of the table-side check: Excel's name namespace spans
+        // defined names AND ListObject table names; a collision passes
+        // schema validation but real Excel refuses the file (0x800A03EC).
+        foreach (var existingTable in _doc.WorkbookPart!.WorksheetParts
+            .SelectMany(wp => wp.TableDefinitionParts)
+            .Select(tdp => tdp.Table)
+            .Where(t => t != null)!)
+        {
+            if (string.Equals(existingTable!.Name?.Value, nrName, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(existingTable.DisplayName?.Value, nrName, StringComparison.OrdinalIgnoreCase))
+                throw new ArgumentException(
+                    $"Defined name '{nrName}' collides with the table name '{existingTable.Name?.Value ?? existingTable.DisplayName?.Value}'. Excel requires table and defined names to be unique in one namespace; pick a different name.");
+        }
+
         definedNames.AppendChild(dn);
 
         // R7-3: if the defined-name body is a formula (not just a pure
@@ -352,6 +366,11 @@ public partial class ExcelHandler
             ?? properties.GetValueOrDefault("ref")
             ?? throw new ArgumentException("Property 'sqref' (or 'ref') is required for validation");
 
+        // NOTE: multi-region sqref ("A1:A5 C1:C5") is legal and opens fine in
+        // real Excel — a fuzz report claiming otherwise was a render-service
+        // cache false positive (fresh-content retest and an openpyxl gold
+        // sample both open cleanly). Do not add a guard.
+
         var dv = new DataValidation
         {
             SequenceOfReferences = new ListValue<StringValue>(
@@ -398,6 +417,23 @@ public partial class ExcelHandler
                 && string.IsNullOrWhiteSpace(dvFormula1.Trim('"')))
                 throw new ArgumentException(
                     "Property 'formula1' is empty for validation type=list; supply options like formula1=\"1,2,3\" or a range reference.");
+            // Excel caps data-validation formulas at 255 chars; longer ones
+            // pass schema validation but the file is refused (0x800A03EC).
+            if (dvFormula1.Length > 255)
+                throw new ArgumentException(
+                    $"validation formula1 is {dvFormula1.Length} chars; Excel's limit is 255. Put the list in a range and reference it instead.");
+            // Embedded double quotes inside a literal list (not a range ref)
+            // produce list literals Excel refuses to open — empirically
+            // verified; reject rather than write a corrupt file.
+            if (dv.Type?.Value == DataValidationValues.List)
+            {
+                var inner = dvFormula1.Trim();
+                if (inner.StartsWith('"') && inner.EndsWith('"') && inner.Length >= 2)
+                    inner = inner[1..^1];
+                if (inner.Contains('"'))
+                    throw new ArgumentException(
+                        "validation list options must not contain double quotes; Excel refuses files with quoted-literal escapes inside a list formula. Put the options in cells and reference the range instead.");
+            }
             dv.Formula1 = new Formula1(NormalizeValidationFormula(dvFormula1, dv.Type?.Value));
         }
         else if (dv.Type?.Value == DataValidationValues.List)
@@ -408,7 +444,12 @@ public partial class ExcelHandler
         }
 
         if (properties.TryGetValue("formula2", out var dvFormula2))
+        {
+            if (dvFormula2.Length > 255)
+                throw new ArgumentException(
+                    $"validation formula2 is {dvFormula2.Length} chars; Excel's limit is 255.");
             dv.Formula2 = new Formula2(NormalizeValidationFormula(dvFormula2, dv.Type?.Value));
+        }
         else if (dv.Operator?.Value == DataValidationOperatorValues.Between
                  || dv.Operator?.Value == DataValidationOperatorValues.NotBetween)
         {
@@ -814,6 +855,22 @@ public partial class ExcelHandler
             if (string.Equals(existingTable.DisplayName?.Value, displayName, StringComparison.OrdinalIgnoreCase))
                 throw new ArgumentException(
                     $"Table displayName '{displayName}' already exists in workbook; choose a different displayName.");
+        }
+        // Excel's name uniqueness spans ListObjects AND workbook defined
+        // names in one namespace — a collision passes schema validation but
+        // real Excel refuses the file (0x800A03EC).
+        var definedNames = _doc.WorkbookPart.Workbook?.DefinedNames;
+        if (definedNames != null)
+        {
+            foreach (var dn in definedNames.Elements<DefinedName>())
+            {
+                var dnName = dn.Name?.Value;
+                if (dnName != null
+                    && (string.Equals(dnName, tableName, StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(dnName, displayName, StringComparison.OrdinalIgnoreCase)))
+                    throw new ArgumentException(
+                        $"Table name '{tableName}' collides with the workbook defined name '{dnName}'. Excel requires table and defined names to be unique in one namespace; choose a different table name.");
+            }
         }
         var styleName = properties.GetValueOrDefault("style", "TableStyleMedium2");
         // BUG-R9-B2: accept short aliases (medium2, light1, dark1, none) — schema

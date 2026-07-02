@@ -176,6 +176,26 @@ public partial class ExcelHandler
 
     private static void InsertMergeCellChecked(MergeCells mergeCells, string newRangeRef, WorksheetPart? worksheetPart = null)
     {
+        try
+        {
+            InsertMergeCellCheckedCore(mergeCells, newRangeRef, worksheetPart);
+        }
+        catch
+        {
+            // Callers create the <mergeCells> container before this check
+            // runs. If the merge is rejected and the container is left
+            // childless, an empty <x:mergeCells/> stays in the worksheet —
+            // schema-INVALID (count >= 1 required), so a failed call
+            // corrupted a previously-fine file. Remove the empty shell
+            // before rethrowing.
+            if (!mergeCells.Elements<MergeCell>().Any() && mergeCells.Parent != null)
+                mergeCells.Remove();
+            throw;
+        }
+    }
+
+    private static void InsertMergeCellCheckedCore(MergeCells mergeCells, string newRangeRef, WorksheetPart? worksheetPart = null)
+    {
         ValidateMergeRefLiteral(newRangeRef);
         var refUpper = newRangeRef.ToUpperInvariant();
         foreach (var existing in mergeCells.Elements<MergeCell>())

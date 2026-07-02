@@ -436,6 +436,27 @@ public static partial class ExcelBatchEmitter
             warnings.Add(new UnsupportedWarning("sheet.password", sheetPath,
                 "sheet protection password hashes cannot be round-tripped; protection is emitted without a password"));
         }
+
+        // Manual page breaks. Get exposes them as comma-joined index lists;
+        // replay re-adds each one (rowbreak row=N / colbreak col=N).
+        if (sheetNode.Format.TryGetValue("rowBreaks", out var rbk) && rbk is string rbkS && rbkS.Length > 0)
+            foreach (var b in rbkS.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                items.Add(new BatchItem
+                {
+                    Command = "add",
+                    Parent = sheetPath,
+                    Type = "rowbreak",
+                    Props = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { ["row"] = b },
+                });
+        if (sheetNode.Format.TryGetValue("colBreaks", out var cbk) && cbk is string cbkS && cbkS.Length > 0)
+            foreach (var b in cbkS.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                items.Add(new BatchItem
+                {
+                    Command = "add",
+                    Parent = sheetPath,
+                    Type = "colbreak",
+                    Props = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { ["col"] = b },
+                });
     }
 
     // ==================== Value baseline (CSV import) ====================

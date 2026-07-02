@@ -46,6 +46,20 @@ public partial class ExcelHandler
             if (System.Text.RegularExpressions.Regex.IsMatch(name, @"^[Tt][Bb][Ll]\d+$"))
                 throw new ArgumentException(
                     $"Table name '{name}' matches Excel's internal Tbl{{N}} naming pattern and is rejected by Mac Excel. Use 'Table{{N}}' (default) or a descriptive name like 'SalesData'.");
+            // Excel enforces defined-name grammar on table names: identifier
+            // chars only (no spaces), must not parse as an A1/R1C1 cell
+            // reference. Violations pass schema validation but real Excel
+            // refuses the whole file (0x800A03EC) — reject up front, same
+            // rule set as the namedrange validator.
+            if (!System.Text.RegularExpressions.Regex.IsMatch(name, @"^[A-Za-z_\\][A-Za-z0-9._\\]*$"))
+                throw new ArgumentException(
+                    $"Table name '{name}' is not a valid Excel name: use letters, digits, '.' or '_' only, starting with a letter or '_' (no spaces). Excel refuses to open files with other table names.");
+            if (LooksLikeCellReference(name)
+                || System.Text.RegularExpressions.Regex.IsMatch(name, @"^[Rr]\d+[Cc]\d+$")
+                || name.Equals("R", StringComparison.OrdinalIgnoreCase)
+                || name.Equals("C", StringComparison.OrdinalIgnoreCase))
+                throw new ArgumentException(
+                    $"Table name '{name}' looks like a cell reference; Excel refuses to open files with such table names. Choose a name like '{name}_'.");
             return name;
         }
         var looksLikeRef = LooksLikeCellReference(name)
