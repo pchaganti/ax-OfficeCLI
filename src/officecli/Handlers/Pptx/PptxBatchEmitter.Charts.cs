@@ -258,7 +258,20 @@ public static partial class PptxBatchEmitter
         // degrade "blip" to a solid-black box). Consistent with the file-wide
         // rule that the chart round-trips visually via semantic rebuild while
         // its backing parts (embedded workbook, style/colors, media) do not.
-        SanitizeChartImageFills(props);
+        // When the source chart carries image parts (picture/texture fills on
+        // chartSpace/plotArea/series spPr), carry them via add-part chartimage
+        // with pinned rIds so the verbatim spPr blipFills resolve — no need to
+        // degrade to noFill. Only sanitize when there is nothing to carry.
+        var slideOrdM = System.Text.RegularExpressions.Regex.Match(parentSlidePath, @"^/slide\[(\d+)\]$");
+        IReadOnlyList<PowerPointHandler.MasterImageInfo> chartImages =
+            Array.Empty<PowerPointHandler.MasterImageInfo>();
+        if (slideOrdM.Success)
+        {
+            try { chartImages = ppt.GetChartImageParts(int.Parse(slideOrdM.Groups[1].Value), chartOrdinal); }
+            catch { }
+        }
+        if (chartImages.Count == 0)
+            SanitizeChartImageFills(props);
 
         items.Add(new BatchItem
         {
@@ -267,6 +280,23 @@ public static partial class PptxBatchEmitter
             Type = "chart",
             Props = props.Count > 0 ? props : null,
         });
+
+        foreach (var ci in chartImages)
+        {
+            items.Add(new BatchItem
+            {
+                Command = "add-part",
+                Parent = parentSlidePath,
+                Type = "chartimage",
+                Props = new Dictionary<string, string>(StringComparer.Ordinal)
+                {
+                    ["chart"] = chartOrdinal.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    ["rid"] = ci.RelId,
+                    ["content-type"] = ci.ContentType,
+                    ["data"] = ci.Base64Data,
+                },
+            });
+        }
 
         // Axis-role round-trip. EmitChart's add row covers chart-level axis
         // shortcuts (axismin/axismax/axistitle) that only target the primary

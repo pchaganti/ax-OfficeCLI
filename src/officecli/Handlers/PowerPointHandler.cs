@@ -1906,6 +1906,42 @@ public partial class PowerPointHandler : IDocumentHandler, Rendering.IRenderMode
                 return (cxRid, parentPartPath);
             }
 
+            case "chartimage":
+            {
+                // Attach an ImagePart to a slide's Nth ChartPart with a pinned
+                // rId — re-creates the image a chart-internal <a:blipFill
+                // r:embed> references (chart/plot-area picture or texture
+                // fill). Without it the verbatim spPr fill dangles and the
+                // emitter had to degrade it to noFill (chart-picture-bg).
+                var cim = System.Text.RegularExpressions.Regex.Match(parentPartPath, @"^/slide\[(\d+)\]$");
+                if (!cim.Success)
+                    throw new ArgumentException("add-part chartimage: parent must be /slide[N]");
+                if (properties == null
+                    || !properties.TryGetValue("rid", out var ciRid) || string.IsNullOrEmpty(ciRid))
+                    throw new ArgumentException("add-part chartimage requires property 'rid'");
+                if (!properties.TryGetValue("chart", out var ciOrdRaw) || !int.TryParse(ciOrdRaw, out var ciOrd))
+                    throw new ArgumentException("add-part chartimage requires property 'chart' (1-based chart ordinal)");
+                if (!properties.TryGetValue("data", out var ciB64) || string.IsNullOrEmpty(ciB64))
+                    throw new ArgumentException("add-part chartimage requires property 'data' (base64)");
+                var ciCT = properties.GetValueOrDefault("content-type", "image/png");
+                var ciIdx = int.Parse(cim.Groups[1].Value);
+                var ciSlides = GetSlideParts().ToList();
+                if (ciIdx < 1 || ciIdx > ciSlides.Count)
+                    throw new ArgumentException($"slide index {ciIdx} out of range");
+                var ciCharts = ciSlides[ciIdx - 1].ChartParts.ToList();
+                if (ciOrd < 1 || ciOrd > ciCharts.Count)
+                    throw new ArgumentException($"chart ordinal {ciOrd} out of range (total: {ciCharts.Count})");
+                var ciChart = ciCharts[ciOrd - 1];
+                if (ciChart.Parts.Any(pp2 => pp2.RelationshipId == ciRid))
+                    return (ciRid, parentPartPath);
+                var ciPart = ciChart.AddImagePart(ciCT, ciRid);
+                byte[] ciBytes;
+                try { ciBytes = Convert.FromBase64String(ciB64); }
+                catch (FormatException) { throw new ArgumentException("add-part chartimage: 'data' is not valid base64"); }
+                using (var cis = new MemoryStream(ciBytes)) ciPart.FeedData(cis);
+                return (ciRid, parentPartPath);
+            }
+
             case "extrel":
             {
                 // Re-create an EXTERNAL relationship (TargetMode=External) with a
@@ -4439,6 +4475,31 @@ public partial class PowerPointHandler : IDocumentHandler, Rendering.IRenderMode
         var styleEl = shape.GetFirstChild<ShapeStyle>();
         if (styleEl == null) return null;
         return (styleEl.OuterXml, ordinal);
+    }
+
+    // Chart-internal image parts (chartSpace/plotArea/series <a:blipFill
+    // r:embed> targets). The semantic chart rebuild creates a FRESH ChartPart,
+    // so these must be re-attached with pinned rIds or the verbatim spPr
+    // fills dangle. Enumerate by the chart's 1-based ordinal on the slide.
+    internal IReadOnlyList<MasterImageInfo> GetChartImageParts(int slideIdx, int chartOrdinal)
+    {
+        var result = new List<MasterImageInfo>();
+        var parts = GetSlideParts().ToList();
+        if (slideIdx < 1 || slideIdx > parts.Count) return result;
+        var slidePart = parts[slideIdx - 1];
+        var chartParts = slidePart.ChartParts.ToList();
+        if (chartOrdinal < 1 || chartOrdinal > chartParts.Count) return result;
+        var cp = chartParts[chartOrdinal - 1];
+        foreach (var pair in cp.Parts)
+        {
+            if (pair.OpenXmlPart is not ImagePart ip) continue;
+            using var st = ip.GetStream();
+            using var ms = new MemoryStream();
+            st.CopyTo(ms);
+            result.Add(new MasterImageInfo(pair.RelationshipId, ip.ContentType,
+                Convert.ToBase64String(ms.ToArray())));
+        }
+        return result;
     }
 
     // Whole-table effects: <a:tblPr><a:effectLst> verbatim + the hosting
