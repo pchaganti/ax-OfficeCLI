@@ -201,7 +201,10 @@ public static partial class PptxBatchEmitter
                     "inheritFill",
                     // Explicit invertIfNegative=true round-trip (Reader only
                     // emits the flag when the source value is true).
-                    "invertIfNeg" })
+                    "invertIfNeg",
+                    // Source c:idx / c:order (theme-accent + stack-order keys)
+                    // when they differ from document position (combo reorder).
+                    "seriesIdx", "seriesOrder" })
                 {
                     if (s.Format.TryGetValue(key, out var val) && val != null)
                     {

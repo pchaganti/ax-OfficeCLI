@@ -125,6 +125,17 @@ internal static partial class ChartHelper
                     _ => null,
                 };
                 if (ctLabel == null) continue;
+                // Grouping-qualified tokens (columnstacked / areapercentstacked
+                // …) so a combo whose groups are stacked doesn't replay as
+                // clustered/standard. BuildComboGroup parses the suffix back.
+                if (ctLabel is "column" or "bar" or "area" or "line")
+                {
+                    var grp = ct is C.BarChart bch2
+                        ? bch2.GetFirstChild<C.BarGrouping>()?.Val?.InnerText
+                        : ct.GetFirstChild<C.Grouping>()?.Val?.InnerText;
+                    if (grp == "stacked") ctLabel += "stacked";
+                    else if (grp == "percentStacked") ctLabel += "percentstacked";
+                }
                 var serCount = ct.Elements<OpenXmlCompositeElement>()
                     .Count(e => e.LocalName == "ser");
                 for (int i = 0; i < serCount; i++) typesPerSeries.Add(ctLabel);
@@ -145,7 +156,11 @@ internal static partial class ChartHelper
         }
 
         var titleEl = chart.GetFirstChild<C.Title>();
-        var titleText = titleEl?.Descendants<Drawing.Text>().FirstOrDefault()?.Text;
+        // Concatenate ALL text runs — a styled title splits its text across
+        // multiple <a:r> runs and taking only the first truncated it
+        // ("Stacked column mixed with…" → "Stacked ").
+        var titleRuns = titleEl?.Descendants<Drawing.Text>().Select(t => t.Text).ToList();
+        var titleText = titleRuns is { Count: > 0 } ? string.Concat(titleRuns) : null;
         if (titleText == null && titleEl != null)
         {
             // BuildChartTitle routes single-cell-reference values (e.g. "Q1",
@@ -1016,6 +1031,20 @@ internal static partial class ChartHelper
                 // `referenceLine=spec` rebuilds them via AddReferenceLine).
                 if (serEl != null && IsReferenceLineSeries(serEl))
                     seriesNode.Format["refLine"] = "true";
+
+                // Source c:idx / c:order — PowerPoint keys the theme accent
+                // cycle (and stack order) off these, not off document
+                // position. A combo dump reorders series by chart-group, so
+                // rebuilding with positional idx recolors every series.
+                if (serEl != null)
+                {
+                    var srcIdx = serEl.Elements<C.Index>().FirstOrDefault()?.Val?.Value;
+                    if (srcIdx != null && srcIdx.Value != (uint)i)
+                        seriesNode.Format["seriesIdx"] = srcIdx.Value.ToString();
+                    var srcOrder = serEl.Elements<C.Order>().FirstOrDefault()?.Val?.Value;
+                    if (srcOrder != null && srcOrder.Value != (uint)i)
+                        seriesNode.Format["seriesOrder"] = srcOrder.Value.ToString();
+                }
 
                 // Source series with NO <c:spPr> inherit their fill from the
                 // theme accent cycle. Flag it so a replay suppresses the

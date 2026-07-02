@@ -419,6 +419,30 @@ internal static partial class ChartHelper
         // Apply cell references for dotted syntax (series1.values=Sheet1!B2:B13)
         ApplySeriesReferences(plotArea, properties);
 
+        // Restore source c:idx / c:order (series{N}.seriesIdx / .seriesOrder).
+        // PowerPoint keys the theme accent cycle and stack order off these —
+        // a combo dump reorders series by chart-group, so the positional idx
+        // the builders assign recolors every series.
+        {
+            var allSerForIdx = plotArea.Descendants<OpenXmlCompositeElement>()
+                .Where(e => e.LocalName == "ser").ToList();
+            for (int i = 0; i < allSerForIdx.Count; i++)
+            {
+                if (properties.TryGetValue($"series{i + 1}.seriesIdx", out var sIdxStr)
+                    && uint.TryParse(sIdxStr, out var sIdxVal))
+                {
+                    var idxEl = allSerForIdx[i].Elements<C.Index>().FirstOrDefault();
+                    if (idxEl != null) idxEl.Val = sIdxVal;
+                }
+                if (properties.TryGetValue($"series{i + 1}.seriesOrder", out var sOrdStr)
+                    && uint.TryParse(sOrdStr, out var sOrdVal))
+                {
+                    var ordEl = allSerForIdx[i].Elements<C.Order>().FirstOrDefault();
+                    if (ordEl != null) ordEl.Val = sOrdVal;
+                }
+            }
+        }
+
         // Defensive invariant (R26): a built chart must never declare an axis
         // that no chart group references. Orphaned axes (e.g. a secondary
         // axId 3/4 left over from a dump→rebuild with mismatched series
@@ -836,24 +860,44 @@ internal static partial class ChartHelper
         string[]? colors,
         HashSet<int>? noFillSeries = null)
     {
+        // Grouping-qualified tokens (columnstacked / areapercentstacked …)
+        // from the Reader's comboTypes emit — parse the suffix so a stacked
+        // combo group doesn't rebuild as clustered/standard.
+        string grpSuffix = "";
+        if (typeLabel.EndsWith("percentstacked", StringComparison.Ordinal))
+        { grpSuffix = "percentstacked"; typeLabel = typeLabel[..^14]; }
+        else if (typeLabel.EndsWith("stacked", StringComparison.Ordinal))
+        { grpSuffix = "stacked"; typeLabel = typeLabel[..^7]; }
+        var barGrp = grpSuffix switch
+        {
+            "percentstacked" => C.BarGroupingValues.PercentStacked,
+            "stacked" => C.BarGroupingValues.Stacked,
+            _ => C.BarGroupingValues.Clustered,
+        };
+        var stdGrp = grpSuffix switch
+        {
+            "percentstacked" => C.GroupingValues.PercentStacked,
+            "stacked" => C.GroupingValues.Stacked,
+            _ => C.GroupingValues.Standard,
+        };
         OpenXmlCompositeElement container = typeLabel switch
         {
             "bar" => new C.BarChart(
                 new C.BarDirection { Val = C.BarDirectionValues.Bar },
-                new C.BarGrouping { Val = C.BarGroupingValues.Clustered },
+                new C.BarGrouping { Val = barGrp },
                 new C.VaryColors { Val = false }),
             "column" => new C.BarChart(
                 new C.BarDirection { Val = C.BarDirectionValues.Column },
-                new C.BarGrouping { Val = C.BarGroupingValues.Clustered },
+                new C.BarGrouping { Val = barGrp },
                 new C.VaryColors { Val = false }),
             "area" => new C.AreaChart(
-                new C.Grouping { Val = C.GroupingValues.Standard },
+                new C.Grouping { Val = stdGrp },
                 new C.VaryColors { Val = false }),
             "line" => new C.LineChart(
-                new C.Grouping { Val = C.GroupingValues.Standard },
+                new C.Grouping { Val = stdGrp },
                 new C.VaryColors { Val = false }),
             _ => new C.LineChart(
-                new C.Grouping { Val = C.GroupingValues.Standard },
+                new C.Grouping { Val = stdGrp },
                 new C.VaryColors { Val = false }),
         };
 
