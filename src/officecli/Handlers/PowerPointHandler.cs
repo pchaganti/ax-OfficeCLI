@@ -4423,12 +4423,18 @@ public partial class PowerPointHandler : IDocumentHandler, Rendering.IRenderMode
     internal (string Xml, int SpOrdinal)? GetShapeStyleXmlWithOrdinal(string shapePath, uint? expectId = null)
     {
         var m = Regex.Match(shapePath,
-            @"^/slide\[(\d+)\]((?:/group\[(?:@id=)?\d+\])*)/(?:shape|textbox|title|equation|placeholder)\[(@id=)?(\d+)\]$");
+            @"^/slide\[(\d+)\]((?:/group\[(?:@id=)?\d+\])*)/(shape|textbox|title|equation|placeholder)\[(@id=)?(\d+)\]$");
         if (!m.Success) return null;
         var slideIdx = int.Parse(m.Groups[1].Value);
         var grpChain = m.Groups[2].Value;
-        var byId = m.Groups[3].Value.Length > 0;
-        var shapeIdx = int.Parse(m.Groups[4].Value);
+        // Query emits PLACEHOLDER paths with a placeholder-scoped positional
+        // index (/slide[15]/placeholder[1] = the slide's FIRST placeholder,
+        // not its first <p:sp>). Resolving that index against all shapes
+        // picked an unrelated sp — the expectId guard then nulled the probe
+        // and the placeholder's <p:style> silently vanished (customGeo).
+        var segIsPlaceholder = m.Groups[3].Value == "placeholder";
+        var byId = m.Groups[4].Value.Length > 0;
+        var shapeIdx = int.Parse(m.Groups[5].Value);
         var parts = GetSlideParts().ToList();
         if (slideIdx < 1 || slideIdx > parts.Count) return null;
         var slidePart = parts[slideIdx - 1];
@@ -4461,6 +4467,15 @@ public partial class PowerPointHandler : IDocumentHandler, Rendering.IRenderMode
             shape = shapes.FirstOrDefault(
                 s => s.NonVisualShapeProperties?.NonVisualDrawingProperties?.Id?.Value == (uint)shapeIdx);
             if (shape == null) return null;
+            ordinal = shapes.IndexOf(shape) + 1;
+        }
+        else if (segIsPlaceholder)
+        {
+            var phShapes = shapes.Where(sp2 =>
+                sp2.NonVisualShapeProperties?.ApplicationNonVisualDrawingProperties
+                    ?.GetFirstChild<PlaceholderShape>() != null).ToList();
+            if (shapeIdx < 1 || shapeIdx > phShapes.Count) return null;
+            shape = phShapes[shapeIdx - 1];
             ordinal = shapes.IndexOf(shape) + 1;
         }
         else
