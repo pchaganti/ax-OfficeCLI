@@ -675,13 +675,29 @@ public partial class ExcelHandler
 
         // categories=<range>: ParseCategories returns null for a range, so the
         // builder seeds no strLit (=> empty strCache). Resolve the labels here.
-        if ((categories == null || categories.Length == 0)
-            && properties.TryGetValue("categories", out var catStr)
-            && ChartHelper.IsRangeReference(catStr))
+        // Also probe categoriesRef= and the per-series dotted form
+        // (series1.categories=) — the batch emitter replays charts through
+        // those keys, and without this the strCache degraded to ordinal
+        // placeholders ("1","2") on every dump→replay: axis labels silently
+        // lost their cell text.
+        if (categories == null || categories.Length == 0)
         {
-            var labels = ResolveRangeToCellValues(catStr, defaultSheetName);
-            if (labels != null && labels.Count > 0)
-                categories = labels.ToArray();
+            string? catRange = null;
+            if (properties.TryGetValue("categories", out var catStr)
+                && ChartHelper.IsRangeReference(catStr))
+                catRange = catStr;
+            else if (properties.TryGetValue("categoriesRef", out var catRefStr)
+                && ChartHelper.IsRangeReference(catRefStr))
+                catRange = catRefStr;
+            else if (properties.TryGetValue("series1.categories", out var s1Cat)
+                && ChartHelper.IsRangeReference(s1Cat))
+                catRange = s1Cat;
+            if (catRange != null)
+            {
+                var labels = ResolveRangeToCellValues(catRange, defaultSheetName);
+                if (labels != null && labels.Count > 0)
+                    categories = labels.ToArray();
+            }
         }
     }
 
