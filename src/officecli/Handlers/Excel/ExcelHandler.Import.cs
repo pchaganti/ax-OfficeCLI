@@ -242,6 +242,9 @@ public partial class ExcelHandler
         // Formula: starts with =
         if (value.StartsWith('='))
         {
+            // Same A1-only guard as Add/Set: verbatim R1C1 text in <f> makes
+            // real Excel refuse the file.
+            ValidateFormulaCellRefs(value);
             cell.CellFormula = new CellFormula(OfficeCli.Core.PivotTableHelper.SanitizeXmlText(OfficeCli.Core.ModernFunctionQualifier.Qualify(value[1..])));
             cell.CellValue = null;
             cell.DataType = null;
