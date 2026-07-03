@@ -22,12 +22,14 @@ public static partial class ExcelBatchEmitter
         EmitConditionalFormats(xl, sheetPath, counts.Cfs, items, warnings);
         EmitValidations(xl, sheetPath, counts.Validations, items, warnings);
         EmitComments(xl, sheetPath, counts.Comments, items, warnings);
-        EmitCharts(xl, sheetPath, counts.Charts, items, warnings);
+        // Charts replay LAST (see EmitChartsPass) — a series can reference a
+        // range on a sheet emitted later in the workbook; adding the chart
+        // before that sheet's data exists leaves numRef with an empty numCache
+        // (re-dump shows an empty series). Deferred to the final pass.
         EmitSparklines(xl, sheetPath, counts.Sparklines, items, warnings);
         var drawingCounts = xl.GetDumpDrawingCounts(sheetName);
         EmitPictures(xl, sheetName, sheetPath, drawingCounts.Pictures, items, warnings);
         EmitShapes(xl, sheetPath, drawingCounts.Shapes, items, warnings);
-        EmitChartExCharts(xl, sheetName, sheetPath, items, warnings);
         EmitOles(xl, sheetName, sheetPath, items, warnings);
         EmitAutoFilterCriteria(xl, sheetPath, items, warnings);
     }
@@ -55,6 +57,21 @@ public static partial class ExcelBatchEmitter
         var props = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { ["range"] = range };
         foreach (var (k, v) in criteria) props[k] = (string)v!;
         items.Add(new BatchItem { Command = "add", Parent = sheetPath, Type = "autofilter", Props = props });
+    }
+
+    /// <summary>
+    /// Emit all charts across every sheet AFTER every sheet's data baseline
+    /// has been imported. Cross-sheet series references (Sheet2!$B$2:$B$5 on a
+    /// chart living on Sheet1) need the referenced sheet's cells to already
+    /// exist so the numCache is populated on replay.
+    /// </summary>
+    internal static void EmitChartsPass(ExcelHandler xl, string sheetName,
+        List<BatchItem> items, List<UnsupportedWarning> warnings)
+    {
+        var sheetPath = "/" + sheetName;
+        var counts = xl.GetDumpElementCounts(sheetName);
+        EmitCharts(xl, sheetPath, counts.Charts, items, warnings);
+        EmitChartExCharts(xl, sheetName, sheetPath, items, warnings);
     }
 
     // ==================== Tables ====================
@@ -398,6 +415,15 @@ public static partial class ExcelBatchEmitter
                     props[$"series{idx}.values"] = (string)s.Format["valuesRef"]!;
                     if (s.Format.TryGetValue("categoriesRef", out var cr) && cr is string crS && crS.Length > 0)
                         props[$"series{idx}.categories"] = crS;
+                    // Bubble series carry a third dimension in <c:bubbleSize>.
+                    // Prefer the cell ref (keeps the size live-linked); fall back
+                    // to the cached literal so the pixel geometry survives even
+                    // when the source used a literal numLit. Without this the
+                    // Builder's BuildBubbleChart defaults size = y-values.
+                    if (s.Format.TryGetValue("bubbleSizeRef", out var bsr) && bsr is string bsrS && bsrS.Length > 0)
+                        props[$"series{idx}.bubbleSizeRef"] = bsrS;
+                    else if (s.Format.TryGetValue("bubbleSize", out var bs) && bs is string bsS && bsS.Length > 0)
+                        props[$"series{idx}.bubbleSize"] = bsS;
                 }
             }
 
