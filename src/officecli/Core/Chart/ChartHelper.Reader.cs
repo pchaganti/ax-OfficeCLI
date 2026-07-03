@@ -1084,6 +1084,12 @@ internal static partial class ChartHelper
                 if (serEl != null)
                 {
                     var valRef = ReadFormulaRef(serEl.GetFirstChild<C.Values>());
+                    // Scatter/bubble series carry their numeric magnitude in
+                    // <c:yVal>, not <c:val>. Without surfacing the yVal ref the
+                    // Excel emitter's "all series have valuesRef" gate fails and
+                    // the chart replays as disconnected literals (bubbles pile
+                    // at x=0). The Builder maps info.ValuesRef → yVal on replay.
+                    valRef ??= ReadFormulaRef(serEl.GetFirstChild<C.YValues>());
                     if (valRef != null) seriesNode.Format["valuesRef"] = valRef;
 
                     // Source numCache formatCode (e.g. #,##0). Data labels
@@ -1096,6 +1102,11 @@ internal static partial class ChartHelper
                     if (!string.IsNullOrEmpty(valCacheFmt) && valCacheFmt != "General")
                         seriesNode.Format["valuesNumFmt"] = valCacheFmt;
                     var catRef = ReadFormulaRef(serEl.GetFirstChild<C.CategoryAxisData>());
+                    // Scatter/bubble store their X range under <c:xVal>, not
+                    // <c:cat>. The Builder rewrites xVal from info.CategoriesRef
+                    // on replay, so surface the xVal ref as categoriesRef to keep
+                    // the X axis live-linked to the source cells.
+                    catRef ??= ReadFormulaRef(serEl.GetFirstChild<C.XValues>());
                     if (catRef != null) seriesNode.Format["categoriesRef"] = catRef;
 
                     // Sparse series: the source numCache/numLit may hold

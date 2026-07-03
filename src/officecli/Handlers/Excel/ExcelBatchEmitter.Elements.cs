@@ -347,6 +347,15 @@ public static partial class ExcelBatchEmitter
                     props[$"series{idx}.values"] = (string)s.Format["valuesRef"]!;
                     if (s.Format.TryGetValue("categoriesRef", out var cr) && cr is string crS && crS.Length > 0)
                         props[$"series{idx}.categories"] = crS;
+                    // Bubble series carry a third dimension in <c:bubbleSize>.
+                    // Prefer the cell ref (keeps the size live-linked); fall back
+                    // to the cached literal so the pixel geometry survives even
+                    // when the source used a literal numLit. Without this the
+                    // Builder's BuildBubbleChart defaults size = y-values.
+                    if (s.Format.TryGetValue("bubbleSizeRef", out var bsr) && bsr is string bsrS && bsrS.Length > 0)
+                        props[$"series{idx}.bubbleSizeRef"] = bsrS;
+                    else if (s.Format.TryGetValue("bubbleSize", out var bs) && bs is string bsS && bsS.Length > 0)
+                        props[$"series{idx}.bubbleSize"] = bsS;
                 }
             }
 
