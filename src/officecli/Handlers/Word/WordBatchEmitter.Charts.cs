@@ -106,6 +106,7 @@ public static partial class WordBatchEmitter
         var seriesParts = new List<string>();
         int seriesIdx = 0;
         bool emittedPerSeriesFill = false;
+        bool emittedPerSeriesScalar = false;
         var dataLabelFlags = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var s in spec.Series)
         {
@@ -166,6 +167,22 @@ public static partial class WordBatchEmitter
                 var g = gObj.ToString() ?? "";
                 if (g.Length > 0) { props[$"series{seriesIdx}.gradient"] = g; emittedPerSeriesFill = true; }
             }
+            // Per-series scalar styling (marker/smooth/trendline/errBars…).
+            // The chart-level keys for these are series-1 REPRESENTATIVES; a
+            // chart whose series diverge (series1 circle, series2 square) was
+            // collapsed to series1's value on every series at replay. Emit the
+            // per-series dotted keys HandleSeriesDottedProperty consumes and
+            // drop the chart-level representative below.
+            foreach (var (fmtKey, dotKey) in SeriesScalarKeys)
+            {
+                if (s.Format.TryGetValue(fmtKey, out var psObj) && psObj != null
+                    && psObj.ToString() is { Length: > 0 } psVal)
+                {
+                    props[$"series{seriesIdx}.{dotKey}"] = psVal;
+                    emittedPerSeriesScalar = true;
+                }
+            }
+
             // Per-series data-label show flags (value/category/series/percent).
             // AddChart has no per-series data-label setter, so accumulate the
             // union across series and emit the chart-level datalabels.show* keys
@@ -194,6 +211,14 @@ public static partial class WordBatchEmitter
             props.Remove("gradient");
             props.Remove("color");
         }
+        // Same representative-key rule for the per-series scalars: once emitted
+        // as series{N}.* the chart-level copies (which report series 1 only)
+        // must go, or replay re-applies series-1's value to every series.
+        if (emittedPerSeriesScalar)
+        {
+            foreach (var (fmtKey, _) in SeriesScalarKeys)
+                props.Remove(fmtKey);
+        }
         // Map the collected series data-label flags onto the chart-level keys
         // AddChart applies (no per-series data-label setter exists). The
         // chart-level dLbls builder now inserts the show flags in schema order.
@@ -206,4 +231,16 @@ public static partial class WordBatchEmitter
         }
         return props;
     }
+
+    // Reader series Format key -> AddChart series{N}.<dotted> key for the
+    // scalar styling props that would otherwise collapse to series 1's value.
+    private static readonly (string, string)[] SeriesScalarKeys =
+    {
+        ("marker", "marker"),
+        ("markerSize", "markersize"),
+        ("markerColor", "markercolor"),
+        ("smooth", "smooth"),
+        ("trendline", "trendline"),
+        ("errBars", "errbars"),
+    };
 }

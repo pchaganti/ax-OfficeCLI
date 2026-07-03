@@ -1410,10 +1410,12 @@ internal static partial class ChartHelper
     /// Insert a child into a CT_LineChart at the correct schema position.
     /// Schema: grouping, varyColors, ser+, dLbls, dropLines, hiLowLines, upDownBars, marker, smooth, axId+, extLst
     /// </summary>
-    internal static void InsertLineChartChildInOrder(C.LineChart lc, OpenXmlElement child)
+    internal static void InsertLineChartChildInOrder(OpenXmlCompositeElement lc, OpenXmlElement child)
     {
         // CT_LineChart schema order: grouping, varyColors, ser*, dLbls?,
         // dropLines?, hiLowLines?, upDownBars?, marker?, smooth?, extLst?, axId+
+        // CT_StockChart (ser+, dLbls?, dropLines?, hiLowLines?, upDownBars?,
+        // axId+) is a strict subsequence, so the same anchor chain serves both.
         string[] insertBeforeNames = child.LocalName switch
         {
             "dropLines" => ["hiLowLines", "upDownBars", "marker", "smooth", "extLst", "axId"],

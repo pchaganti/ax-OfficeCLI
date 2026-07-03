@@ -384,6 +384,11 @@ public static partial class ExcelBatchEmitter
             if (rowNode.Format.TryGetValue("hidden", out var hd) && hd is bool hb && hb) rp["hidden"] = "true";
             if (rowNode.Format.TryGetValue("outlineLevel", out var rolv)) rp["outline"] = FormatValue(rolv);
             if (rowNode.Format.TryGetValue("collapsed", out var rc) && rc is bool rcb && rcb) rp["collapsed"] = "true";
+            // These flags are echoed by Get as truthy strings (or bools) but
+            // were absent from this allowlist, so replay silently dropped them.
+            foreach (var flagKey in new[] { "bestFit", "thickTop", "thickBot", "ph" })
+                if (rowNode.Format.TryGetValue(flagKey, out var fv) && IsTruthyFormatValue(fv))
+                    rp[flagKey] = "true";
             if (rp.Count > 0)
                 items.Add(new BatchItem { Command = "set", Path = rowNode.Path, Props = rp });
         }
@@ -400,6 +405,7 @@ public static partial class ExcelBatchEmitter
             if (colNode.Format.TryGetValue("hidden", out var chd) && chd is bool chb && chb) cp["hidden"] = "true";
             if (colNode.Format.TryGetValue("outlineLevel", out var colv)) cp["outline"] = FormatValue(colv);
             if (colNode.Format.TryGetValue("collapsed", out var cc) && cc is bool ccb && ccb) cp["collapsed"] = "true";
+            if (colNode.Format.TryGetValue("bestFit", out var cbf) && IsTruthyFormatValue(cbf)) cp["bestFit"] = "true";
             if (cp.Count > 0)
                 items.Add(new BatchItem { Command = "set", Path = colNode.Path, Props = cp });
         }
@@ -800,6 +806,15 @@ public static partial class ExcelBatchEmitter
     }
 
     // ==================== Small helpers ====================
+
+    // Row/col flag values arrive from Get as either typed bools or the raw
+    // attribute string ("true"/"1").
+    private static bool IsTruthyFormatValue(object? v) => v switch
+    {
+        bool b => b,
+        string s => s.Equals("true", StringComparison.OrdinalIgnoreCase) || s == "1",
+        _ => false,
+    };
 
     private static string FormatValue(object v) => v switch
     {

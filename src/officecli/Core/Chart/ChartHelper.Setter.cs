@@ -2665,7 +2665,11 @@ internal static partial class ChartHelper
                 case "droplines":
                 {
                     var plotArea2 = chart.GetFirstChild<C.PlotArea>();
-                    var lc = plotArea2?.GetFirstChild<C.LineChart>();
+                    // CT_StockChart carries the same dropLines/hiLowLines/upDownBars
+                    // tail as CT_LineChart; Add builds them for stock charts but Set
+                    // used to reject the keys there as unsupported.
+                    var lc = plotArea2?.GetFirstChild<C.LineChart>() as OpenXmlCompositeElement
+                        ?? plotArea2?.GetFirstChild<C.StockChart>();
                     if (lc == null) { unsupported.Add(key); break; }
                     lc.RemoveAllChildren<C.DropLines>();
                     // "false"/"none" remove the overlay; both must skip the
@@ -2688,7 +2692,11 @@ internal static partial class ChartHelper
                 case "hilowlines":
                 {
                     var plotArea2 = chart.GetFirstChild<C.PlotArea>();
-                    var lc = plotArea2?.GetFirstChild<C.LineChart>();
+                    // CT_StockChart carries the same dropLines/hiLowLines/upDownBars
+                    // tail as CT_LineChart; Add builds them for stock charts but Set
+                    // used to reject the keys there as unsupported.
+                    var lc = plotArea2?.GetFirstChild<C.LineChart>() as OpenXmlCompositeElement
+                        ?? plotArea2?.GetFirstChild<C.StockChart>();
                     if (lc == null) { unsupported.Add(key); break; }
                     lc.RemoveAllChildren<C.HighLowLines>();
                     if (value.Equals("none", StringComparison.OrdinalIgnoreCase)
@@ -2706,7 +2714,11 @@ internal static partial class ChartHelper
                 case "updownbars":
                 {
                     var plotArea2 = chart.GetFirstChild<C.PlotArea>();
-                    var lc = plotArea2?.GetFirstChild<C.LineChart>();
+                    // CT_StockChart carries the same dropLines/hiLowLines/upDownBars
+                    // tail as CT_LineChart; Add builds them for stock charts but Set
+                    // used to reject the keys there as unsupported.
+                    var lc = plotArea2?.GetFirstChild<C.LineChart>() as OpenXmlCompositeElement
+                        ?? plotArea2?.GetFirstChild<C.StockChart>();
                     if (lc == null) { unsupported.Add(key); break; }
                     lc.RemoveAllChildren<C.UpDownBars>();
                     if (value.Equals("none", StringComparison.OrdinalIgnoreCase)

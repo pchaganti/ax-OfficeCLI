@@ -94,6 +94,9 @@ public static partial class PptxBatchEmitter
         // OneOnBool helper (R43 779099bc) — same lexical-form concern as
         // the setter pinned to "1".
         "hmerge", "vmerge",
+        // Get-only computed placeholder classification; AddShape has no case
+        // for it, so every dumped shape replayed with an UNSUPPORTED warning.
+        "isTitle",
     };
 
     // Shape-level `animation` is filtered above. The same readback emits
