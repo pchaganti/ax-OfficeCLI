@@ -21,7 +21,7 @@ internal enum ResidentFlushMode
     Off,
 }
 
-internal static class ResidentFlushPolicy
+public static class ResidentFlushPolicy
 {
     /// <summary>
     /// Adaptive interval = clamp(CostMultiplier × EMA(save duration), Min, Max).
@@ -43,8 +43,10 @@ internal static class ResidentFlushPolicy
     /// <summary>
     /// Fold one measured save duration into the EMA. A negative previous value
     /// means "no sample yet": the first measurement seeds the EMA directly.
+    /// Public so embedders reuse the same debounce
+    /// decision instead of growing a second, driftable copy.
     /// </summary>
-    internal static double NextEmaSeconds(double previousEmaSeconds, double sampleSeconds)
+    public static double NextEmaSeconds(double previousEmaSeconds, double sampleSeconds)
     {
         if (sampleSeconds < 0) sampleSeconds = 0;
         if (previousEmaSeconds < 0) return sampleSeconds;
@@ -56,8 +58,9 @@ internal static class ResidentFlushPolicy
     /// Debounce interval for the current EMA. No sample yet (negative EMA) →
     /// the floor: typical documents save in well under Min/CostMultiplier, and
     /// a data-heavy file pays at most one early save before the EMA raises it.
+    /// Public — see <see cref="NextEmaSeconds"/>.
     /// </summary>
-    internal static TimeSpan IntervalForEma(double emaSeconds)
+    public static TimeSpan IntervalForEma(double emaSeconds)
     {
         if (emaSeconds < 0) return MinAdaptiveInterval;
         var seconds = CostMultiplier * emaSeconds;
