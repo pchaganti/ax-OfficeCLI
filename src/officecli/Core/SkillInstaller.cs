@@ -27,6 +27,11 @@ internal static class SkillInstaller
         (["copilot", "github-copilot"],   "GitHub Copilot", ".copilot",             Path.Combine(".copilot", "skills")),
         (["codex", "openai-codex"],       "Codex CLI",      ".agents",              Path.Combine(".agents", "skills")),
         (["cursor"],                      "Cursor",         ".cursor",              Path.Combine(".cursor", "skills")),
+        // Pi (earendil-works/pi) implements the Agent Skills standard; its
+        // global skill locations are ~/.pi/agent/skills/ and ~/.agents/skills/.
+        // Target the ~/.pi one — the ~/.agents fallback is already covered by
+        // the Codex CLI row when that directory exists.
+        (["pi", "pi-agent"],              "Pi",             ".pi",                  Path.Combine(".pi", "agent", "skills")),
         (["windsurf"],                    "Windsurf",       ".windsurf",            Path.Combine(".windsurf", "skills")),
         (["minimax", "minimax-cli"],      "MiniMax CLI",    ".minimax",             Path.Combine(".minimax", "skills")),
         (["opencode"],                    "OpenCode",       ".opencode",            Path.Combine(".opencode", "skills")),
@@ -409,7 +414,7 @@ internal static class SkillInstaller
         if (tool.Aliases is null)
         {
             Console.Error.WriteLine($"Unknown agent: {agentKey}");
-            Console.Error.WriteLine("Supported: claude, copilot, codex, cursor, windsurf, minimax, opencode, openclaw, nanobot, zeroclaw, hermes");
+            Console.Error.WriteLine("Supported: claude, copilot, codex, cursor, pi, windsurf, minimax, opencode, openclaw, nanobot, zeroclaw, hermes");
             return installed;
         }
 
