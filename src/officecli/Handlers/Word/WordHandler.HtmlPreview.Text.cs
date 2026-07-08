@@ -589,6 +589,17 @@ public partial class WordHandler
                 var latex = FormulaParser.ToLatex(child);
                 sb.Append($"<span class=\"katex-formula\" data-formula=\"{HtmlEncodeAttr(latex)}\"></span>");
             }
+            else if (child.LocalName == "oMathPara" || child is M.Paragraph)
+            {
+                // Display math (m:oMathPara). The body and table-cell renderers
+                // matched this wrapper, but paragraphs routed through here
+                // (text boxes, SDT content, …) only matched inline oMath, so a
+                // display equation inside a text box was silently dropped from
+                // the HTML preview (issue #183). Emit the same katex span the
+                // body path uses, flagged display so KaTeX centers it.
+                var latex = FormulaParser.ToLatex(child);
+                sb.Append($"<span class=\"katex-formula\" data-formula=\"{HtmlEncodeAttr(latex)}\" data-display=\"true\"></span>");
+            }
             else if (child.LocalName is "sdt" or "smartTag" or "customXml" or "fldSimple")
             {
                 // Content controls, smart tags, custom XML, simple fields — walk
