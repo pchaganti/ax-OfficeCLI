@@ -281,7 +281,7 @@ public partial class ExcelHandler
         if (TryParseIsoDate(value, out var dateVal))
         {
             // Excel stores dates as OLE Automation date numbers
-            cell.CellValue = new CellValue(dateVal.ToOADate().ToString(CultureInfo.InvariantCulture));
+            cell.CellValue = new CellValue(ExcelDataFormatter.ToExcelSerial(dateVal).ToString(CultureInfo.InvariantCulture));
             cell.DataType = null; // numeric
             return;
         }

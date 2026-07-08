@@ -70,6 +70,19 @@ internal static class ExcelDataFormatter
         BuiltInFormats.TryGetValue(numFmtId, out var code) ? code : null;
 
     /// <summary>
+    /// Convert a DateTime to an Excel 1900-system serial. .NET's ToOADate
+    /// runs one day AHEAD of Excel for dates before 1900-03-01 (Excel keeps
+    /// Lotus 1-2-3's fictitious 1900-02-29 as serial 60); writing the raw
+    /// OADate stored 1900-02-28 as serial 60, which Excel reads back as
+    /// 02-29. Mirrors the read-side adjustment in FormatDate.
+    /// </summary>
+    public static double ToExcelSerial(DateTime dt)
+    {
+        var oa = dt.ToOADate();
+        return dt < new DateTime(1900, 3, 1) && oa >= 2 ? oa - 1 : oa;
+    }
+
+    /// <summary>
     /// Format a raw numeric cell value using its number format.
     /// Returns null if no formatting is needed (raw value is fine as-is).
     /// </summary>
