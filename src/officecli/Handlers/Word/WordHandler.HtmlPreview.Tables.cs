@@ -567,6 +567,14 @@ public partial class WordHandler
                 void RenderCellChild(OpenXmlElement child)
                 {
                     if (TryEmitContainerBookmarkAnchor(sb, child)) return;
+                    // OOXML allows w:altChunk directly under w:tc; the body
+                    // loop already renders it, the cell walk dropped it.
+                    if (child is AltChunk cellAltChunk)
+                    {
+                        CloseCellList();
+                        RenderAltChunkHtml(sb, cellAltChunk);
+                        return;
+                    }
                     if (child is Paragraph cellPara)
                     {
                         // VML horizontal rule inside a cell — same pre-dispatch
