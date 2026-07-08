@@ -55,8 +55,18 @@ public static class BlankDocCreator
         };
         using var proc = System.Diagnostics.Process.Start(psi);
         if (proc is null) return false;
-        var stderr = proc.StandardError.ReadToEnd();
-        proc.WaitForExit();
+        // Bound the wait: a hung plugin previously blocked `create` forever
+        // (stderr is the only redirected stream, so the read itself cannot
+        // deadlock, but WaitForExit had no timeout or Kill).
+        var stderrTask = proc.StandardError.ReadToEndAsync();
+        if (!proc.WaitForExit(60_000))
+        {
+            try { proc.Kill(true); } catch { }
+            throw new OfficeCli.Core.CliException(
+                $"Format-handler plugin '{plugin.Manifest.Name}' timed out creating {path} (60s).")
+            { Code = "plugin_create_failed" };
+        }
+        var stderr = stderrTask.Result;
         if (proc.ExitCode != 0)
         {
             // Treat unknown-subcommand exit-64 as "plugin doesn't implement

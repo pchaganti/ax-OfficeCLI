@@ -159,8 +159,15 @@ static partial class CommandBuilder
                 }
             };
             p.Start();
-            var rawManifest = p.StandardOutput.ReadToEnd();
+            // Async-drain BOTH streams before waiting — the synchronous
+            // stdout-only read deadlocked when a plugin emitted verbose
+            // diagnostics on stderr (same pitfall PluginRegistry.TryReadManifest
+            // documents), and the Kill fallback sat unreachable behind it.
+            var manifestTask = p.StandardOutput.ReadToEndAsync();
+            var drainErrTask = p.StandardError.ReadToEndAsync();
             if (!p.WaitForExit(5000)) { try { p.Kill(true); } catch { } }
+            var rawManifest = manifestTask.Result;
+            _ = drainErrTask.Result;
 
             if (json)
             {

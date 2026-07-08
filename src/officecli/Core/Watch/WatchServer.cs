@@ -2333,8 +2333,13 @@ internal class WatchServer : IDisposable
             using var proc = System.Diagnostics.Process.Start(psi);
             if (proc != null)
             {
+                // Drain stderr concurrently: it is redirected (so it MUST be
+                // read) but never surfaced — a child that fills the ~64KB pipe
+                // buffer with warnings would otherwise deadlock this request.
+                var drainErr = proc.StandardError.ReadToEndAsync(token);
                 output = await proc.StandardOutput.ReadToEndAsync(token);
                 await proc.WaitForExitAsync(token);
+                _ = await drainErr;
                 // command auto-notifies watch via named pipe → SSE refresh
             }
             await WriteCommEnvelopeAsync(stream, true, output.TrimEnd('\n', '\r'), token);
@@ -2402,8 +2407,13 @@ internal class WatchServer : IDisposable
             using var proc = System.Diagnostics.Process.Start(psi);
             if (proc != null)
             {
+                // Drain stderr concurrently: it is redirected (so it MUST be
+                // read) but never surfaced — a child that fills the ~64KB pipe
+                // buffer with warnings would otherwise deadlock this request.
+                var drainErr = proc.StandardError.ReadToEndAsync(token);
                 output = await proc.StandardOutput.ReadToEndAsync(token);
                 await proc.WaitForExitAsync(token);
+                _ = await drainErr;
                 // batch auto-notifies watch via named pipe → SSE refresh
             }
             await WriteCommEnvelopeAsync(stream, true, output.TrimEnd('\n', '\r'), token);
