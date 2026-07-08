@@ -1195,6 +1195,14 @@ static partial class CommandBuilder
                 parts.Add($"{prop} ({scopedHint})");
                 continue;
             }
+            // An entry that already carries a handler-embedded hint
+            // ("fillBg (background of ...)", "cap (valid cell props: ...)")
+            // doesn't need a did-you-mean guess stacked on top.
+            if (prop.Contains('('))
+            {
+                parts.Add(prop);
+                continue;
+            }
             var suggestion = SuggestPropertyScoped(prop, scope);
             parts.Add(suggestion != null ? $"{prop} (did you mean: {suggestion}?)" : prop);
         }

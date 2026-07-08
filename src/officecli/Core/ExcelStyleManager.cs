@@ -190,6 +190,29 @@ internal class ExcelStyleManager
             }
             applyFill = true;
         }
+        else if (styleProps.TryGetValue("fillBg", out var loneBg) && !string.IsNullOrEmpty(loneBg))
+        {
+            // fillBg without fillPattern/fill. Previously this key was marked
+            // consumed by IsStyleKey but never written — the command reported
+            // "Updated: fillBg=…" while the XML was untouched. Honor it as an
+            // incremental edit when the cell already carries a non-solid
+            // pattern fill (update the background, keep pattern + foreground);
+            // otherwise report it so the caller learns it needs fillPattern.
+            var existingFill = stylesheet.Fills?.Elements<Fill>().ElementAtOrDefault((int)fillId);
+            var existingPattern = existingFill?.PatternFill?.PatternType;
+            if (existingPattern != null
+                && existingPattern.Value != PatternValues.None
+                && existingPattern.Value != PatternValues.Solid)
+            {
+                fillId = GetOrCreatePatternFill(stylesheet, existingPattern.InnerText,
+                    existingFill!.PatternFill!.ForegroundColor?.Rgb?.Value, loneBg);
+                applyFill = true;
+            }
+            else
+            {
+                unsupportedOut?.Add("fillBg (background of a non-solid pattern fill; set fillPattern=... first or in the same command)");
+            }
+        }
 
         // --- border ---
         uint borderId = baseXf.BorderId?.Value ?? 0;
