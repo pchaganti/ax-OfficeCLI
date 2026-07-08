@@ -114,6 +114,21 @@ public partial class ExcelHandler
                     $"Invalid srcRect '{compound}'. Expected 'l=10,r=10,t=5,b=5' (any subset; values are percent 0-100). "
                     + "For raw l/t/r/b numbers use cropLeft/cropTop/cropRight/cropBottom keys.");
         }
+        // CONSISTENCY(picture-crop): bare composite `crop=l,t,r,b` — the exact
+        // form Get emits (and pptx Add already accepts). Without it, dump→batch
+        // replay warned UNSUPPORTED and silently dropped the srcRect.
+        if (properties.TryGetValue("crop", out var cropAll) && !string.IsNullOrWhiteSpace(cropAll)
+            && !cropAll.Contains('='))
+        {
+            var cropParts = cropAll.Split(',');
+            var cropVals = cropParts.Length == 4
+                ? cropParts.Select(ParseCropPercent).ToArray()
+                : null;
+            if (cropVals == null || !cropVals.All(v => v.HasValue))
+                throw new ArgumentException(
+                    $"Invalid crop '{cropAll}'. Expected four comma-separated percentages in l,t,r,b order (e.g. '10,15,5,20').");
+            l = cropVals[0]; t = cropVals[1]; r = cropVals[2]; b = cropVals[3];
+        }
         foreach (var (key, fld) in new[] { ("crop.l", "l"), ("crop.r", "r"), ("crop.t", "t"), ("crop.b", "b") })
         {
             if (properties.TryGetValue(key, out var vs) && !string.IsNullOrWhiteSpace(vs))

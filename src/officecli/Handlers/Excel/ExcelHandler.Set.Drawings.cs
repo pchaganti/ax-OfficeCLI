@@ -282,7 +282,9 @@ public partial class ExcelHandler
         var cropKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             "crop.l", "crop.r", "crop.t", "crop.b",
-            "srcRect", "cropLeft", "cropRight", "cropTop", "cropBottom"
+            "srcRect", "cropLeft", "cropRight", "cropTop", "cropBottom",
+            // Bare composite `crop=l,t,r,b` (the Get emit form) — mirrors Add.
+            "crop"
         };
 
         foreach (var (key, value) in properties)
