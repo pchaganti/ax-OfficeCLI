@@ -374,6 +374,49 @@ public partial class ExcelHandler
         writer.Write(xml);
     }
 
+    /// <summary>
+    /// Re-anchor the legacy VML Note shape when a comment's ref moves.
+    /// Locates the shape whose x:Row/x:Column match <paramref name="oldRef"/>
+    /// and rewrites Row/Column plus the 8-number Anchor to the new cell,
+    /// mirroring the geometry AppendCommentVmlShape writes on Add.
+    /// </summary>
+    private void UpdateCommentVmlShapeRef(WorksheetPart worksheet, string oldRef, string newRef)
+    {
+        var vmlPart = worksheet.VmlDrawingParts.FirstOrDefault();
+        if (vmlPart == null) return;
+        string xml;
+        using (var reader = new System.IO.StreamReader(vmlPart.GetStream(System.IO.FileMode.Open, System.IO.FileAccess.Read)))
+            xml = reader.ReadToEnd();
+
+        var (oldColName, oldRowNum) = ParseCellReference(oldRef.ToUpperInvariant());
+        var (newColName, newRowNum) = ParseCellReference(newRef.ToUpperInvariant());
+        int oldCol0 = ColumnNameToIndex(oldColName) - 1, oldRow0 = oldRowNum - 1;
+        int newCol0 = ColumnNameToIndex(newColName) - 1, newRow0 = newRowNum - 1;
+
+        var marker = $"<x:Row>{oldRow0}</x:Row><x:Column>{oldCol0}</x:Column>";
+        var idx = xml.IndexOf(marker, StringComparison.Ordinal);
+        if (idx < 0) return; // externally-authored VML with different formatting — leave untouched
+
+        // Anchor precedes Row/Column inside the same ClientData block; rewrite
+        // the nearest preceding <x:Anchor>...</x:Anchor>.
+        var anchorOpen = xml.LastIndexOf("<x:Anchor>", idx, StringComparison.Ordinal);
+        var anchorClose = anchorOpen >= 0
+            ? xml.IndexOf("</x:Anchor>", anchorOpen, StringComparison.Ordinal)
+            : -1;
+        var newAnchor = $"{newCol0 + 1}, 15, {newRow0}, 2, {newCol0 + 3}, 15, {newRow0 + 3}, 16";
+        if (anchorOpen >= 0 && anchorClose > anchorOpen && anchorClose < idx)
+        {
+            xml = xml[..(anchorOpen + "<x:Anchor>".Length)] + newAnchor + xml[anchorClose..];
+            idx = xml.IndexOf(marker, StringComparison.Ordinal); // positions shifted
+        }
+        xml = xml[..idx]
+            + $"<x:Row>{newRow0}</x:Row><x:Column>{newCol0}</x:Column>"
+            + xml[(idx + marker.Length)..];
+
+        using var writer = new System.IO.StreamWriter(vmlPart.GetStream(System.IO.FileMode.Create, System.IO.FileAccess.Write));
+        writer.Write(xml);
+    }
+
     private string AddValidation(string parentPath, string type, InsertPosition? position, Dictionary<string, string> properties)
     {
         var index = position?.Index;

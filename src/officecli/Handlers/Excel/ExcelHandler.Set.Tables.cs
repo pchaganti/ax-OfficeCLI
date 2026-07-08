@@ -527,12 +527,23 @@ public partial class ExcelHandler
                 case var k1 when k1.StartsWith("font."):
                     break;
                 case "ref":
+                {
                     // Validate as a real A1 reference (same check add uses):
                     // an arbitrary string here passes schema validation but
                     // real Excel refuses the whole file (0x800A03EC).
                     ParseCellReference(value);
+                    var oldCmtRef = cmtElement.Reference?.Value;
                     cmtElement.Reference = value.ToUpperInvariant();
+                    // The legacy VML shape anchors the comment popup by its
+                    // own x:Row/x:Column — leaving them at the old cell after
+                    // a ref move desynchronizes the two parts and real Excel
+                    // rejects the file (0x800A03EC) while validation stays
+                    // green. Keep the VML in lockstep.
+                    if (!string.IsNullOrEmpty(oldCmtRef)
+                        && !string.Equals(oldCmtRef, cmtElement.Reference!.Value, StringComparison.OrdinalIgnoreCase))
+                        UpdateCommentVmlShapeRef(worksheet, oldCmtRef!, cmtElement.Reference!.Value!);
                     break;
+                }
                 case "author":
                     var authors = commentsPart.Comments.GetFirstChild<Authors>()!;
                     var existingAuthors = authors.Elements<Author>().ToList();
