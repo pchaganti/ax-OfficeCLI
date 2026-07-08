@@ -1167,6 +1167,42 @@ static partial class CommandBuilder
     }
 
     /// <summary>
+    /// Hard-reject any unmatched `--option` token that
+    /// <see cref="DetectUnmatchedKeyValues"/> did not convert into a
+    /// missing-prop warning. Commands parsed with
+    /// TreatUnmatchedTokensAsErrors=false otherwise swallow unknown flags
+    /// (e.g. `add ... --at A2`) silently with exit 0 — the element lands
+    /// somewhere the caller did not intend and nothing surfaces the typo.
+    /// </summary>
+    internal static void RejectUnknownOptionTokens(
+        System.CommandLine.ParseResult parseResult, List<string> claimedKeyValues)
+    {
+        var tokens = parseResult.UnmatchedTokens;
+        var claimedKeys = new HashSet<string>(
+            claimedKeyValues.Select(kv => kv.Split('=', 2)[0].Trim().TrimStart('-')),
+            StringComparer.OrdinalIgnoreCase);
+        for (int i = 0; i < tokens.Count; i++)
+        {
+            var token = tokens[i];
+            if (token == "--") break;                       // explicit passthrough separator
+            if (!token.StartsWith("--") || token.Length <= 2) continue;
+            var key = token[2..];
+            if (key.Contains('='))                          // --key=value form
+                key = key[..key.IndexOf('=')];
+            if (claimedKeys.Contains(key)) continue;        // already warned as missing --prop
+            if (key is "props" or "prop") continue;         // typo forms handled above
+            var valueHint = i + 1 < tokens.Count && !tokens[i + 1].StartsWith("--")
+                ? $"{key}={tokens[i + 1]}"
+                : $"{key}=<value>";
+            throw new OfficeCli.Core.CliException($"Unrecognized option '{token}'.")
+            {
+                Code = "invalid_argument",
+                Suggestion = $"Element properties are passed via --prop, e.g. --prop {valueHint}. Run 'officecli add --help' for the supported options."
+            };
+        }
+    }
+
+    /// <summary>
     /// Reduce a Word handler result path to the meaningful scope label for
     /// UNSUPPORTED messages — "/styles", "/body/p[N]", "/body/p[N]/r[N]".
     /// Stops at the first segment that is not a known top-level Word
