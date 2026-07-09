@@ -57,6 +57,11 @@ public partial class ExcelHandler
             int dataR1, int dataR2, Dictionary<string, int> colAbsIndex)>();
         var detectedCands = new List<(string sheetName, WorksheetPart part, string label, string source,
             int dataR1, int dataR2, Dictionary<string, int> colAbsIndex)>();
+        // Every table in scope with its header names — used only to build a
+        // helpful "no such column" error (list all when few, suggest similar
+        // when many). Collected regardless of whether a table resolves the
+        // predicate, so a typo'd column still surfaces the real names.
+        var scopeTables = new List<(string label, List<string> cols)>();
 
         foreach (var (sheetName, worksheetPart) in GetWorksheets())
         {
@@ -74,6 +79,7 @@ public partial class ExcelHandler
 
                 var colNames = tbl.GetFirstChild<TableColumns>()?.Elements<TableColumn>()
                     .Select(c => c.Name?.Value ?? "").ToList() ?? new List<string>();
+                scopeTables.Add((tbl.Name?.Value ?? "table", colNames));
                 var resolved = ResolveColumns(colNames, rng.c1, rng.c2, colConds);
                 if (resolved == null) continue;
 
@@ -90,6 +96,7 @@ public partial class ExcelHandler
                 var colNames = (det.Format.TryGetValue("columns", out var cv) ? cv?.ToString() ?? "" : "")
                     .Split(',').ToList();
                 var refStr = det.Format.TryGetValue("ref", out var rv) ? rv?.ToString() : null;
+                scopeTables.Add((refStr ?? "detected", colNames));
                 if (!TryParseRange(refStr, out var frng)) continue;
                 var resolved = ResolveColumns(colNames, frng.c1, frng.c2, colConds);
                 if (resolved == null) continue;
@@ -104,9 +111,10 @@ public partial class ExcelHandler
         {
             var cols = string.Join(", ", colConds.Select(c => $"'{StripColPrefix(c.Key)}'"));
             var scope = sheetFilter == null ? "any sheet" : $"sheet '{sheetFilter}'";
-            throw new ArgumentException(
+            throw BuildNoColumnException(
                 $"row[col op val] found no table on {scope} with column(s) {cols}. " +
-                "Column predicates resolve header names (or column letters) against a ListObject or a detected (header-row) table.");
+                "Column predicates resolve header names (or column letters) against a ListObject or a detected (header-row) table.",
+                scopeTables, colConds);
         }
         if (candidates.Count > 1)
         {
@@ -158,6 +166,78 @@ public partial class ExcelHandler
         }
         return results;
     }
+
+    // Build a structured "no such column" error. The human message lists every
+    // header per narrow table (<= 20 columns) or, for a wide table, only the
+    // headers nearest (Damerau-Levenshtein) to the typo'd predicate keys plus a
+    // pointer to `query "table" --json`. The SAME data is exposed as structured
+    // CliException fields (Code/ValidValues/Suggestion/Help) so `--json` consumers
+    // read machine fields instead of scraping the prose. When no table exists in
+    // scope there is nothing to list — a bare not_found is returned.
+    private const int ColumnListFullThreshold = 20;
+    private const int ColumnSuggestTopK = 5;
+    private static Core.CliException BuildNoColumnException(
+        string baseMsg,
+        List<(string label, List<string> cols)> scopeTables,
+        List<AttributeFilter.Condition> colConds)
+    {
+        var tables = scopeTables
+            .Select(t => (t.label, cols: t.cols.Where(c => !string.IsNullOrWhiteSpace(c)).ToList()))
+            .Where(t => t.cols.Count > 0)
+            .ToList();
+        if (tables.Count == 0)
+            return new Core.CliException(baseMsg) { Code = "not_found" };
+
+        var wanted = colConds.Select(c => StripColPrefix(c.Key)).ToList();
+        // Distinct headers across every in-scope table, first occurrence wins.
+        var allCols = tables.SelectMany(t => t.cols)
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        bool anyWide = tables.Any(t => t.cols.Count > ColumnListFullThreshold);
+
+        // Human-readable per-table suffix (text mode).
+        var parts = new List<string>();
+        foreach (var (label, cols) in tables)
+        {
+            if (cols.Count <= ColumnListFullThreshold)
+                parts.Add($"table '{label}' has columns: {string.Join(", ", cols)}");
+            else
+                parts.Add($"table '{label}' has {cols.Count} columns; did you mean: " +
+                    $"{string.Join(", ", NearestColumns(cols, wanted))}? (use 'query \"table\" --json' to list all)");
+        }
+        var message = baseMsg + " Available: " + string.Join("; ", parts) + ".";
+
+        // Structured fields (--json). Narrow: enumerate all. Wide: rank nearest
+        // and hand the caller the command that lists every column.
+        if (!anyWide)
+        {
+            return new Core.CliException(message)
+            {
+                Code = "not_found",
+                Suggestion = "Available columns: " + string.Join(", ", allCols),
+                ValidValues = allCols.ToArray(),
+            };
+        }
+        var nearest = NearestColumns(allCols, wanted);
+        return new Core.CliException(message)
+        {
+            Code = "not_found",
+            Suggestion = "Did you mean: " + string.Join(", ", nearest) + "?",
+            ValidValues = nearest,
+            Help = "Too many columns to list. Run 'query \"table\" --json' and read each " +
+                   "table's `columns` field for the full list.",
+        };
+    }
+
+    // Top-K headers ranked by smallest Damerau-Levenshtein distance to any key.
+    private static string[] NearestColumns(List<string> cols, List<string> wanted)
+        => cols
+            .Select(col => (col, dist: wanted.Count == 0 ? int.MaxValue
+                : wanted.Min(w => AttributeFilter.DamerauLevenshteinDistance(
+                    w.ToLowerInvariant(), col.ToLowerInvariant()))))
+            .OrderBy(x => x.dist)
+            .Take(ColumnSuggestTopK)
+            .Select(x => x.col)
+            .ToArray();
 
     // Resolve every column predicate against a table's columns. Returns a
     // key→absolute-column-index map, or null if any predicate column is not in
