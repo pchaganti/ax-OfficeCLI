@@ -534,6 +534,18 @@ internal static class AttributeFilter
         return false;
     }
 
+    // A cell's `value` has two forms: the raw stored value (Format["value"],
+    // e.g. 0.5) and the display string (node.Text, e.g. "50%"). ResolveValue
+    // returns the raw form (so relational ops compare numbers), so an equality
+    // written against the DISPLAY form ("value=50%") would miss. This lets
+    // equality also match the display text — cells only, so a paragraph whose
+    // Text coincidentally equals a filter value is never affected.
+    private static bool CellValueDisplayMatches(DocumentNode node, string key, string target)
+        => string.Equals(key, "value", StringComparison.OrdinalIgnoreCase)
+           && string.Equals(node.Type, "cell", StringComparison.OrdinalIgnoreCase)
+           && node.Text != null
+           && StringEquals(node.Text, target);
+
     private static bool MatchOne(DocumentNode node, Condition cond)
     {
         // Resolve actual value from node
@@ -565,13 +577,15 @@ internal static class AttributeFilter
                 if (!hasKey) return false;
                 return StringEquals(actualStr, cond.Value)
                     || DimensionEquals(actualStr, cond.Value)
-                    || NumericEquals(actualStr, cond.Value);
+                    || NumericEquals(actualStr, cond.Value)
+                    || CellValueDisplayMatches(node, cond.Key, cond.Value);
 
             case FilterOp.NotEqual:
                 if (!hasKey) return true; // key absent → not equal
                 return !StringEquals(actualStr, cond.Value)
                     && !DimensionEquals(actualStr, cond.Value)
-                    && !NumericEquals(actualStr, cond.Value);
+                    && !NumericEquals(actualStr, cond.Value)
+                    && !CellValueDisplayMatches(node, cond.Key, cond.Value);
 
             case FilterOp.Contains:
                 if (!hasKey) return false;

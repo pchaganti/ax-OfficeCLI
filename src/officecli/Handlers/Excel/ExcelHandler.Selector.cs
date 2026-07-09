@@ -135,11 +135,18 @@ public partial class ExcelHandler
         }
 
         var value = GetCellDisplayValue(cell);
+        // Stored value for a formatted cell (0.5, not "50%"; date serial, not the
+        // formatted date). Equality matches EITHER form so `value=50%` (display)
+        // and `value=0.5` (stored) both hit the same percentage cell.
+        var rawValue = GetCellRawComparisonValue(cell);
+        bool ValueMatches(string target) =>
+            value.Equals(target, StringComparison.OrdinalIgnoreCase)
+            || rawValue.Equals(target, StringComparison.OrdinalIgnoreCase);
 
         // Value filters
-        if (selector.ValueEquals != null && !value.Equals(selector.ValueEquals, StringComparison.OrdinalIgnoreCase))
+        if (selector.ValueEquals != null && !ValueMatches(selector.ValueEquals))
             return false;
-        if (selector.ValueNotEquals != null && value.Equals(selector.ValueNotEquals, StringComparison.OrdinalIgnoreCase))
+        if (selector.ValueNotEquals != null && ValueMatches(selector.ValueNotEquals))
             return false;
         if (selector.ValueContains != null && !value.Contains(selector.ValueContains, StringComparison.OrdinalIgnoreCase))
             return false;

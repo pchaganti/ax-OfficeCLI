@@ -1992,6 +1992,12 @@ public partial class ExcelHandler
                     if (MatchesCellSelector(cell, sheetName, parsed))
                     {
                         var node = CellToNode(sheetName, cell, worksheetPart, eval);
+                        // Carry the stored value under `value` so the CLI
+                        // post-filter compares `value>0.3` / `value=0.5` on the
+                        // underlying number (0.5), not the display ("50%").
+                        // node.Text keeps the display for output; MatchOne also
+                        // falls back to it so `value=50%` still matches.
+                        node.Format["value"] = GetCellRawComparisonValue(cell, eval);
                         if (MatchesFormatAttributes(node, parsed))
                             results.Add(node);
                     }
