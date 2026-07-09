@@ -173,7 +173,7 @@ internal static class HtmlScreenshot
     /// "clip_target_not_found" when no target matched a rendered element.
     /// </summary>
     public static Result CaptureClipped(string htmlPath, string outPath, IReadOnlyList<string> dataPaths,
-                                        int padPx = 2, int scale = 2)
+                                        int padPx = 0, int scale = 2)
     {
         if (FindChrome() == null)
             return new Result(false, "", "clip mode requires a Chrome-family browser (Chrome/Edge/Chromium)");
@@ -262,6 +262,18 @@ internal static class HtmlScreenshot
                 $"var k=Math.min({w}/rw,{h}/rh);" +
                 "var st=document.documentElement.style;st.overflow='hidden';" +
                 "st.transform='scale('+k+') translate('+(-x1)+'px,'+(-y1)+'px)';st.transformOrigin='0 0';" +
+                // Blank out everything beyond the target's right/bottom edges.
+                // k comes from min(width-ratio, height-ratio); when the live
+                // layout's aspect differs slightly from pass 1 the other axis
+                // underfills and adjacent content (the paragraph right under a
+                // docx table) would leak into the strip. The covers live in
+                // page coordinates and ride the same root transform, so they
+                // mask exactly from the target's edge outward.
+                "function _cov(l,t){var d=document.createElement('div');var ds=d.style;" +
+                "ds.position='absolute';ds.background='#fff';ds.zIndex='2147483647';" +
+                "ds.left=l+'px';ds.top=t+'px';ds.width='100000px';ds.height='100000px';" +
+                "document.body.appendChild(d);}" +
+                "_cov(x1,y2);_cov(x2,y1);" +
                 "document.title='CLIPPED';}" +
                 "if(document.readyState==='complete')_clipCrop();else window.addEventListener('load',_clipCrop);</script>";
             var cropPath = htmlPath + ".clipcrop.html";
