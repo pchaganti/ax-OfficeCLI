@@ -2153,9 +2153,15 @@ public partial class ExcelHandler
         {
             if (claimed.Contains((ac, ar))) continue;
 
-            // 3. Header span: contiguous non-empty TEXT cells rightward from anchor.
+            // 3. Header span: contiguous non-empty cells rightward from a TEXT
+            //    anchor. The anchor (table's leading column header) must be text,
+            //    but interior/trailing header cells MAY be numeric so a common
+            //    year/number header ("Region | 2024 | 2025") is still recognised
+            //    — a single numeric header used to truncate the span to one
+            //    column and drop the whole table.
+            if (!occupied.TryGetValue((ac, ar), out var anchorCell) || !anchorCell.isText) continue;
             int c = ac;
-            while (occupied.TryGetValue((c, ar), out var hc) && hc.isText) c++;
+            while (occupied.ContainsKey((c, ar))) c++;
             int headerEndCol = c - 1;
             if (headerEndCol - ac + 1 < 2) continue;  // strict: >= 2 columns
 

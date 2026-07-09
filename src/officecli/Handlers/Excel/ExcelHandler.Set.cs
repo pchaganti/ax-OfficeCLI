@@ -40,7 +40,10 @@ public partial class ExcelHandler
             // maps cell short keys (bold -> font.bold, ...); a no-op on other keys.
             var (targets, _) = AttributeFilter.FilterSelector(path, Query, ResolveCellAttributeAlias);
             if (targets.Count == 0)
-                throw new ArgumentException($"No elements matched selector: {path}");
+                // A selector that resolves to zero rows is an ordinary empty
+                // WHERE result, not a tool failure — surface not_found so the
+                // JSON envelope reads clean instead of internal_error.
+                throw new Core.CliException($"No elements matched selector: {path}") { Code = "not_found" };
             LastSelectorSetCount = targets.Count;
             foreach (var target in targets)
             {

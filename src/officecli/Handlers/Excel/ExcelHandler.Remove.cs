@@ -44,7 +44,8 @@ public partial class ExcelHandler
             // every selector shape.
             var (targets, _) = Core.AttributeFilter.FilterSelector(path, Query, ResolveCellAttributeAlias);
             if (targets.Count == 0)
-                throw new ArgumentException($"No elements matched selector: {path}");
+                // Empty selector result is not_found, not a crash — see Set.cs.
+                throw new Core.CliException($"No elements matched selector: {path}") { Code = "not_found" };
 
             var ordered = targets.OrderByDescending(t => ExtractRowIndexForRemoval(t.Path)).ToList();
             string? lastWarning = null;
