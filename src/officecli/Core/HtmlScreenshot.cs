@@ -255,11 +255,11 @@ internal static class HtmlScreenshot
                 "var x1=1e9,y1=1e9,x2=-1e9,y2=-1e9;els.forEach(function(el){var r=el.getBoundingClientRect();" +
                 "var x=r.left+window.scrollX,y=r.top+window.scrollY;" +
                 "if(x<x1)x1=x;if(y<y1)y1=y;if(x+r.width>x2)x2=x+r.width;if(y+r.height>y2)y2=y+r.height;});" +
-                $"var pad={padPx};x1-=pad;y1-=pad;" +
+                $"var pad={padPx};var rw=x2-x1+2*pad,rh=y2-y1+2*pad;x1-=pad;y1-=pad;" +
                 // The intended viewport is interpolated, NOT window.innerWidth:
                 // Chrome clamps small windows to a ~500px minimum, so innerWidth
                 // can exceed the requested size and would over-zoom the crop.
-                $"var k=Math.min({w}/(x2-x1+pad),{h}/(y2-y1+pad));" +
+                $"var k=Math.min({w}/rw,{h}/rh);" +
                 "var st=document.documentElement.style;st.overflow='hidden';" +
                 "st.transform='scale('+k+') translate('+(-x1)+'px,'+(-y1)+'px)';st.transformOrigin='0 0';" +
                 "document.title='CLIPPED';}" +

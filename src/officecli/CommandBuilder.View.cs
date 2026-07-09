@@ -23,7 +23,7 @@ static partial class CommandBuilder
         var pageOpt = new Option<string?>("--page") { Description = "Page filter (e.g. 1, 2-5, 1,3,5). html mode: default=all. screenshot mode: default=1 (use --page 1-N to capture more, or --grid N for a whole-doc thumbnail contact sheet)." };
         var browserOpt = new Option<bool>("--browser") { Description = "Open output in browser (html / svg modes)" };
         var outOpt = new Option<string?>("--out", "-o") { Description = "Output file path (html, screenshot, pdf modes; defaults to stdout for html, a temp file for screenshot)" };
-        var clipOpt = new Option<string?>("--range") { Description = "Screenshot only a region (screenshot mode): an xlsx cell range ('Sheet1!A1:C3' or '/Sheet1/A1:C3'), or any element data-path ('/slide[1]/shape[2]', '/body/table[1]'). The PNG is cropped to the target's bounding box." };
+        var clipOpt = new Option<string?>("--range") { Description = "Screenshot only a region (screenshot mode): an xlsx cell range ('Sheet1!A1:C3' or '/Sheet1/A1:C3'), or any element data-path ('/slide[1]/shape[@id=N]', '/body/table[1]'). The PNG is cropped to the target's bounding box. Not the character-offset `range=` prop of `set` (that one formats a text span like 3:7)." };
         var screenshotWidthOpt = new Option<int>("--screenshot-width") { Description = "Screenshot viewport width (default 1600)", DefaultValueFactory = _ => 1600 };
         var screenshotHeightOpt = new Option<int>("--screenshot-height") { Description = "Screenshot viewport height (default 1200)", DefaultValueFactory = _ => 1200 };
         var gridOpt = new Option<string?>("--grid")
