@@ -124,6 +124,22 @@ public partial class ExcelHandler
         {
             var cols = string.Join(", ", colConds.Select(c => $"'{StripColPrefix(c.Key)}'"));
             var scope = sheetFilter == null ? "any sheet" : $"sheet '{sheetFilter}'";
+            // If the column NAME literally exists as a cell but no table was
+            // detected around it, the honest cause is "not a recognizable table"
+            // (a blank-header gap column, or a header-only block with no data
+            // rows), NOT "column does not exist". Say so and point at explicit
+            // table creation, instead of steering the user toward a typo hunt.
+            if (FindHeaderLikeCell(sheetFilter, colConds) is {} h)
+                throw new Core.CliException(
+                    $"row[col op val] found no usable table on {scope}: a header '{h.name}' exists at " +
+                    $"{h.sheet}!{h.cellRef}, but the surrounding cells are not a recognizable table. " +
+                    "Auto-detection needs at least 2 adjacent non-empty header columns and at least 1 data " +
+                    "row; a blank-header column in the middle or a header-only block breaks it. Create the " +
+                    $"table explicitly (add <file> /{h.sheet} --type table --prop ref=<A1:D10>), or address cells directly.")
+                {
+                    Code = "not_found",
+                    Suggestion = $"add <file> /{h.sheet} --type table --prop ref=<range covering the header and data>",
+                };
             throw BuildNoColumnException(
                 $"row[col op val] found no table on {scope} with column(s) {cols}. " +
                 "Column predicates resolve header names (or column letters) against a ListObject or a detected (header-row) table.",
@@ -132,9 +148,10 @@ public partial class ExcelHandler
         if (candidates.Count > 1)
         {
             var where = string.Join(", ", candidates.Select(c => $"{c.sheetName}!{c.label}"));
-            throw new ArgumentException(
+            throw new Core.CliException(
                 $"row[col op val] is ambiguous — column(s) exist in {candidates.Count} tables ({where}). " +
-                "Scope by sheet, e.g. /SheetName/row[...].");
+                "Scope by sheet, e.g. /SheetName/row[...].")
+                { Code = "invalid_selector" };
         }
 
         var cand = candidates[0];
@@ -355,6 +372,33 @@ public partial class ExcelHandler
         }
         cellRef = distinctCells[0];
         return true;
+    }
+
+    // Error-path only: find a cell in scope whose text equals one of the
+    // predicate column names. Lets the "no table" error distinguish "the header
+    // exists but isn't part of a detectable table" from "the column name is
+    // wrong", so a blank-header gap column or a header-only block gets accurate
+    // guidance instead of a misleading typo hint. Scans raw cells (cheap, only
+    // runs when a predicate already failed to bind).
+    private (string sheet, string cellRef, string name)? FindHeaderLikeCell(
+        string? sheetFilter, List<AttributeFilter.Condition> colConds)
+    {
+        var wanted = colConds.Select(c => StripColPrefix(c.Key)).ToList();
+        foreach (var (sheetName, part) in GetWorksheets())
+        {
+            if (sheetFilter != null && !sheetName.Equals(sheetFilter, StringComparison.OrdinalIgnoreCase))
+                continue;
+            var sd = GetSheet(part).GetFirstChild<SheetData>();
+            if (sd == null) continue;
+            foreach (var row in sd.Elements<Row>())
+                foreach (var cell in row.Elements<Cell>())
+                {
+                    var txt = GetCellDisplayValue(cell);
+                    var w = wanted.FirstOrDefault(x => x.Equals(txt, StringComparison.OrdinalIgnoreCase));
+                    if (w != null) return (sheetName, cell.CellReference?.Value ?? "?", w);
+                }
+        }
+        return null;
     }
 
     // Human hint for a `set /Sheet/row[N] --prop <key>=…` whose key named
