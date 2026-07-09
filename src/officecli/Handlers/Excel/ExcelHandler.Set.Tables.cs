@@ -43,7 +43,10 @@ public partial class ExcelHandler
         {
             switch (key.ToLowerInvariant())
             {
-                case "ref":
+                // refersTo / formula: the schema documents them as ref aliases
+                // for add/set/get and Add honors them — Set alone rejected the
+                // aliases as unsupported.
+                case "ref" or "refersto" or "formula":
                 {
                     // Same guards as AddNamedRange: sheet-qualified refs must
                     // name an existing sheet, and a bare A1 range without a
@@ -51,6 +54,9 @@ public partial class ExcelHandler
                     // Excel refuses the file, 0x800A03EC). Qualify with the
                     // scope sheet when the name is sheet-scoped.
                     var nrRefVal = value;
+                    // Match Add: defined-name bodies must not carry the
+                    // formula-bar leading '=' (Excel rejects the file).
+                    if (nrRefVal.StartsWith('=')) nrRefVal = nrRefVal.TrimStart('=');
                     if (!nrRefVal.Contains('!')
                         && Regex.IsMatch(nrRefVal.Replace("$", ""), @"^[A-Za-z]{1,3}\d+(:[A-Za-z]{1,3}\d+)?$"))
                     {

@@ -905,7 +905,13 @@ internal static class AttributeFilter
         // stripped) so a missing key is always reported and a near-miss value is
         // suggested regardless of operator. Error path only — successful queries keep
         // their existing warning set untouched.
-        if (results.Count == 0 && leafConds.Count > 0)
+        // Skip for selectors whose element resolves its own virtual attributes
+        // (Excel row/col table-column predicates): the bare stripped query
+        // returns nodes WITHOUT those virtual keys, so a legitimate zero-match
+        // (row[Header='x'] matching nothing) mis-diagnosed as
+        // "unknown key 'Header'". The handler already throws its own rich
+        // not_found error for genuinely unknown columns.
+        if (results.Count == 0 && leafConds.Count > 0 && !ElementResolvesOwnBoolean(selector))
         {
             try
             {
