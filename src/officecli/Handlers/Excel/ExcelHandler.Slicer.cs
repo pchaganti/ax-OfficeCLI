@@ -71,6 +71,16 @@ public partial class ExcelHandler
         var hostWorksheet = FindWorksheet(sheetName)
             ?? throw SheetNotFoundException(sheetName);
 
+        // Validate the anchor BEFORE creating any parts. The anchor was only
+        // checked deep inside AddSlicerDrawingAnchor (step 8), after the
+        // SlicerCachePart, SlicersPart, workbook extLst slicerCache entry and
+        // DefinedName sentinel were all created — so a bad anchor left those
+        // orphaned plus a schema-invalid worksheet (<x:drawing> after extLst)
+        // despite exit 1.
+        if (properties.TryGetValue("anchor", out var slAnchorPre) && !string.IsNullOrWhiteSpace(slAnchorPre)
+            && !TryParseCellRangeAnchor(slAnchorPre, out _, out _, out _, out _))
+            throw new ArgumentException($"Invalid anchor: '{slAnchorPre}'. Expected e.g. 'B2' or 'B2:F7'.");
+
         // 1. Resolve pivot table reference ---------------------------------
         // R26-3: also accept `tableName=` as a user-friendly alias — when the
         // value isn't a path, resolve it as a pivot-table name on the host sheet.

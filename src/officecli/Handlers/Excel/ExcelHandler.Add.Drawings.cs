@@ -613,6 +613,13 @@ public partial class ExcelHandler
         OfficeCli.Core.ParseHelpers.ValidateXmlText(shpText, "shape text");
         var shpName = properties.GetValueOrDefault("name", "");
 
+        // Atomicity: a validating throw further down (valign/align/underline/
+        // preset/…) used to leave the just-created first-on-sheet DrawingsPart
+        // and its <x:drawing> reference orphaned on disk despite exit 1. Roll
+        // them back if this call is what created them.
+        var shpDrawingsPartWasAbsent = shpWorksheet.DrawingsPart == null;
+        try
+        {
         var shpDrawingsPart = shpWorksheet.DrawingsPart
             ?? shpWorksheet.AddNewPart<DrawingsPart>();
 
@@ -888,6 +895,16 @@ public partial class ExcelHandler
         var shpIdx = PathIndex.FromArrayIndex(shpAnchors.IndexOf(shpAnchor));
 
         return $"/{shpSheetName}/shape[{shpIdx}]";
+        }
+        catch when (shpDrawingsPartWasAbsent)
+        {
+            // Remove the orphan DrawingsPart + <x:drawing> ref this failed
+            // call created, so exit 1 leaves the sheet unchanged.
+            GetSheet(shpWorksheet).GetFirstChild<DocumentFormat.OpenXml.Spreadsheet.Drawing>()?.Remove();
+            if (shpWorksheet.DrawingsPart != null) shpWorksheet.DeletePart(shpWorksheet.DrawingsPart);
+            SaveWorksheet(shpWorksheet);
+            throw;
+        }
     }
 
     private string AddSlicer(string parentPath, string type, InsertPosition? position, Dictionary<string, string> properties)
