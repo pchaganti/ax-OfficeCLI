@@ -63,6 +63,14 @@ public partial class ExcelHandler
         // expression tree (which may be `or` / parens, e.g. row[金额>5 or 金额<1])
         // drives the actual row match via MatchesExpr.
         var colConds = AttributeFilter.LeafConditions(expr).ToList();
+        // `*/row[...]` reads as a literal sheet named "*" and would report the
+        // baffling "no table on sheet '*'". Wildcard sheet scope is not a
+        // thing — the UNSCOPED form already searches every sheet.
+        if (sheetFilter == "*")
+            throw new Core.CliException(
+                "Wildcard sheet scope ('*/row[...]') is not supported — omit the sheet prefix entirely; " +
+                "an unscoped row[...] searches every sheet.")
+            { Code = "invalid_selector", Suggestion = "row[...] (no sheet prefix) searches all sheets" };
         // A table that owns every referenced column. ListObjects are
         // authoritative (column names are stored metadata); detected tables are
         // a header-sniff heuristic (stable=false), so they are only consulted

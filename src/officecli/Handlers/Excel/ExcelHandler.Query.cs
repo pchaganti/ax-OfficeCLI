@@ -1071,23 +1071,10 @@ public partial class ExcelHandler
 
     // True when a '/' sits outside every bracket and quote — the sheet/path
     // separator of a slash path, as opposed to a '/' inside a predicate value.
+    // Shared scan with MutationSelectorGuard so query and set/remove agree on
+    // what counts as a scoped slash path.
     private static bool HasTopLevelSlash(string selector)
-    {
-        int bracket = 0, paren = 0;
-        char? quote = null;
-        foreach (var c in selector)
-        {
-            if (quote.HasValue) { if (c == quote.Value) quote = null; continue; }
-            if (c == '"' || c == '\'') { quote = c; continue; }
-            else if (c == '[') bracket++;
-            else if (c == ']') bracket = System.Math.Max(0, bracket - 1);
-            else if (c == '(') paren++;
-            else if (c == ')') paren = System.Math.Max(0, paren - 1);
-            else if (bracket == 0 && paren == 0 && c == '/')
-                return true;
-        }
-        return false;
-    }
+        => Core.SelectorCommaSplit.ContainsTopLevelChar(selector, '/');
 
     private List<DocumentNode> QueryDispatch(string selector)
     {
