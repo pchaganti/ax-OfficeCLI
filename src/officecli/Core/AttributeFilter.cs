@@ -69,7 +69,12 @@ internal static class AttributeFilter
         for (int i = 0; i < selector.Length; i++)
         {
             char c = selector[i];
-            if (quote.HasValue) { if (c == quote.Value) quote = null; continue; }
+            if (quote.HasValue)
+            {
+                if (c == '\\' && i + 1 < selector.Length) { i++; continue; }   // \" stays inside the quote
+                if (c == quote.Value) quote = null;
+                continue;
+            }
             if (c == '"' || c == '\'') { quote = c; continue; }
             if (c == '[') { if (blockStart < 0) blockStart = i + 1; }
             else if (c == ']')
@@ -116,7 +121,7 @@ internal static class AttributeFilter
             // would otherwise eat the surrounding quote that marks the prefix.
             var isRegexForm = rawVal.Length >= 3 && rawVal[0] == 'r'
                 && (rawVal[1] == '"' || rawVal[1] == '\'');
-            var val = isRegexForm ? rawVal : rawVal.Trim('\'', '"');
+            var val = isRegexForm ? rawVal : UnquoteValue(rawVal);
 
             // Detect corrupted values from mis-parsed operators (e.g. === parsed as = with value ==X)
             if (val.StartsWith("=") || val.StartsWith("~") || val.StartsWith("!"))
@@ -1167,6 +1172,14 @@ internal static class AttributeFilter
                 if (_i < _s.Length && _s[_i] == '@') _i++;
                 while (_i < _s.Length && (char.IsLetterOrDigit(_s[_i]) || _s[_i] == '.' || _s[_i] == '_')) _i++;
                 key = _s[keyStart.._i];
+                // The bare reader stopped INSIDE the name (emoji, dash, … —
+                // anything outside letters/digits/._). Without this check the
+                // leftover reads as trailing junk ("unexpected '📊>90'") with
+                // no hint that quoting the header is the fix.
+                if (key.Length > 0 && _i < _s.Length && !char.IsWhiteSpace(_s[_i])
+                    && _s[_i] != ')' && !IsOpStart(_s[_i]))
+                    throw Err($"key '{key}' stops at '{_s[_i..Math.Min(_i + 4, _s.Length)]}' — a name with characters " +
+                              $"outside letters/digits/._ must be quoted, e.g. [\"{key}…\">90]");
             }
             if (key.Length == 0 || key == "@")
                 throw Err($"expected a predicate (key op value) at '{_s[_i..]}'");
@@ -1229,7 +1242,11 @@ internal static class AttributeFilter
             if (rPrefixed) _i++;                 // consume 'r'
             char quote = _s[_i];
             _i++;                                // consume opening quote
-            while (_i < _s.Length && _s[_i] != quote) _i++;
+            // A backslash escapes the next char, so \" continues the string
+            // (r-form included, Python-raw-string style: the backslash itself
+            // stays in the token — UnquoteValue / the regex engine handle it).
+            while (_i < _s.Length && _s[_i] != quote)
+                _i += _s[_i] == '\\' && _i + 1 < _s.Length ? 2 : 1;
             if (_i >= _s.Length) throw Err($"unterminated quoted value in '{_s[start..]}'");
             _i++;                                // consume closing quote
             return _s[start.._i];
@@ -1243,9 +1260,12 @@ internal static class AttributeFilter
             char quote = _s[_i];
             _i++;                                // consume opening quote
             int start = _i;
-            while (_i < _s.Length && _s[_i] != quote) _i++;
+            while (_i < _s.Length && _s[_i] != quote)
+                _i += _s[_i] == '\\' && _i + 1 < _s.Length ? 2 : 1;
             if (_i >= _s.Length) throw Err($"unterminated quoted key in '{_s[start..]}'");
-            var inner = _s[start.._i];
+            // Re-wrap so UnquoteValue applies the same one-pair strip + escape
+            // processing as values (a header can contain the quote char too).
+            var inner = UnquoteValue(quote + _s[start.._i] + quote);
             _i++;                                // consume closing quote
             return inner;
         }
@@ -1308,7 +1328,7 @@ internal static class AttributeFilter
     private static Condition BuildCondition(string key, string opStr, string rawVal)
     {
         var isRegexForm = rawVal.Length >= 3 && rawVal[0] == 'r' && (rawVal[1] == '"' || rawVal[1] == '\'');
-        var val = isRegexForm ? rawVal : rawVal.Trim('\'', '"');
+        var val = isRegexForm ? rawVal : UnquoteValue(rawVal);
 
         if (val.StartsWith("=") || val.StartsWith("~") || val.StartsWith("!"))
             throw new CliException($"Malformed selector: invalid operator near \"{key}{opStr}{val}\". Supported operators: =, !=, ~=, >=, <=, >, <")
@@ -1339,6 +1359,30 @@ internal static class AttributeFilter
         };
         RejectRegexOnNonContainsOp(key, op, val, isRegexForm);
         return new Condition(key.TrimStart('@'), op, val);
+    }
+
+    // Strip exactly ONE matching quote pair from a value token, honoring the
+    // backslash escapes the tokenizer recognizes inside a quoted value (\" \'
+    // \\). The old Trim('\'','"') was wrong twice over: it stripped a whole
+    // RUN of trailing quote chars ('a "b"' lost its legal final double quote
+    // and the predicate silently matched nothing), and it stripped mismatched
+    // pairs ("a' → a). Unquoted tokens pass through untouched, so a Windows
+    // path value keeps its backslashes.
+    private static string UnquoteValue(string rawVal)
+    {
+        if (rawVal.Length < 2) return rawVal;
+        char q = rawVal[0];
+        if ((q != '"' && q != '\'') || rawVal[^1] != q) return rawVal;
+        var inner = rawVal[1..^1];
+        if (!inner.Contains('\\')) return inner;
+        var sb = new System.Text.StringBuilder(inner.Length);
+        for (int i = 0; i < inner.Length; i++)
+        {
+            if (inner[i] == '\\' && i + 1 < inner.Length && (inner[i + 1] == q || inner[i + 1] == '\\'))
+            { sb.Append(inner[i + 1]); i++; continue; }
+            sb.Append(inner[i]);
+        }
+        return sb.ToString();
     }
 
     // A node may DECLARE keys that are valid for its type even when no node in
