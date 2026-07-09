@@ -1227,8 +1227,14 @@ public partial class ExcelHandler
             // Pad with default names if fewer columns provided than range requires
             colNames = new string[colCount];
             for (int i = 0; i < colCount; i++)
+            {
                 colNames[i] = i < userColNames.Length ? userColNames[i] : $"Column{i + 1}";
-
+                // Blank / whitespace-only names make Excel reject the file
+                // (0x800A03EC) — fall back to the default, same as the
+                // header-discovery path.
+                if (string.IsNullOrWhiteSpace(colNames[i]))
+                    colNames[i] = $"Column{i + 1}";
+            }
         }
         else
         {
@@ -1243,18 +1249,29 @@ public partial class ExcelHandler
                     var cellRefStr = $"{colLetter}{startRow}";
                     var headerCell = headerRow?.Elements<Cell>().FirstOrDefault(c => c.CellReference?.Value == cellRefStr);
                     colNames[i] = (headerCell != null ? GetCellDisplayValue(headerCell) : null) ?? $"Column{i + 1}";
-                    if (string.IsNullOrEmpty(colNames[i]))
+                    // Excel rejects a table whose column name is blank OR
+                    // whitespace-only (0x800A03EC on open). IsNullOrEmpty is
+                    // not enough — a "   " header slips through. Fall back to
+                    // the default name and re-stamp the header cell below so
+                    // its visible text matches the tableColumn name.
+                    bool substituted = false;
+                    if (string.IsNullOrWhiteSpace(colNames[i]))
+                    {
                         colNames[i] = $"Column{i + 1}";
+                        substituted = true;
+                    }
                     // Excel rejects a table whose header cell is typed
                     // as a number. Convert the cell to an inline string
                     // so the header reads as text, and tableColumn name
                     // (read above) still matches the cell's visible
-                    // value exactly — Excel also requires that match.
-                    if (headerCell != null && (headerCell.DataType == null || headerCell.DataType.Value == CellValues.Number))
+                    // value exactly — Excel also requires that match. Also
+                    // re-stamp when we substituted a whitespace-only header.
+                    if (headerCell != null && (substituted || headerCell.DataType == null || headerCell.DataType.Value == CellValues.Number))
                     {
                         var text = colNames[i];
                         headerCell.DataType = CellValues.InlineString;
                         headerCell.CellValue = null;
+                        headerCell.CellFormula = null;
                         headerCell.InlineString = new InlineString(new Text(text));
                     }
                 }
