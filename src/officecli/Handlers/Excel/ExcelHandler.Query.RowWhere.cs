@@ -148,10 +148,22 @@ public partial class ExcelHandler
             // Probe node carries each predicate column's cell value under its
             // key so AttributeFilter evaluates all operators with one engine.
             var probe = new DocumentNode { Type = "cell" };
-            foreach (var cond in colConds)
+            foreach (var keyGroup in colConds.GroupBy(c => c.Key))
             {
-                var cell = FindCell(sheetData, $"{IndexToColumnName(cand.colAbsIndex[cond.Key])}{r}");
-                probe.Format[cond.Key] = cell != null ? GetCellDisplayValue(cell, eval) : "";
+                var cell = FindCell(sheetData, $"{IndexToColumnName(cand.colAbsIndex[keyGroup.Key])}{r}");
+                if (cell == null) { probe.Format[keyGroup.Key] = ""; continue; }
+                // Compare on the underlying stored value (0.5 / date serial) when
+                // any condition on this column is relational or carries a numeric
+                // literal; otherwise the formatted display, so equality against a
+                // formatted literal ("50%", "2024-01-15", text) still matches.
+                bool wantsRaw = keyGroup.Any(c =>
+                    c.Op is AttributeFilter.FilterOp.GreaterThan or AttributeFilter.FilterOp.LessThan
+                        or AttributeFilter.FilterOp.GreaterOrEqual or AttributeFilter.FilterOp.LessOrEqual
+                    || double.TryParse(c.Value, System.Globalization.NumberStyles.Any,
+                        System.Globalization.CultureInfo.InvariantCulture, out _));
+                probe.Format[keyGroup.Key] = wantsRaw
+                    ? GetCellRawComparisonValue(cell, eval)
+                    : GetCellDisplayValue(cell, eval);
             }
             if (!AttributeFilter.MatchesExpr(probe, expr)) continue;
 

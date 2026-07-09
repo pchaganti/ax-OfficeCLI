@@ -105,6 +105,25 @@ public partial class ExcelHandler
         return value;
     }
 
+    // Underlying stored value for COMPARISON, as opposed to GetCellDisplayValue's
+    // formatted string. A percentage cell compares as 0.5 (not "50%") and a date
+    // as its serial (not "2024-01-15"), so `row[Pct>0.3]` / `row[Hired>45000]`
+    // evaluate against the real number instead of the display text. Non-numeric
+    // cells (text, shared strings, formula results, sentinels) are identical to
+    // the display path, so equality on a formatted literal still works.
+    private string GetCellRawComparisonValue(Cell cell, Core.FormulaEvaluator? evaluator = null)
+    {
+        if (cell.DataType == null)
+        {
+            var raw = cell.CellValue?.Text;
+            if (!string.IsNullOrEmpty(raw) && double.TryParse(raw,
+                    System.Globalization.NumberStyles.Any,
+                    System.Globalization.CultureInfo.InvariantCulture, out _))
+                return raw;
+        }
+        return GetCellDisplayValue(cell, evaluator);
+    }
+
     private static bool IsCellInMergeRange(string cellRef, string? rangeRef)
     {
         if (string.IsNullOrEmpty(rangeRef) || !rangeRef.Contains(':')) return false;
