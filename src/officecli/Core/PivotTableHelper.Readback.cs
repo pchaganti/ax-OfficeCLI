@@ -192,6 +192,28 @@ internal static partial class PivotTableHelper
                     if (repeatLabels) break;
                 }
             }
+            // Fallback: AddTable writes the per-field x14:pivotField
+            // fillDownLabels="1" ext on outer row fields (not the
+            // definition-level fillDownLabelsDefault that Set writes), so a
+            // pivot created with repeatLabels=true would otherwise read back
+            // as absent — a round-trip gap. Surface it from either place.
+            if (!repeatLabels && pivotDef.PivotFields != null)
+            {
+                foreach (var pf in pivotDef.PivotFields.Elements<PivotField>())
+                {
+                    var pfExtLst = pf.GetFirstChild<PivotFieldExtensionList>();
+                    if (pfExtLst == null) continue;
+                    foreach (var ext in pfExtLst.Elements<PivotFieldExtension>())
+                        foreach (var child in ext.ChildElements)
+                        {
+                            if (child.LocalName != "pivotField") continue;
+                            var a = child.GetAttributes()
+                                .FirstOrDefault(x => x.LocalName == "fillDownLabels");
+                            if (a.Value == "1") { repeatLabels = true; break; }
+                        }
+                    if (repeatLabels) break;
+                }
+            }
             if (repeatLabels)
                 node.Format["repeatLabels"] = "true";
         }
