@@ -314,7 +314,7 @@ public partial class ExcelHandler
         gradFill.AppendChild(gsLst);
         gradFill.AppendChild(new Drawing.LinearGradientFill
         {
-            Angle = anglePart * 60000,
+            Angle = ParseHelpers.GradientAngleToOoxmlUnits(anglePart),
             Scaled = true
         });
         return gradFill;

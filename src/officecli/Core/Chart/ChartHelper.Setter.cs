@@ -4110,7 +4110,7 @@ internal static partial class ChartHelper
         gradFill.AppendChild(gsLst);
         gradFill.AppendChild(new Drawing.LinearGradientFill
         {
-            Angle = anglePart * 60000, // degrees to 60000ths
+            Angle = ParseHelpers.GradientAngleToOoxmlUnits(anglePart), // degrees to 60000ths, normalized mod 360 (overflow-proof)
             Scaled = scaledFlag
         });
 
