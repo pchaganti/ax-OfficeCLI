@@ -1389,7 +1389,16 @@ public partial class ExcelHandler
             }
         }
 
-        foreach (var (runText, pd) in gatheredRuns)
+        // Drop empty-text runs that carry formatting props: real Excel refuses
+        // the whole workbook (0x800A03EC) when a formatting-only empty <r> is
+        // not the last run in the <si>. They render nothing, so dropping is
+        // lossless; keep one if removing all would leave an empty <si>.
+        var effectiveRuns = gatheredRuns
+            .Where(r => !(string.IsNullOrEmpty(r.text) && r.props.Count > 0)).ToList();
+        if (effectiveRuns.Count == 0 && gatheredRuns.Count > 0)
+            effectiveRuns.Add(gatheredRuns[^1]);
+
+        foreach (var (runText, pd) in effectiveRuns)
         {
             var run = new Run();
             var rp = new RunProperties();

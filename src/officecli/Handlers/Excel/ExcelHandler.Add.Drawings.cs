@@ -76,6 +76,21 @@ public partial class ExcelHandler
         var oleSrc = OfficeCli.Core.OleHelper.RequireSource(properties);
         OfficeCli.Core.OleHelper.WarnOnUnknownOleProps(properties);
 
+        // Embedding the workbook into itself: the source is open/locked by this
+        // resident session, so the read yields 0 bytes and produces an empty
+        // OLE payload real Excel refuses (0x800A03EC). Reject up front.
+        try
+        {
+            if (!string.IsNullOrEmpty(oleSrc) && !string.IsNullOrEmpty(_filePath)
+                && string.Equals(Path.GetFullPath(oleSrc), Path.GetFullPath(_filePath),
+                    StringComparison.OrdinalIgnoreCase))
+                throw new ArgumentException(
+                    "Cannot embed a workbook into itself: the source file is the workbook being edited. "
+                    + "Embed a different file, or make a copy of the source first.");
+        }
+        catch (ArgumentException) { throw; }
+        catch { /* path canonicalization failed — fall through to normal read */ }
+
         // CONSISTENCY(excel-ole-display): Excel OLE does not have a
         // DrawAspect concept — worksheet objects are always shown as
         // icons via objectPr/anchor, so 'display' would be a no-op.
