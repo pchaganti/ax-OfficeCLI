@@ -705,6 +705,24 @@ public partial class ExcelHandler
             var softEdge = activeEffects.GetFirstChild<Drawing.SoftEdge>();
             if (softEdge?.Radius?.HasValue == true)
                 node.Format["softEdge"] = $"{softEdge.Radius.Value / EmuConverter.EmuPerPointF:0.##}pt";
+            // reflection readback — Add/Set build a:reflection (via
+            // DrawingEffectsHelper.BuildReflection) but Get omitted it, so the
+            // Get-driven dump silently dropped it. BuildReflection encodes the
+            // preset/strength in @endPos (1/1000 percent); emit the numeric
+            // percent so `set reflection=<pct>` re-parses its own readback
+            // (true/half/full/tight all normalize to the same endPos on replay).
+            var reflection = activeEffects.GetFirstChild<Drawing.Reflection>();
+            if (reflection?.EndPosition?.HasValue == true)
+                node.Format["reflection"] = reflection.EndPosition.Value switch
+                {
+                    // Mirror PowerPointHandler.NodeBuilder reflection readback:
+                    // preset names for the canonical strengths, numeric percent
+                    // otherwise. Each re-parses via BuildReflection on replay.
+                    55000 => "tight",
+                    90000 => "half",
+                    100000 => "full",
+                    _ => (reflection.EndPosition.Value / 1000).ToString(System.Globalization.CultureInfo.InvariantCulture),
+                };
         }
 
         return node;

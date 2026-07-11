@@ -634,6 +634,7 @@ public static partial class ExcelBatchEmitter
             CopyString(shp, "shadow", props, "shadow");
             CopyString(shp, "glow", props, "glow");
             CopyString(shp, "softEdge", props, "softEdge");
+            CopyString(shp, "reflection", props, "reflection");
             CopyString(shp, "margin", props, "margin");
             items.Add(new BatchItem { Command = "add", Parent = sheetPath, Type = "shape", Props = props });
         }
