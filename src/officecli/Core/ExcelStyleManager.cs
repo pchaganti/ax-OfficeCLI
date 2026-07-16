@@ -204,16 +204,12 @@ internal class ExcelStyleManager
                 && existingPattern.Value != PatternValues.None
                 && existingPattern.Value != PatternValues.Solid)
             {
-                // Carry the existing foreground through in whatever form it is
-                // stored — a theme fg would be silently dropped by an Rgb-only
-                // read (a lone fillBg edit must never eat the foreground).
-                var existingFg = existingFill!.PatternFill!.ForegroundColor;
-                var fgCarry = existingFg?.Rgb?.Value
-                    ?? (existingFg?.Theme?.Value is { } fgThemeIdx
-                        ? ParseHelpers.ExcelThemeIndexToName(fgThemeIdx)
-                        : null);
-                fillId = GetOrCreatePatternFill(stylesheet, existingPattern.InnerText!,
-                    fgCarry, loneBg);
+                // Carry the existing foreground through VERBATIM (clone) — a
+                // lone fillBg edit must never eat the foreground, and the fg
+                // can be stored in forms a string round-trip cannot express
+                // (theme+tint, indexed, auto). Only the background is rebuilt.
+                fillId = GetOrCreatePatternFillPreserveFg(stylesheet,
+                    existingFill!.PatternFill!, loneBg);
                 applyFill = true;
             }
             else
@@ -1170,6 +1166,35 @@ internal class ExcelStyleManager
             : theme != null
                 ? c?.Theme?.Value == theme.Value
                 : c == null || (c.Rgb == null && c.Theme == null);
+
+    /// <summary>
+    /// Incremental fillBg edit: rebuild the pattern fill with the existing
+    /// foreground CLONED verbatim (any storage form — rgb, theme+tint,
+    /// indexed, auto) and only the background replaced. Dedup by serialized
+    /// form so repeated increments don't bloat the fills table.
+    /// </summary>
+    private static uint GetOrCreatePatternFillPreserveFg(
+        Stylesheet stylesheet, PatternFill existing, string bgValue)
+    {
+        var fills = stylesheet.Fills!;
+        var newPf = (PatternFill)existing.CloneNode(true);
+        newPf.BackgroundColor?.Remove();
+        var (bgRgb, bgTheme) = ResolveFillColor(bgValue);
+        var bg = new BackgroundColor();
+        if (bgRgb != null) bg.Rgb = bgRgb; else bg.Theme = bgTheme;
+        // Schema order: fgColor (cloned, stays first) then bgColor.
+        newPf.Append(bg);
+
+        int idx = 0;
+        foreach (var fill in fills.Elements<Fill>())
+        {
+            if (fill.PatternFill?.OuterXml == newPf.OuterXml) return (uint)idx;
+            idx++;
+        }
+        fills.Append(new Fill(newPf));
+        fills.Count = (uint)fills.Elements<Fill>().Count();
+        return (uint)(fills.Elements<Fill>().Count() - 1);
+    }
 
     private static uint GetOrCreateFill(Stylesheet stylesheet, string hexColor)
     {
