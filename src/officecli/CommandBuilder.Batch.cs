@@ -452,7 +452,19 @@ static partial class CommandBuilder
                         {
                             try
                             {
-                                if (System.IO.File.GetLastWriteTimeUtc(orphan) > ageFloor) continue;
+                                // Age gate on the NEWER of creation time and
+                                // mtime. File.Copy preserves the source's
+                                // mtime (possibly hours old) but the copy's
+                                // birthtime is the copy moment — so a live
+                                // temp/staging file is young by construction
+                                // on macOS/Windows, with no stamp-ordering
+                                // window to race. (On filesystems without
+                                // birthtime, CreationTimeUtc falls back to a
+                                // stat time and the explicit stamp below
+                                // still narrows the window to copy→stamp.)
+                                var bornOrWritten = System.IO.File.GetCreationTimeUtc(orphan);
+                                var lastWrite = System.IO.File.GetLastWriteTimeUtc(orphan);
+                                if (bornOrWritten > ageFloor || lastWrite > ageFloor) continue;
                                 using (new System.IO.FileStream(orphan, System.IO.FileMode.Open,
                                     System.IO.FileAccess.ReadWrite, System.IO.FileShare.None)) { }
                                 System.IO.File.Delete(orphan);
@@ -473,16 +485,32 @@ static partial class CommandBuilder
                 // Keep the original extension LAST — DocumentHandlerFactory
                 // dispatches by extension, so `.tmp` would be rejected.
                 //
-                // Copy under a STAGING name the sweep pattern does not match,
-                // stamp the mtime (File.Copy preserves the source's, which may
-                // be old enough to fall past a concurrent sweep's age floor),
-                // and only then rename into the swept namespace — the temp is
-                // born fresh-stamped, closing the copy→stamp TOCTOU window.
+                // STREAM-copy under a staging name, rename into place. Not
+                // File.Copy: that preserves the source's mtime (hours old on
+                // an idle document), and on macOS setting an mtime below the
+                // birthtime drags the birthtime down with it — no timestamp
+                // gate survives that. A streamed copy is born with a fresh
+                // mtime, holds an exclusive handle for the whole write (the
+                // sweep's open-probe bounces off), and inherits neither BSD
+                // file flags (uchg) nor the source's timestamps. From handle
+                // close to rename the file is protected by its fresh mtime.
                 var guid = Guid.NewGuid().ToString("N");
                 var prepPath = System.IO.Path.Combine(tmpDir, $".{tmpStem}.batchprep-{guid}{tmpExt}");
                 tmpPath = System.IO.Path.Combine(tmpDir, $".{tmpStem}.batch-{guid}{tmpExt}");
-                System.IO.File.Copy(targetPath, prepPath);
-                try { System.IO.File.SetLastWriteTimeUtc(prepPath, DateTime.UtcNow); } catch { /* best-effort */ }
+                using (var src = new System.IO.FileStream(targetPath, System.IO.FileMode.Open,
+                    System.IO.FileAccess.Read, System.IO.FileShare.Read))
+                using (var dst = new System.IO.FileStream(prepPath, System.IO.FileMode.CreateNew,
+                    System.IO.FileAccess.ReadWrite, System.IO.FileShare.None))
+                {
+                    src.CopyTo(dst);
+                }
+                // The final promote is a rename, which would hand the document
+                // the temp's default permissions — carry the original mode
+                // over. (Windows File.Replace preserves the destination's ACL
+                // by itself.)
+                if (!OperatingSystem.IsWindows())
+                    try { System.IO.File.SetUnixFileMode(prepPath, System.IO.File.GetUnixFileMode(targetPath)); }
+                    catch { /* best-effort */ }
                 System.IO.File.Move(prepPath, tmpPath);
                 workPath = tmpPath;
             }
