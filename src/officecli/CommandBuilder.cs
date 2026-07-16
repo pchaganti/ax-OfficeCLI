@@ -634,43 +634,44 @@ static partial class CommandBuilder
         Dictionary<string, string>? after)
     {
         if (after == null || applied.Count == 0) return "";
-        bool Related(string diffKey) => applied.Any(req =>
+        bool DiffAttributable(string diffKey, KeyValuePair<string, string> req) =>
             diffKey.Equals(req.Key, StringComparison.OrdinalIgnoreCase)
             || diffKey.StartsWith(req.Key + ".", StringComparison.OrdinalIgnoreCase)
-            || req.Key.StartsWith(diffKey + ".", StringComparison.OrdinalIgnoreCase));
+            || req.Key.StartsWith(diffKey + ".", StringComparison.OrdinalIgnoreCase);
+        // Fallback attribution (post-state, no diff evidence): exact key
+        // match, or a dotted expansion whose value equals the SAME request's
+        // value — pairing both conditions per request keeps a pre-existing
+        // sibling whose value collides with a DIFFERENT request out of the
+        // echo (border=thin + wrap=true must not claim
+        // border.diagonalUp=true). A same-request sibling genuinely carrying
+        // the requested value can still appear — value-truthful, accepted.
+        bool FallbackAttributable(KeyValuePair<string, string> kv, KeyValuePair<string, string> req) =>
+            kv.Key.Equals(req.Key, StringComparison.OrdinalIgnoreCase)
+            || (kv.Key.StartsWith(req.Key + ".", StringComparison.OrdinalIgnoreCase)
+                && string.Equals(kv.Value, req.Value, StringComparison.Ordinal));
         var diff = new List<KeyValuePair<string, string>>();
         if (before != null)
             foreach (var kv in after)
                 if (!before.TryGetValue(kv.Key, out var old) || !string.Equals(old, kv.Value, StringComparison.Ordinal))
                     diff.Add(kv);
-        var related = diff.Where(kv => Related(kv.Key))
-            .OrderBy(kv => kv.Key, StringComparer.OrdinalIgnoreCase).ToList();
-        if (related.Count == 0)
+        // Resolve PER REQUEST, not per whole set: a request covered by the
+        // diff uses its diff entries; a request with no diff evidence (an
+        // idempotent re-write — the stored value already matched — or a first
+        // write the before-snapshot couldn't resolve) falls back to the
+        // post-state. Resolving the whole set at once made a key's echo
+        // depend on whether some OTHER key in the same command happened to
+        // change, so identical requests echoed different shapes run to run.
+        var picked = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var req in applied)
         {
-            // Idempotent re-write (the stored value already matched) produces
-            // an empty diff — but the whole point of the echo is that a caller
-            // re-issuing `color=red` after a failed self-verification learns
-            // the canonical form. Fall back to the post-state, restricted to
-            // entries clearly attributable to the request: an exact key match,
-            // or (for dotted expansions like font → font.latin) an entry whose
-            // value equals the requested value — the equality filter keeps a
-            // pre-existing sibling (font.cs=Old) out of an echo that claims
-            // "applied". The same fallback covers a first write onto a node
-            // the before-snapshot couldn't resolve (before == null).
-            // The key relation and the value equality must hold against the
-            // SAME request — matching them independently let an unrelated
-            // sibling whose value collided with a DIFFERENT request leak in
-            // (border=thin + wrap=true falsely echoing a pre-existing
-            // border.diagonalUp=true). A same-request sibling that genuinely
-            // carries the requested value (border.diagonal=thin preset before
-            // border=thin) can still appear — value-truthful, accepted.
-            related = after
-                .Where(kv => applied.Any(req =>
-                    kv.Key.Equals(req.Key, StringComparison.OrdinalIgnoreCase)
-                    || (kv.Key.StartsWith(req.Key + ".", StringComparison.OrdinalIgnoreCase)
-                        && string.Equals(kv.Value, req.Value, StringComparison.Ordinal))))
-                .OrderBy(kv => kv.Key, StringComparer.OrdinalIgnoreCase).ToList();
+            var fromDiff = diff.Where(kv => DiffAttributable(kv.Key, req)).ToList();
+            foreach (var kv in fromDiff.Count > 0
+                ? fromDiff
+                : after.Where(kv => FallbackAttributable(kv, req)))
+                picked[kv.Key] = kv.Value;
         }
+        var related = picked
+            .OrderBy(kv => kv.Key, StringComparer.OrdinalIgnoreCase).ToList();
         if (related.Count == 0) return "";
         // Identity — the stored form matches the request exactly: no echo.
         var identical = applied.All(req => related.Any(d =>
