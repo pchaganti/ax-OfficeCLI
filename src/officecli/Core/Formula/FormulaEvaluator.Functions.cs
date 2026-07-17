@@ -213,6 +213,8 @@ internal partial class FormulaEvaluator
             // ===== Text =====
             "CONCATENATE" or "CONCAT" => FR_S(string.Concat(AllArgs(args).Select(r => r.AsString()))),
             "TEXTJOIN" => EvalTextJoin(args),
+            "VALUETOTEXT" => EvalValueToText(args),
+            "ARRAYTOTEXT" => EvalArrayToText(args),
             "LEFT" => FR_S(str(0).Length >= (int)num(1) ? str(0)[..(int)num(1)] : str(0)),
             "RIGHT" => FR_S(str(0).Length >= (int)num(1) ? str(0)[^(int)num(1)..] : str(0)),
             "MID" => EvalMid(args),
@@ -835,6 +837,52 @@ internal partial class FormulaEvaluator
             else if (args[i] is FormulaResult fr) { var s = fr.AsString(); if (!ignoreEmpty || s != "") parts.Add(s); }
         }
         return FR_S(string.Join(delim, parts));
+    }
+
+    // VALUETOTEXT(value, [format]) — format 0 (concise, default) returns the
+    // value as plain text; format 1 (strict) double-quotes text (doubling any
+    // embedded quote) but leaves numbers/booleans/errors unquoted. An array arg
+    // collapses to its top-left cell (the anchor path Excel spills from).
+    private FormulaResult? EvalValueToText(List<object> args)
+    {
+        if (args.Count < 1 || args[0] is not FormulaResult v) return FormulaResult.Error("#VALUE!");
+        if (v.IsRange) v = v.RangeValue is { Rows: > 0, Cols: > 0 } rd ? rd.Cells[0, 0] ?? FormulaResult.Blank() : FormulaResult.Blank();
+        bool strict = args.Count > 1 && args[1] is FormulaResult f && (int)f.AsNumber() == 1;
+        return FR_S(ValueToTextScalar(v, strict));
+    }
+
+    private static string ValueToTextScalar(FormulaResult? v, bool strict)
+    {
+        if (v == null || v.IsBlank) return "";
+        if (v.IsError) return v.ErrorValue!;
+        if (v.IsString) return strict ? "\"" + v.StringValue!.Replace("\"", "\"\"") + "\"" : v.StringValue!;
+        return v.AsString();   // numbers, booleans — never quoted
+    }
+
+    // ARRAYTOTEXT(array, [format]) — format 0 (concise, default) lists the cells
+    // row-major, comma-space separated, values unquoted; format 1 (strict) emits
+    // the Excel array-literal "{a,b;c,d}" (comma = column sep, semicolon = row
+    // sep, text double-quoted) which round-trips back to an array constant.
+    private FormulaResult? EvalArrayToText(List<object> args)
+    {
+        if (ToGrid(args.Count > 0 ? args[0] : null) is not { } g) return FormulaResult.Error("#VALUE!");
+        bool strict = args.Count > 1 && args[1] is FormulaResult f && (int)f.AsNumber() == 1;
+        int rows = g.GetLength(0), cols = g.GetLength(1);
+        if (strict)
+        {
+            var rowStrs = new List<string>();
+            for (int r = 0; r < rows; r++)
+            {
+                var cells = new List<string>();
+                for (int c = 0; c < cols; c++) cells.Add(ValueToTextScalar(g[r, c], strict: true));
+                rowStrs.Add(string.Join(",", cells));
+            }
+            return FR_S("{" + string.Join(";", rowStrs) + "}");
+        }
+        var flat = new List<string>();
+        for (int r = 0; r < rows; r++)
+            for (int c = 0; c < cols; c++) flat.Add(ValueToTextScalar(g[r, c], strict: false));
+        return FR_S(string.Join(", ", flat));
     }
 
     // ==================== Lookup ====================
