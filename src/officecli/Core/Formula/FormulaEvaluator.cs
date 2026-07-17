@@ -491,8 +491,13 @@ internal partial class FormulaEvaluator
                 while (i < formula.Length && (char.IsLetterOrDigit(formula[i]) || formula[i] is '_' or '$' or '.')) i++;
                 var word = formula[start..i]; var stripped = StripDollar(word);
 
-                if (stripped.Equals("TRUE", StringComparison.OrdinalIgnoreCase)) { tokens.Add(new Token(TT.Bool, "TRUE")); continue; }
-                if (stripped.Equals("FALSE", StringComparison.OrdinalIgnoreCase)) { tokens.Add(new Token(TT.Bool, "FALSE")); continue; }
+                // TRUE / FALSE are boolean literals, but the TRUE() / FALSE()
+                // function forms are followed by '(' — let those fall through to
+                // the function-call path below rather than emitting a bool token
+                // that leaves a stray '()' the parser can't consume.
+                bool boolFollowedByParen = i < formula.Length && formula[i] == '(';
+                if (!boolFollowedByParen && stripped.Equals("TRUE", StringComparison.OrdinalIgnoreCase)) { tokens.Add(new Token(TT.Bool, "TRUE")); continue; }
+                if (!boolFollowedByParen && stripped.Equals("FALSE", StringComparison.OrdinalIgnoreCase)) { tokens.Add(new Token(TT.Bool, "FALSE")); continue; }
 
                 // Unquoted sheet reference: SheetName!CellRef or SheetName!Range
                 if (i < formula.Length && formula[i] == '!')
