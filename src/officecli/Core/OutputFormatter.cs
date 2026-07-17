@@ -549,6 +549,23 @@ internal static class OutputFormatter
             return;
         }
 
+        // Pattern: batch item shape errors — "'add-part' command requires
+        // 'parent' field" / "Batch item missing required 'command' field".
+        if (System.Text.RegularExpressions.Regex.IsMatch(msg, @"requires '\w+(-\w+)?' field")
+            || msg.Contains("missing required"))
+        {
+            result.Code = "missing_property";
+            return;
+        }
+
+        // Pattern: "add-part extpart: 'data' is not valid base64" — malformed
+        // payload value, same semantic class as "Invalid <…>".
+        if (msg.Contains("is not valid base64"))
+        {
+            result.Code = "invalid_value";
+            return;
+        }
+
         // Pattern: "File not found: ..."
         if (ex is FileNotFoundException)
         {
