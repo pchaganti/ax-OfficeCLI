@@ -624,13 +624,20 @@ public partial class PowerPointHandler
             // fragment parses with its prefix bound; then lift the parsed children.
             const string aNs = "http://schemas.openxmlformats.org/drawingml/2006/main";
             var wrapped = $"<a:pPr xmlns:a=\"{aNs}\">{rawXml}</a:pPr>";
-            Drawing.ParagraphProperties parsed;
-            try { parsed = new Drawing.ParagraphProperties(wrapped); }
+            // Materialize the children INSIDE the try: the SDK parses the
+            // outer-XML constructor lazily, so a malformed fragment throws
+            // XmlException only when ChildElements is first enumerated —
+            // outside a constructor-only try it escaped the ArgumentException
+            // wrap and surfaced as internal_error with a misleading
+            // "corrupted OOXML part" message.
+            try
+            {
+                newChildren = new Drawing.ParagraphProperties(wrapped).ChildElements.ToList();
+            }
             catch (Exception ex)
             {
                 throw new ArgumentException($"Invalid 'bulletRaw' XML: '{rawXml}' ({ex.Message}).", ex);
             }
-            newChildren = parsed.ChildElements.ToList();
             foreach (var child in newChildren)
             {
                 if (child is OpenXmlUnknownElement || child is OpenXmlMiscNode)
