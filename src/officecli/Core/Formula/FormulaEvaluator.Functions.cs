@@ -711,8 +711,18 @@ internal partial class FormulaEvaluator
     private static FormulaResult? EvalNumberValue(List<object> args)
     {
         var s = args.Count > 0 && args[0] is FormulaResult r ? r.AsString() : "";
-        s = s.Replace(",", "").Replace(" ", "").Trim();
-        return double.TryParse(s, NumberStyles.Any, CultureInfo.InvariantCulture, out var v) ? FR(v) : FormulaResult.Error("#VALUE!");
+        // Excel NUMBERVALUE(text, [decimal_sep], [group_sep]) uses the first
+        // char of each separator; defaults match the en-US locale (. and ,).
+        string dec = args.Count > 1 && args[1] is FormulaResult d && d.AsString() != "" ? d.AsString() : ".";
+        string grp = args.Count > 2 && args[2] is FormulaResult g && g.AsString() != "" ? g.AsString() : ",";
+        s = s.Trim().Replace(" ", "");
+        s = s.Replace(grp[0].ToString(), "");        // drop group separators
+        s = s.Replace(dec[0].ToString(), ".");       // decimal separator -> '.'
+        int pct = 0;
+        while (s.EndsWith("%")) { pct++; s = s[..^1]; }   // trailing % scales by 1/100
+        return double.TryParse(s, NumberStyles.Any, CultureInfo.InvariantCulture, out var v)
+            ? FR(v / Math.Pow(100, pct))
+            : FormulaResult.Error("#VALUE!");
     }
 
     private FormulaResult? EvalTextJoin(List<object> args)
