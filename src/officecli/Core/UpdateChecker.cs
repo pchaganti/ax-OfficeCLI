@@ -60,16 +60,11 @@ internal static class UpdateChecker
         // config.json — so a refresh spawned under some other HOME (default
         // = enabled) could stage a .update that a later invocation applied
         // even though THIS user had autoUpdate off, silently swapping a
-        // version-pinned binary. When the setting is off, the pending file
-        // is deleted, not deferred — off means nothing changes the binary.
+        // version-pinned binary. When the setting is off, the staged file is
+        // left in place, just never applied by THIS user — deleting it would
+        // only make an enabled sibling process re-download it next cycle.
         if (config.AutoUpdate)
-        {
             ApplyPendingUpdate();
-        }
-        else
-        {
-            DiscardPendingUpdate();
-        }
 
         // Skill auto-refresh: if the running binary's version differs from the
         // last version that performed a refresh, push embedded skills from THIS
@@ -300,28 +295,6 @@ internal static class UpdateChecker
         // check, which ensures the *new* binary writes its own resources on
         // its first run.
         TryApplyPendingUpdate(exePath);
-    }
-
-    /// <summary>
-    /// Remove a staged <c>{exePath}.update</c> (and any <c>.update.partial</c>)
-    /// without applying it. Called when this user's autoUpdate is off: the
-    /// staged file may have been downloaded under another HOME whose config
-    /// defaults to enabled, and leaving it in place would let a later
-    /// invocation swap a version-pinned binary.
-    /// </summary>
-    private static void DiscardPendingUpdate()
-    {
-        try
-        {
-            var exePath = Environment.ProcessPath ?? Process.GetCurrentProcess().MainModule?.FileName;
-            if (exePath == null) return;
-            foreach (var suffix in new[] { ".update", ".update.partial" })
-            {
-                var p = exePath + suffix;
-                try { if (File.Exists(p)) File.Delete(p); } catch { /* best effort */ }
-            }
-        }
-        catch { /* best effort */ }
     }
 
     /// <summary>
