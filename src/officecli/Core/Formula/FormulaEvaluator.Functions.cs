@@ -1136,6 +1136,7 @@ internal partial class FormulaEvaluator
         {
             var cell = isRow ? lookupArr.Cells[0, i] : lookupArr.Cells[i, 0];
             if (cell == null) continue;
+            if (matchMode == 2) { if (WildcardMatch(lookupVal.AsString(), cell.AsString())) { found = i; break; } continue; }
             var cmp = CompareValues(cell, lookupVal);
             if (cmp == 0) { found = i; break; }
             if (matchMode == -1 && cmp < 0)
@@ -1153,16 +1154,26 @@ internal partial class FormulaEvaluator
         if (found < 0) found = bestApprox;
         if (found < 0) return ifNotFound ?? FormulaResult.Error("#N/A");
 
-        // Pull the value at `found` from return_array (same orientation as lookup_array).
+        // Pull from return_array at `found`. When return_array is 2D, XLOOKUP
+        // returns the whole matching line (a vertical lookup yields the found
+        // row across all columns; a horizontal lookup yields the found column
+        // across all rows), not just its first cell.
         if (isRow)
         {
-            if (found < returnArr.Cols) return returnArr.Cells[0, found] ?? FormulaResult.Number(0);
+            if (found >= returnArr.Cols) return FormulaResult.Error("#N/A");
+            if (returnArr.Rows == 1) return returnArr.Cells[0, found] ?? FormulaResult.Number(0);
+            var colCells = new FormulaResult?[returnArr.Rows, 1];
+            for (int rr = 0; rr < returnArr.Rows; rr++) colCells[rr, 0] = returnArr.Cells[rr, found];
+            return MakeArea(colCells);
         }
         else
         {
-            if (found < returnArr.Rows) return returnArr.Cells[found, 0] ?? FormulaResult.Number(0);
+            if (found >= returnArr.Rows) return FormulaResult.Error("#N/A");
+            if (returnArr.Cols == 1) return returnArr.Cells[found, 0] ?? FormulaResult.Number(0);
+            var rowCells = new FormulaResult?[1, returnArr.Cols];
+            for (int cc = 0; cc < returnArr.Cols; cc++) rowCells[0, cc] = returnArr.Cells[found, cc];
+            return MakeArea(rowCells);
         }
-        return FormulaResult.Error("#N/A");
     }
 
     private static FormulaResult? EvalAddress(List<object> args)

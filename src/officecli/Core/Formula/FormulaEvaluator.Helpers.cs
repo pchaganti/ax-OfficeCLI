@@ -401,6 +401,17 @@ internal partial class FormulaEvaluator
 
     // XMATCH — 1-based position of lookup value. matchMode 0 exact, -1/1 next
     // smaller/larger; searchMode -1 scans back-to-front.
+    // Excel wildcard match (XLOOKUP/XMATCH match_mode 2, also SEARCH-style):
+    // * = any run, ? = one char, ~ escapes the next wildcard. Case-insensitive.
+    private static bool WildcardMatch(string pattern, string text)
+    {
+        var rx = "^" + Regex.Escape(pattern)
+            .Replace(@"\~\*", "\x01").Replace(@"\~\?", "\x02")
+            .Replace(@"\*", ".*").Replace(@"\?", ".")
+            .Replace("\x01", @"\*").Replace("\x02", @"\?") + "$";
+        return Regex.IsMatch(text, rx, RegexOptions.IgnoreCase);
+    }
+
     private static FormulaResult? EvalXmatch(List<object> args)
     {
         if (args.Count < 2 || args[0] is not FormulaResult lookupVal) return null;
@@ -418,6 +429,7 @@ internal partial class FormulaEvaluator
         {
             var cell = isRow ? arr.Cells[0, i] : arr.Cells[i, 0];
             if (cell == null) continue;
+            if (matchMode == 2) { if (WildcardMatch(lookupVal.AsString(), cell.AsString())) { found = i; break; } continue; }
             var cmp = CompareValues(cell, lookupVal);
             if (cmp == 0) { found = i; break; }
             if (matchMode == -1 && cmp < 0) { var d = cell.AsNumber() - lookupVal.AsNumber(); if (d > bestDelta) { bestDelta = d; bestApprox = i; } }
