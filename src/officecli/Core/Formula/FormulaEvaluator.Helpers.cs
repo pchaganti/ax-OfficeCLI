@@ -116,6 +116,17 @@ internal partial class FormulaEvaluator
 
     private static double RoundUp(double v, int d) { var f = Math.Pow(10, d); return Math.Ceiling(Math.Abs(v) * f) / f * Math.Sign(v); }
     private static double RoundDown(double v, int d) { var f = Math.Pow(10, d); return Math.Floor(Math.Abs(v) * f) / f * Math.Sign(v); }
+    // Excel extracts HOUR/MINUTE/SECOND from a time rounded to the nearest
+    // second (so 12:14:58.56 reads 59s, not a truncated 58), carrying into the
+    // minute/hour when it rolls over. Rounding the whole serial keeps the three
+    // components consistent.
+    private static DateTime TimeRoundedToSecond(double serial)
+    {
+        long ticks = DateTime.FromOADate(serial).Ticks;
+        long half = TimeSpan.TicksPerSecond / 2;
+        return new DateTime((ticks + half) / TimeSpan.TicksPerSecond * TimeSpan.TicksPerSecond);
+    }
+
     private static double CeilingF(double v, double s) => s == 0 ? 0 : Math.Ceiling(v / s) * s;
     private static double FloorF(double v, double s) => s == 0 ? 0 : Math.Floor(v / s) * s;
 
