@@ -1370,7 +1370,33 @@ internal partial class FormulaEvaluator
         var d1 = args[0] is FormulaResult r1 ? DateTime.FromOADate(r1.AsNumber()) : DateTime.Today;
         var d2 = args[1] is FormulaResult r2 ? DateTime.FromOADate(r2.AsNumber()) : DateTime.Today;
         var unit = args[2] is FormulaResult r3 ? r3.AsString().ToUpperInvariant() : "D";
-        return unit switch { "D" => FR((d2 - d1).Days), "M" => FR((d2.Year - d1.Year) * 12 + d2.Month - d1.Month), "Y" => FR(d2.Year - d1.Year), _ => null };
+        if (d2 < d1) return FormulaResult.Error("#NUM!");
+        // Decompose the span into complete years/months and a day remainder,
+        // borrowing from the previous month when the day is negative.
+        int years = d2.Year - d1.Year, months = d2.Month - d1.Month, days = d2.Day - d1.Day;
+        if (days < 0)
+        {
+            months--;
+            var prev = new DateTime(d2.Year, d2.Month, 1).AddDays(-1);
+            days += DateTime.DaysInMonth(prev.Year, prev.Month);
+        }
+        if (months < 0) { months += 12; years--; }
+        // YD: days ignoring years — count from d1 to d2's month/day placed in
+        // d1's year (rolling to the next year when it falls before d1). Excel
+        // counts within d1's year, so a leap-year February is honored.
+        int ydDay = Math.Min(d2.Day, DateTime.DaysInMonth(d1.Year, d2.Month));
+        var anchor = new DateTime(d1.Year, d2.Month, ydDay);
+        if (anchor < d1) anchor = anchor.AddYears(1);
+        return unit switch
+        {
+            "Y" => FR(years),
+            "M" => FR(years * 12 + months),
+            "D" => FR((d2 - d1).Days),
+            "MD" => FR(days),
+            "YM" => FR(months),
+            "YD" => FR((anchor - d1).Days),
+            _ => FormulaResult.Error("#NUM!"),
+        };
     }
 
     private static FormulaResult? EvalNetworkDays(List<object> args)
