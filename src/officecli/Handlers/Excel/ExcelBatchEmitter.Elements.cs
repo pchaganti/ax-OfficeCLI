@@ -462,6 +462,20 @@ public static partial class ExcelBatchEmitter
                 props.Remove("height");
             }
 
+            // A chart with zero series and no cached literals transcribes to
+            // props with neither `data` nor dotted seriesN.values refs — and
+            // `add chart` hard-requires data, so emitting the row would make
+            // the whole dump unreplayable (atomic batch: one bad item fails
+            // the file). Skip the empty frame with an explicit warning
+            // instead; every other carrier degrades the same way.
+            if (!props.ContainsKey("data")
+                && !props.Keys.Any(k => System.Text.RegularExpressions.Regex.IsMatch(k, @"^series\d+\.values$")))
+            {
+                warnings.Add(new UnsupportedWarning("chart", chart.Path ?? sheetPath,
+                    "chart has no series data (empty plot area) — frame dropped on dump; `add chart` requires data"));
+                continue;
+            }
+
             items.Add(new BatchItem { Command = "add", Parent = sheetPath, Type = "chart", Props = props });
         }
     }
