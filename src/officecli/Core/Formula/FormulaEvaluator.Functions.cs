@@ -105,6 +105,7 @@ internal partial class FormulaEvaluator
             // ===== Statistical =====
             "MEDIAN" => CheckRangeErrors(args) ?? EvalMedian(nums()),
             "MODE" or "MODE_SNGL" => CheckRangeErrors(args) ?? EvalMode(nums()),
+            "MODE_MULT" => CheckRangeErrors(args) ?? EvalModeMult(nums()),
             "LARGE" => CheckRangeErrors(args) ?? EvalLarge(args), "SMALL" => CheckRangeErrors(args) ?? EvalSmall(args),
             "RANK" or "RANK_EQ" => CheckRangeErrors(args) ?? EvalRank(args),
             "RANK_AVG" => CheckRangeErrors(args) ?? EvalRankAvg(args),
@@ -225,7 +226,7 @@ internal partial class FormulaEvaluator
             "UPPER" => FR_S(str(0).ToUpperInvariant()),
             "LOWER" => FR_S(str(0).ToLowerInvariant()),
             "PROPER" => FR_S(CultureInfo.InvariantCulture.TextInfo.ToTitleCase(str(0).ToLowerInvariant())),
-            "REPT" => FR_S(string.Concat(Enumerable.Repeat(str(0), (int)num(1)))),
+            "REPT" => (int)num(1) < 0 || (long)str(0).Length * (int)num(1) > 32767 ? FormulaResult.Error("#VALUE!") : FR_S(string.Concat(Enumerable.Repeat(str(0), (int)num(1)))),
             // CHAR is defined only for codes 1..255; out-of-range is #VALUE!.
             "CHAR" => (int)num(0) is >= 1 and <= 255 ? FR_S(((char)(int)num(0)).ToString()) : FormulaResult.Error("#VALUE!"),
             "CODE" => str(0).Length > 0 ? FR((int)str(0)[0]) : FormulaResult.Error("#VALUE!"),
@@ -246,7 +247,7 @@ internal partial class FormulaEvaluator
             "REGEXEXTRACT" => EvalRegexExtract(args),
             "REGEXREPLACE" => EvalRegexReplace(args),
             "T" => arg(0) is { IsString: true } ? arg(0) : FR_S(""),
-            "N" => FR(num(0)),
+            "N" => arg(0) is { IsError: true } ? arg(0)! : arg(0) is { IsString: true } ? FR(0) : FR(num(0)),
             "FIXED" => EvalFixed(args),
             "NUMBERVALUE" => EvalNumberValue(args),
             "DOLLAR" => EvalCurrency(args, "$", 2),
@@ -320,7 +321,7 @@ internal partial class FormulaEvaluator
             // ===== Info =====
             "ISNUMBER" => FR_B(arg(0)?.IsNumeric == true),
             "ISTEXT" => FR_B(arg(0)?.IsString == true),
-            "ISBLANK" => FR_B(arg(0) == null || (arg(0)?.AsString() == "" && !arg(0)!.IsNumeric)),
+            "ISBLANK" => FR_B(arg(0) == null || arg(0)!.IsBlank),
             "ISERROR" => args.Count > 0 && AsRangeData(args[0]) is { } rd_err
                 ? FormulaResult.Array(rd_err.ToFlatResults().Select(r => r?.IsError == true ? 1.0 : 0.0).ToArray())
                 : FR_B(arg(0)?.IsError == true),
@@ -337,7 +338,7 @@ internal partial class FormulaEvaluator
             "ISFORMULA" => EvalIsFormula(args),
             "TYPE" => FR(arg(0) switch { { IsNumeric: true } => 1, { IsString: true } => 2, { IsBool: true } => 4, { IsError: true } => 16, _ => 1 }),
             "NA" => FormulaResult.Error("#N/A"),
-            "ERROR_TYPE" => FR(arg(0)?.ErrorValue switch { "#NULL!" => 1, "#DIV/0!" => 2, "#VALUE!" => 3, "#REF!" => 4, "#NAME?" => 5, "#NUM!" => 6, "#N/A" => 7, _ => 0 }),
+            "ERROR_TYPE" => arg(0)?.ErrorValue switch { "#NULL!" => FR(1), "#DIV/0!" => FR(2), "#VALUE!" => FR(3), "#REF!" => FR(4), "#NAME?" => FR(5), "#NUM!" => FR(6), "#N/A" => FR(7), _ => FormulaResult.Error("#N/A") },
 
             // ===== Conditional Aggregation =====
             "SUMIF" => EvalSumIf(args), "SUMIFS" => EvalSumIfs(args),
@@ -381,11 +382,11 @@ internal partial class FormulaEvaluator
 
             // ===== Conversion =====
             "CONVERT" => EvalConvert(num(0), str(1), str(2)),
-            "BIN2DEC" => FR(FromBaseSigned(str(0), 2)),
+            "BIN2DEC" => FromBase2Dec(str(0), 2),
             "DEC2BIN" => Dec2Base(num(0), 2, arg(1)),
-            "HEX2DEC" => FR(FromBaseSigned(str(0), 16)),
+            "HEX2DEC" => FromBase2Dec(str(0), 16),
             "DEC2HEX" => Dec2Base(num(0), 16, arg(1)),
-            "OCT2DEC" => FR(FromBaseSigned(str(0), 8)),
+            "OCT2DEC" => FromBase2Dec(str(0), 8),
             "DEC2OCT" => Dec2Base(num(0), 8, arg(1)),
             "BIN2HEX" => FR_S(Convert.ToString(Convert.ToInt64(str(0), 2), 16).ToUpperInvariant()),
             "BIN2OCT" => FR_S(Convert.ToString(Convert.ToInt64(str(0), 2), 8)),
@@ -632,6 +633,7 @@ internal partial class FormulaEvaluator
         if (args.Count > 3 && args[3] is FormulaResult r4)
         {
             var n = (int)r4.AsNumber(); var idx = -1;
+            if (n < 1) return FormulaResult.Error("#VALUE!");
             for (int i = 0; i < n; i++) { idx = s.IndexOf(old, idx + 1, StringComparison.Ordinal); if (idx < 0) return FR_S(s); }
             return FR_S(s[..idx] + neo + s[(idx + old.Length)..]);
         }
@@ -1210,8 +1212,22 @@ internal partial class FormulaEvaluator
         var row = (int)(args[0] is FormulaResult r ? r.AsNumber() : 1);
         var col = (int)(args[1] is FormulaResult r2 ? r2.AsNumber() : 1);
         var abs = args.Count > 2 && args[2] is FormulaResult r3 ? (int)r3.AsNumber() : 1;
-        var cs = IndexToCol(col);
-        return abs switch { 1 => FR_S($"${cs}${row}"), 2 => FR_S($"{cs}${row}"), 3 => FR_S($"${cs}{row}"), _ => FR_S($"{cs}{row}") };
+        // 4th arg selects A1 (default/TRUE) vs R1C1 (FALSE); 5th is a sheet name.
+        bool a1 = !(args.Count > 3 && args[3] is FormulaResult r4 && r4.AsNumber() == 0);
+        string sheet = args.Count > 4 && args[4] is FormulaResult r5 ? r5.AsString() : "";
+        string addr;
+        if (a1)
+        {
+            var cs = IndexToCol(col);
+            addr = abs switch { 1 => $"${cs}${row}", 2 => $"{cs}${row}", 3 => $"${cs}{row}", _ => $"{cs}{row}" };
+        }
+        else
+        {
+            string rPart = abs is 1 or 2 ? $"R{row}" : $"R[{row}]";
+            string cPart = abs is 1 or 3 ? $"C{col}" : $"C[{col}]";
+            addr = rPart + cPart;
+        }
+        return FR_S(string.IsNullOrEmpty(sheet) ? addr : sheet + "!" + addr);
     }
 
     // SHEET([value]) — 1-based position of a sheet in workbook tab order. No arg
@@ -1621,12 +1637,12 @@ internal partial class FormulaEvaluator
             days += DateTime.DaysInMonth(prev.Year, prev.Month);
         }
         if (months < 0) { months += 12; years--; }
-        // YD: days ignoring years — count from d1 to d2's month/day placed in
-        // d1's year (rolling to the next year when it falls before d1). Excel
-        // counts within d1's year, so a leap-year February is honored.
-        int ydDay = Math.Min(d2.Day, DateTime.DaysInMonth(d1.Year, d2.Month));
-        var anchor = new DateTime(d1.Year, d2.Month, ydDay);
-        if (anchor < d1) anchor = anchor.AddYears(1);
+        // YD: days ignoring whole years. Place d1's month/day in d2's year (or
+        // the prior year when d1's month/day falls after d2's), so a leap day
+        // lying between the two dates is counted (per OOXML/ODF day-count).
+        int ydYear = d2.Month > d1.Month || (d2.Month == d1.Month && d2.Day >= d1.Day) ? d2.Year : d2.Year - 1;
+        int ydDay = Math.Min(d1.Day, DateTime.DaysInMonth(ydYear, d1.Month));
+        var anchor = new DateTime(ydYear, d1.Month, ydDay);
         return unit switch
         {
             "Y" => FR(years),
@@ -1634,7 +1650,7 @@ internal partial class FormulaEvaluator
             "D" => FR((d2 - d1).Days),
             "MD" => FR(days),
             "YM" => FR(months),
-            "YD" => FR((anchor - d1).Days),
+            "YD" => FR((d2 - anchor).Days),
             _ => FormulaResult.Error("#NUM!"),
         };
     }
@@ -2006,7 +2022,9 @@ internal partial class FormulaEvaluator
         if (args.Count < 3) return null;
         var db = AsRangeData(args[0]);
         var crit = AsRangeData(args[2]);
-        if (db == null || crit == null || db.Rows < 2 || crit.Rows < 1) return null;
+        if (db == null || crit == null || db.Rows < 2) return null;
+        // A criteria range must have at least one condition row below its header.
+        if (crit.Rows < 2) return FormulaResult.Error("#VALUE!");
 
         // Resolve the aggregated column: numeric field = 1-based index, else
         // match a header (case-insensitive).
