@@ -297,7 +297,9 @@ internal partial class FormulaEvaluator
 
         void AddIfKept(FormulaResult? cell)
         {
-            bool blank = cell == null || cell.IsBlank || (cell.IsString && cell.StringValue == "");
+            // "ignore blanks" drops only genuinely empty cells, not an empty
+            // string "" (which is text and is kept, matching Excel).
+            bool blank = cell == null || cell.IsBlank;
             bool err = cell?.IsError == true;
             if ((ignore is 1 or 3) && blank) return;
             if ((ignore is 2 or 3) && err) return;
