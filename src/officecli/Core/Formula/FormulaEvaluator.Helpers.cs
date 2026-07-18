@@ -236,6 +236,17 @@ internal partial class FormulaEvaluator
         return FR(val);
     }
 
+    // For AGGREGATE ignore-error options: reduce a range/array arg to its
+    // non-error numeric values so the delegated aggregate never sees an error.
+    private static object StripErrorCells(object a)
+    {
+        if (a is FormulaResult { IsRange: true } fr)
+            return fr.RangeValue!.ToFlatResults().Where(c => c is { IsError: false, IsNumeric: true }).Select(c => c!.AsNumber()).ToArray();
+        if (a is RangeData rd)
+            return rd.ToFlatResults().Where(c => c is { IsError: false, IsNumeric: true }).Select(c => c!.AsNumber()).ToArray();
+        return a;
+    }
+
     private static FormulaResult? EvalModeMult(double[] v)
     {
         if (v.Length == 0) return null;

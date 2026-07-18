@@ -527,7 +527,14 @@ internal partial class FormulaEvaluator
             12 => "MEDIAN", 14 => "LARGE", 15 => "SMALL",
             _ => null
         };
-        return name == null ? null : EvalFunction(name, args.Skip(2).ToList());
+        if (name == null) return null;
+        // options 2/3/6/7 ignore error values; strip them from range/array args
+        // before aggregating so a computed array with error cells still works.
+        int options = args[1] is FormulaResult o ? (int)o.AsNumber() : 0;
+        var rest = args.Skip(2).ToList();
+        if (options is 2 or 3 or 6 or 7)
+            rest = rest.Select(StripErrorCells).ToList();
+        return EvalFunction(name, rest);
     }
 
     // WEEKDAY(serial, [return_type]). The return_type selects which day starts

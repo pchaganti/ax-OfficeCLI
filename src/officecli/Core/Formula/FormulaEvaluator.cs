@@ -765,7 +765,10 @@ internal partial class FormulaEvaluator
         while (p < t.Count && t[p].Type == TT.Op && t[p].Value is "+" or "-")
         { var op = t[p].Value; p++; var r = ParseMulDiv(t, ref p); if (r == null) return null;
           if (left.IsError) continue; if (r.IsError) { left = r; continue; }
-          left = ApplyBinaryOp(left, r, op == "+" ? (a, b) => a + b : (a, b) => a - b); }
+          Func<double, double, FormulaResult> f = op == "+"
+              ? (a, b) => FormulaResult.Number(a + b)
+              : (a, b) => FormulaResult.Number(a - b);
+          left = ApplyBinaryOp(left, r, f); }
         return left;
     }
 
@@ -775,16 +778,13 @@ internal partial class FormulaEvaluator
         while (p < t.Count && t[p].Type == TT.Op && t[p].Value is "*" or "/")
         { var op = t[p].Value; p++; var r = ParsePower(t, ref p); if (r == null) return null;
           if (left.IsError) continue; if (r.IsError) { left = r; continue; }
-          if (op == "/")
-          {
-              // Scalar-only div-by-zero gate. For array divisors, any zero produces
-              // +Inf rather than #DIV/0! — acceptable degradation; tighten if needed.
-              if (!HasArrayShape(r) && r.AsNumber() == 0) { left = FormulaResult.Error("#DIV/0!"); continue; }
-              left = ApplyBinaryOp(left, r, (a, b) => b == 0 ? double.PositiveInfinity : a / b);
-          }
-          else
-              left = ApplyBinaryOp(left, r, (a, b) => a * b);
-        }
+          // Division by zero is #DIV/0! per element (scalar → the whole result;
+          // array/range → only the zero-divisor cells, so aggregates can still
+          // ignore them and SUM propagates via CheckRangeErrors).
+          Func<double, double, FormulaResult> f = op == "/"
+              ? (a, b) => b == 0 ? FormulaResult.Error("#DIV/0!") : FormulaResult.Number(a / b)
+              : (a, b) => FormulaResult.Number(a * b);
+          left = ApplyBinaryOp(left, r, f); }
         return left;
     }
 
@@ -794,7 +794,8 @@ internal partial class FormulaEvaluator
         while (p < t.Count && t[p].Type == TT.Op && t[p].Value == "^")
         { p++; var e = ParseUnary(t, ref p); if (e == null) return null;
           if (b.IsError) return b; if (e.IsError) return e;
-          b = ApplyBinaryOp(b, e, ExcelPow); }
+          b = ApplyBinaryOp(b, e, (x, y) =>
+          { var pr = ExcelPow(x, y); return double.IsNaN(pr) || double.IsInfinity(pr) ? FormulaResult.Error("#NUM!") : FormulaResult.Number(pr); }); }
         return b;
     }
 
@@ -803,24 +804,58 @@ internal partial class FormulaEvaluator
     // row-major (empties treated as 0, matching Excel implicit-zero coercion).
     // Length mismatch in array+array uses Min(len) — Excel would emit #N/A, but
     // min-length is more lenient and only affects malformed inputs.
-    private static FormulaResult ApplyBinaryOp(FormulaResult left, FormulaResult right, Func<double, double, double> op)
+    // Element-wise binary op. Scalar+scalar returns a scalar; any array/range
+    // operand yields a 2-D Area that preserves shape AND per-element errors, so
+    // INDEX can address it, aggregates can ignore error cells, and SUM propagates
+    // them via CheckRangeErrors. A singleton row/column broadcasts; out-of-range
+    // positions in a mismatched pairing are #N/A.
+    private static FormulaResult ApplyBinaryOp(FormulaResult left, FormulaResult right, Func<double, double, FormulaResult> op)
     {
-        var la = AsArrayLike(left); var ra = AsArrayLike(right);
-        if (la == null && ra == null)
+        var lg = AsGrid(left); var rg = AsGrid(right);
+        if (lg == null && rg == null) return ElemOp(left, right, op);
+        int rows = Math.Max(lg?.GetLength(0) ?? 1, rg?.GetLength(0) ?? 1);
+        int cols = Math.Max(lg?.GetLength(1) ?? 1, rg?.GetLength(1) ?? 1);
+        var grid = new FormulaResult?[rows, cols];
+        for (int i = 0; i < rows; i++)
+            for (int j = 0; j < cols; j++)
+                grid[i, j] = ElemOp(CellAt(lg, left, i, j), CellAt(rg, right, i, j), op);
+        return FormulaResult.Area(new RangeData(grid));
+    }
+
+    // 2-D cell grid of an operand, or null for a scalar. A 1-D array is treated
+    // as a single row.
+    private static FormulaResult?[,]? AsGrid(FormulaResult r)
+    {
+        if (r.IsRange) return r.RangeValue!.Cells;
+        if (r.IsArray)
         {
-            // A scalar text operand that is not numeric-looking (including the
-            // empty string) is not coercible for arithmetic — the whole
-            // expression is #VALUE!. Numbers, booleans, blank cells (→0) and
-            // numeric-looking text still coerce.
-            if (!TryCoerceArithmetic(left, out var lv) || !TryCoerceArithmetic(right, out var rv))
-                return FormulaResult.Error("#VALUE!");
-            return FormulaResult.Number(op(lv, rv));
+            var a = r.ArrayValue!; var g = new FormulaResult?[1, a.Length];
+            for (int j = 0; j < a.Length; j++) g[0, j] = FormulaResult.Number(a[j]);
+            return g;
         }
-        if (la != null && ra == null) { var rn = right.AsNumber(); var o = new double[la.Length]; for (int i = 0; i < la.Length; i++) o[i] = op(la[i], rn); return FormulaResult.Array(o); }
-        if (la == null && ra != null) { var ln = left.AsNumber(); var o = new double[ra.Length]; for (int i = 0; i < ra.Length; i++) o[i] = op(ln, ra[i]); return FormulaResult.Array(o); }
-        var n = Math.Min(la!.Length, ra!.Length); var oo = new double[n];
-        for (int i = 0; i < n; i++) oo[i] = op(la[i], ra[i]);
-        return FormulaResult.Array(oo);
+        return null;
+    }
+
+    // Element at (i,j) with broadcasting: a null grid is the scalar; a singleton
+    // row/column repeats; anything else out of range is #N/A. A blank cell is 0.
+    private static FormulaResult CellAt(FormulaResult?[,]? g, FormulaResult scalar, int i, int j)
+    {
+        if (g == null) return scalar;
+        int gr = g.GetLength(0), gc = g.GetLength(1);
+        int ri = gr == 1 ? 0 : i, cj = gc == 1 ? 0 : j;
+        if (ri >= gr || cj >= gc) return FormulaResult.Error("#N/A");
+        return g[ri, cj] ?? FormulaResult.Number(0);
+    }
+
+    // Single-pair application: propagate an error operand, reject non-numeric
+    // text (#VALUE!), else run the numeric op.
+    private static FormulaResult ElemOp(FormulaResult a, FormulaResult b, Func<double, double, FormulaResult> op)
+    {
+        if (a.IsError) return a;
+        if (b.IsError) return b;
+        if (!TryCoerceArithmetic(a, out var av) || !TryCoerceArithmetic(b, out var bv))
+            return FormulaResult.Error("#VALUE!");
+        return op(av, bv);
     }
 
     private static bool HasArrayShape(FormulaResult r) => r.IsArray || r.IsRange;
