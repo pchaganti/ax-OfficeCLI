@@ -17,6 +17,13 @@ internal partial class FormulaEvaluator
         double num(int i) => arg(i)?.AsNumber() ?? 0;
         string str(int i) => arg(i)?.AsString() ?? "";
 
+        // Implicit array spilling: an element-wise scalar function applied to an
+        // array argument maps over each element and spills (Excel 365 behavior).
+        // Only opt-in functions lift; array-consuming functions (SUM, SORT,
+        // INDEX, lookups, ...) are excluded and handle arrays themselves.
+        if (LiftableScalarFunctions.Contains(name) && TryLiftOverArrays(name, args) is { } lifted)
+            return lifted;
+
         return name switch
         {
             // ===== Math & Aggregation =====
@@ -901,6 +908,84 @@ internal partial class FormulaEvaluator
         for (int r = 0; r < rows; r++)
             for (int c = 0; c < cols; c++) flat.Add(ValueToTextScalar(g[r, c], strict: false));
         return FR_S(string.Join(", ", flat));
+    }
+
+    // Element-wise scalar functions that lift over array arguments (implicit
+    // spilling). Every listed function takes only scalar arguments and returns a
+    // scalar — array-consuming functions (aggregates, lookups, dynamic arrays)
+    // are deliberately absent so they keep handling arrays themselves.
+    private static readonly HashSet<string> LiftableScalarFunctions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        // text
+        "UPPER", "LOWER", "PROPER", "TRIM", "CLEAN", "LEN", "LENB", "LEFT", "RIGHT",
+        "MID", "CHAR", "CODE", "UNICHAR", "UNICODE", "REPT", "VALUE", "NUMBERVALUE",
+        "TEXT", "FIXED", "EXACT", "FIND", "SEARCH", "SUBSTITUTE", "REPLACE", "T",
+        "ASC", "TEXTBEFORE", "TEXTAFTER", "DOLLAR", "YEN",
+        // math
+        "ABS", "SIGN", "INT", "TRUNC", "ROUND", "ROUNDUP", "ROUNDDOWN", "MROUND",
+        "CEILING", "CEILING_MATH", "CEILING_PRECISE", "ISO_CEILING", "FLOOR",
+        "FLOOR_MATH", "FLOOR_PRECISE", "EVEN", "ODD", "SQRT", "SQRTPI", "EXP", "LN",
+        "LOG", "LOG10", "POWER", "MOD", "QUOTIENT", "FACT", "FACTDOUBLE", "DEGREES",
+        "RADIANS", "SIN", "COS", "TAN", "ASIN", "ACOS", "ATAN", "ATAN2", "SINH",
+        "COSH", "TANH", "ASINH", "ACOSH", "ATANH", "SEC", "CSC", "COT", "SECH",
+        "CSCH", "COTH", "ACOT", "ACOTH", "GAMMA", "GAMMALN", "ERF", "ERFC", "DELTA",
+        "GESTEP", "ARABIC", "ROMAN", "COMBIN", "PERMUT",
+        // logical / info
+        "NOT", "ISNUMBER", "ISBLANK", "ISTEXT", "ISNONTEXT", "ISLOGICAL", "ISERR",
+        "ISERROR", "ISNA", "ISEVEN", "ISODD", "ISREF", "ISFORMULA", "N", "TYPE",
+        "ERROR_TYPE", "CHOOSE", "IFERROR", "IFNA",
+        // date / time
+        "DAY", "MONTH", "YEAR", "HOUR", "MINUTE", "SECOND", "WEEKDAY", "WEEKNUM",
+        "ISOWEEKNUM", "EDATE", "EOMONTH", "DATEVALUE", "TIMEVALUE", "DATE", "TIME",
+        "DATEDIF", "DAYS",
+        // bitwise / base conversion
+        "BITAND", "BITOR", "BITXOR", "BITLSHIFT", "BITRSHIFT", "DEC2BIN", "DEC2HEX",
+        "DEC2OCT", "BIN2DEC", "BIN2HEX", "BIN2OCT", "HEX2BIN", "HEX2DEC", "HEX2OCT",
+        "OCT2BIN", "OCT2DEC", "OCT2HEX",
+    };
+
+    // Map a liftable scalar function over its array arguments, broadcasting
+    // scalars and vectors against the result shape. Returns null when no
+    // argument is a multi-cell array (so the caller runs the normal scalar path).
+    private FormulaResult? TryLiftOverArrays(string name, List<object> args)
+    {
+        var grids = new FormulaResult?[args.Count][,];
+        int rows = 1, cols = 1;
+        bool anyArray = false;
+        for (int k = 0; k < args.Count; k++)
+        {
+            var g = ToGrid(args[k]);
+            if (g != null && (g.GetLength(0) > 1 || g.GetLength(1) > 1))
+            {
+                grids[k] = g;
+                anyArray = true;
+                rows = Math.Max(rows, g.GetLength(0));
+                cols = Math.Max(cols, g.GetLength(1));
+            }
+        }
+        if (!anyArray) return null;
+
+        var outc = new FormulaResult?[rows, cols];
+        for (int r = 0; r < rows; r++)
+            for (int c = 0; c < cols; c++)
+            {
+                var elemArgs = new List<object>(args.Count);
+                bool oob = false;
+                for (int k = 0; k < args.Count; k++)
+                {
+                    if (grids[k] is { } g)
+                    {
+                        int gr = g.GetLength(0), gc = g.GetLength(1);
+                        int rr = gr == 1 ? 0 : r, cc = gc == 1 ? 0 : c;   // vector broadcast
+                        if (rr >= gr || cc >= gc) { oob = true; break; }  // shorter array pads #N/A
+                        elemArgs.Add(g[rr, cc] ?? FormulaResult.Blank());
+                    }
+                    else elemArgs.Add(args[k]);
+                }
+                outc[r, c] = oob ? FormulaResult.Error("#N/A")
+                                 : EvalFunction(name, elemArgs) ?? FormulaResult.Error("#VALUE!");
+            }
+        return MakeArea(outc);
     }
 
     // ==================== Lookup ====================
