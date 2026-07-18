@@ -591,7 +591,8 @@ officecli get deck.pptx / --depth 2 --json
 officecli batch budget.xlsx --input updates.json --json
 
 # Import CSV data into an Excel sheet
-officecli add budget.xlsx / --type sheet --prop name="Q1 Data" --prop csv=sales.csv
+officecli add budget.xlsx / --type sheet --prop name="Q1 Data"
+officecli import budget.xlsx "/Q1 Data" sales.csv --header
 
 # Template merge for batch reports
 officecli merge invoice-template.docx invoice-001.docx '{"client":"Acme","total":"$5,200"}'

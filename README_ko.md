@@ -573,7 +573,8 @@ officecli get deck.pptx / --depth 2 --json
 officecli batch budget.xlsx --input updates.json --json
 
 # CSV 데이터를 Excel 시트로 가져오기
-officecli add budget.xlsx / --type sheet --prop name="Q1 Data" --prop csv=sales.csv
+officecli add budget.xlsx / --type sheet --prop name="Q1 Data"
+officecli import budget.xlsx "/Q1 Data" sales.csv --header
 
 # 템플릿 병합으로 보고서 일괄 생성
 officecli merge invoice-template.docx invoice-001.docx '{"client":"Acme","total":"$5,200"}'

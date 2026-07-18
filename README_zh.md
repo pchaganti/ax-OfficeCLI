@@ -585,7 +585,8 @@ officecli get deck.pptx / --depth 2 --json
 officecli batch budget.xlsx --input updates.json --json
 
 # 导入 CSV 数据到 Excel 工作表
-officecli add budget.xlsx / --type sheet --prop name="Q1 Data" --prop csv=sales.csv
+officecli add budget.xlsx / --type sheet --prop name="Q1 Data"
+officecli import budget.xlsx "/Q1 Data" sales.csv --header
 
 # 模板合并批量生成报告
 officecli merge invoice-template.docx invoice-001.docx '{"client":"Acme","total":"$5,200"}'
