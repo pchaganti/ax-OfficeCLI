@@ -104,6 +104,22 @@ public partial class ExcelHandler
         {
             var refSheet = sheets.Elements<Sheet>().ElementAt(pos);
             sheets.InsertBefore(newSheet, refSheet);
+
+            // localSheetId on <definedName> is a 0-based position into
+            // <sheets>; inserting mid-list shifts every sheet at/after the
+            // insert point up by one, so scoped names (printArea, print
+            // titles, scoped named ranges) must shift with them or they
+            // silently rebind to the sheet now occupying the old position.
+            var definedNames = GetWorkbook().GetFirstChild<DefinedNames>();
+            if (definedNames != null)
+            {
+                foreach (var dn in definedNames.Elements<DefinedName>())
+                {
+                    var lid = dn.LocalSheetId?.Value;
+                    if (lid.HasValue && lid.Value >= (uint)pos)
+                        dn.LocalSheetId = lid.Value + 1;
+                }
+            }
         }
         else
         {
