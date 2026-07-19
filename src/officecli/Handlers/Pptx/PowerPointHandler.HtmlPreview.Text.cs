@@ -187,8 +187,7 @@ public partial class PowerPointHandler
             if (paraTypeface != null && paraTypeface.StartsWith("+", StringComparison.Ordinal))
                 paraTypeface = ResolveThemeFontToken(placeholderPart, paraTypeface) ?? themeFontFallback;
             paraTypeface ??= themeFontFallback;
-            double singleRatio = paraTypeface != null ? FontMetricsReader.GetPitchRatio(paraTypeface) : 1.0;
-            if (singleRatio <= 1.0) singleRatio = 1.2;
+            double singleRatio = SingleSpacingPitch(paraTypeface);
             // R26-2: spaceBefore — explicit slide pPr wins; otherwise inherit the
             // master/layout lvlNpPr spcBef via the placeholder cascade.
             var sbElem = pProps?.GetFirstChild<Drawing.SpaceBefore>()

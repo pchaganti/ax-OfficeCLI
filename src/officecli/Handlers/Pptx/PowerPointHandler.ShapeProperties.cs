@@ -4027,15 +4027,8 @@ public partial class PowerPointHandler
         // estimating at 1.0× made the check miss real overflows that PowerPoint
         // visibly clips (issue #236). Resolve the ratio from the first run
         // typeface; unlocatable fonts fall back to the 1.2 Latin norm.
-        double singleRatio = 1.2;
-        var overflowRp = paragraphs.SelectMany(p => p.Elements<Drawing.Run>()).FirstOrDefault()?.RunProperties;
-        var overflowTypeface = overflowRp?.GetFirstChild<Drawing.LatinFont>()?.Typeface?.Value
-            ?? overflowRp?.GetFirstChild<Drawing.EastAsianFont>()?.Typeface?.Value;
-        if (overflowTypeface != null && !overflowTypeface.StartsWith("+", StringComparison.Ordinal))
-        {
-            var metricRatio = Core.FontMetricsReader.GetPitchRatio(overflowTypeface);
-            if (metricRatio > 1.0) singleRatio = metricRatio;
-        }
+        double singleRatio = SingleSpacingPitch(
+            paragraphs.SelectMany(p => p.Elements<Drawing.Run>()).FirstOrDefault()?.RunProperties);
         double lineHeight = fixedLineSpacingPt ?? fontSizePt * lineSpacingMultiplier * singleRatio;
         if (lineHeight <= 0) return null;
 
