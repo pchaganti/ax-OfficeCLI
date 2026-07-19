@@ -574,14 +574,19 @@ public partial class ExcelHandler
                     }
                     else
                     {
-                        var imgAlt = properties.GetValueOrDefault("image.alt")
-                            ?? properties.GetValueOrDefault("alt");
-                        if (imgAlt != null) Core.ParseHelpers.ValidateXmlText(imgAlt, "image.alt");
+                        // CONSISTENCY(picture-alt): alt is the project-wide
+                        // canonical key for image alt text — same input aliases
+                        // as the picture element; image.alt is a lenient extra.
+                        var imgAlt = properties.GetValueOrDefault("alt")
+                            ?? properties.GetValueOrDefault("altText")
+                            ?? properties.GetValueOrDefault("alttext")
+                            ?? properties.GetValueOrDefault("image.alt");
+                        if (imgAlt != null) Core.ParseHelpers.ValidateXmlText(imgAlt, "alt");
                         SetInCellImage(cell, value, imgAlt);
                     }
                     break;
                 }
-                case "image.alt" or "alt":
+                case "alt" or "alttext" or "image.alt":
                     // Consumed by the image case above via GetValueOrDefault;
                     // alone it has no target to attach to.
                     if (!properties.Keys.Any(k => k.Equals("image", StringComparison.OrdinalIgnoreCase)))

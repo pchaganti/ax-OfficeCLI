@@ -872,9 +872,12 @@ public partial class ExcelHandler
         if (properties.TryGetValue("image", out var inCellImg) && !string.IsNullOrEmpty(inCellImg)
             && !inCellImg.Equals("none", StringComparison.OrdinalIgnoreCase))
         {
-            var inCellAlt = properties.GetValueOrDefault("image.alt")
-                ?? properties.GetValueOrDefault("alt");
-            if (inCellAlt != null) Core.ParseHelpers.ValidateXmlText(inCellAlt, "image.alt");
+            // CONSISTENCY(picture-alt): same alt aliases as the picture element.
+            var inCellAlt = properties.GetValueOrDefault("alt")
+                ?? properties.GetValueOrDefault("altText")
+                ?? properties.GetValueOrDefault("alttext")
+                ?? properties.GetValueOrDefault("image.alt");
+            if (inCellAlt != null) Core.ParseHelpers.ValidateXmlText(inCellAlt, "alt");
             SetInCellImage(cell, inCellImg, inCellAlt);
         }
 

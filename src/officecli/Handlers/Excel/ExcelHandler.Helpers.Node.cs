@@ -368,8 +368,11 @@ public partial class ExcelHandler
         {
             node.Format["image.contentType"] = ici.ContentType;
             node.Format["image.fileSize"] = ici.FileSize;
+            // CONSISTENCY(picture-alt): bare `alt` is the project-wide
+            // canonical readback key for image alt text (picture nodes in all
+            // three handlers emit Format["alt"]).
             if (!string.IsNullOrEmpty(ici.Alt))
-                node.Format["image.alt"] = ici.Alt!;
+                node.Format["alt"] = ici.Alt!;
         }
         if (formula != null)
         {

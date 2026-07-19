@@ -762,28 +762,30 @@
     },
     "image": {
       "type": "string",
-      "description": "In-cell image (\"Place in Cell\" / Excel 365 richValue): the image becomes the CELL'S VALUE — formulas reading the cell see a non-blank value, unlike a floating picture (add --type picture) which leaves the cell empty. Accepts an image file path (raster only — no SVG). Stored as xl/richData _localImage; down-level Excel shows a #VALUE! fallback, Excel 365 renders the image. Use image=none on Set to remove. Get reports type=Image plus image.contentType / image.fileSize / image.alt.",
+      "description": "In-cell image (\"Place in Cell\" / Excel 365 richValue): the image becomes the CELL'S VALUE — formulas reading the cell see a non-blank value, unlike a floating picture (add --type picture) which leaves the cell empty. Accepts an image file path (raster only — no SVG). Stored as xl/richData _localImage; down-level Excel shows a #VALUE! fallback, Excel 365 renders the image. Use image=none on Set to remove. Get reports type=Image plus alt / image.contentType / image.fileSize.",
       "add": true,
       "set": true,
       "get": false,
       "examples": [
         "--prop image=photo.png",
-        "--prop image=photo.jpg \"image.alt=Site photo\"",
+        "--prop image=photo.jpg \"alt=Site photo\"",
         "--prop image=none"
       ],
       "enforcement": "report"
     },
-    "image.alt": {
+    "alt": {
       "type": "string",
-      "description": "Alt text for the in-cell image (rv Text key). Only valid alongside image=. Alias: alt.",
+      "description": "Alt text for the in-cell image (rv Text key). Only valid alongside image=. Same aliases as the picture element's alt. Aliases: altText, alttext, image.alt.",
       "aliases": [
-        "alt"
+        "altText",
+        "alttext",
+        "image.alt"
       ],
       "add": true,
       "set": true,
       "get": true,
       "examples": [
-        "--prop image=photo.png \"image.alt=Site photo\""
+        "--prop image=photo.png \"alt=Site photo\""
       ],
       "readback": "alt text as stored",
       "enforcement": "report"
