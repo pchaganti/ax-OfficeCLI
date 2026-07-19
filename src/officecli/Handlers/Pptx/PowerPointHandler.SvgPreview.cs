@@ -150,7 +150,9 @@ public partial class PowerPointHandler
         if (altChild == null) return;
         foreach (var inner in altChild.ChildElements)
         {
-            switch (inner)
+            // CONSISTENCY(mc-alt-coerce): see CoerceAltContentChild — untyped
+            // inside groups, typed at spTree level.
+            switch (CoerceAltContentChild(inner))
             {
                 case Shape shape:
                 {
