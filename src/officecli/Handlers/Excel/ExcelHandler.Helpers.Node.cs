@@ -343,6 +343,18 @@ public partial class ExcelHandler
 
         var displayText = GetCellDisplayValue(cell, evaluator);
 
+        // In-cell image ("Place in Cell" richValue): stored as t="e" #VALUE!
+        // with a vm pointer into xl/richData. Surface it as an Image cell
+        // instead of a bare error — the #VALUE! is only the down-level
+        // fallback, not the cell's meaning.
+        InCellImageInfo? inCellImage = null;
+        if (type == "Error" && cell.ValueMetaIndex != null && TryGetInCellImage(cell, out var imgInfo))
+        {
+            inCellImage = imgInfo;
+            type = "Image";
+            displayText = "[image]";
+        }
+
         var node = new DocumentNode
         {
             Path = $"/{sheetName}/{cellRef}",
@@ -352,6 +364,13 @@ public partial class ExcelHandler
         };
 
         node.Format["type"] = type;
+        if (inCellImage is { } ici)
+        {
+            node.Format["image.contentType"] = ici.ContentType;
+            node.Format["image.fileSize"] = ici.FileSize;
+            if (!string.IsNullOrEmpty(ici.Alt))
+                node.Format["image.alt"] = ici.Alt!;
+        }
         if (formula != null)
         {
             node.Format["formula"] = formula;

@@ -867,6 +867,17 @@ public partial class ExcelHandler
             }
         }
 
+        // In-cell image ("Place in Cell" richValue) during Add — parity with
+        // the Set cell `image=` case (ExcelHandler.Set.Cells.cs).
+        if (properties.TryGetValue("image", out var inCellImg) && !string.IsNullOrEmpty(inCellImg)
+            && !inCellImg.Equals("none", StringComparison.OrdinalIgnoreCase))
+        {
+            var inCellAlt = properties.GetValueOrDefault("image.alt")
+                ?? properties.GetValueOrDefault("alt");
+            if (inCellAlt != null) Core.ParseHelpers.ValidateXmlText(inCellAlt, "image.alt");
+            SetInCellImage(cell, inCellImg, inCellAlt);
+        }
+
         // CONSISTENCY(cell-prop-hints): mirror Set's CellPropHints check
         // here. Before the style filter runs, flag any ambiguous flat
         // keys (e.g. `color` — is it font.color or fill?) as unsupported.

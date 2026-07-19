@@ -562,6 +562,31 @@ public partial class ExcelHandler
                     }
                     break;
                 }
+                case "image":
+                {
+                    // In-cell image ("Place in Cell" richValue) — the image IS
+                    // the cell's value. CONSISTENCY(xlsx-hyperlink-cell-backed):
+                    // value-semantic media lands as a cell prop (like link=),
+                    // not on the floating picture element.
+                    if (string.IsNullOrEmpty(value) || value.Equals("none", StringComparison.OrdinalIgnoreCase))
+                    {
+                        RemoveInCellImage(cell);
+                    }
+                    else
+                    {
+                        var imgAlt = properties.GetValueOrDefault("image.alt")
+                            ?? properties.GetValueOrDefault("alt");
+                        if (imgAlt != null) Core.ParseHelpers.ValidateXmlText(imgAlt, "image.alt");
+                        SetInCellImage(cell, value, imgAlt);
+                    }
+                    break;
+                }
+                case "image.alt" or "alt":
+                    // Consumed by the image case above via GetValueOrDefault;
+                    // alone it has no target to attach to.
+                    if (!properties.Keys.Any(k => k.Equals("image", StringComparison.OrdinalIgnoreCase)))
+                        unsupported.Add($"{key} (only valid alongside image=)");
+                    break;
                 case "merge":
                 {
                     // CONSISTENCY(cell-merge): cell Add already accepts
