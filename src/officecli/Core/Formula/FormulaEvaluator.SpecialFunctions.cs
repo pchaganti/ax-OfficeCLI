@@ -131,7 +131,9 @@ internal partial class FormulaEvaluator
     // erf / erfc via the incomplete gamma relation (high precision):
     // erf(x) = P(1/2, x²) for x ≥ 0.
     internal static double Erf(double x) => x < 0 ? -RegGammaP(0.5, x * x) : RegGammaP(0.5, x * x);
-    internal static double Erfc(double x) => 1.0 - Erf(x);
+    // Q(1/2,x²) keeps the far tail (erfc(7)≈4e-23) instead of the 1-Erf form,
+    // which cancels to exactly 0 once Erf rounds to 1 at x ≳ 6.
+    internal static double Erfc(double x) => x < 0 ? 2.0 - RegGammaQ(0.5, x * x) : RegGammaQ(0.5, x * x);
 
     internal static double NormPdf(double z) => Math.Exp(-0.5 * z * z) / Sqrt2Pi;
     internal static double NormCdf(double z) => 0.5 * Erfc(-z / Sqrt2);
