@@ -1642,9 +1642,9 @@ internal static class FormulaParser
                     // Reuse main parsing logic for each element
                     if (tokens[pos].Type == TokenType.Text)
                     {
-                        var textEl = MakeMathRun(tokens[pos].Value);
+                        OpenXmlElement textEl = MakeMathRun(tokens[pos].Value);
                         pos++;
-                        textEl = (M.Run)TryAttachScript(tokens, ref pos, textEl);
+                        textEl = TryAttachScript(tokens, ref pos, textEl);
                         content.Add(textEl);
                     }
                     else if (tokens[pos].Type == TokenType.LBrace)
@@ -1671,9 +1671,9 @@ internal static class FormulaParser
                     else if (tokens[pos].Type == TokenType.LBracket || tokens[pos].Type == TokenType.RBracket)
                     {
                         var bracketText = tokens[pos].Type == TokenType.LBracket ? "[" : "]";
-                        var bracketRun = MakeMathRun(bracketText);
+                        OpenXmlElement bracketRun = MakeMathRun(bracketText);
                         pos++;
-                        bracketRun = (M.Run)TryAttachScript(tokens, ref pos, bracketRun);
+                        bracketRun = TryAttachScript(tokens, ref pos, bracketRun);
                         content.Add(bracketRun);
                     }
                     else
