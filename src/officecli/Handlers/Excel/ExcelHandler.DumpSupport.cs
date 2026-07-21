@@ -758,6 +758,11 @@ public partial class ExcelHandler
     /// SVG dual-representation aware: when the blip carries an
     /// asvg:svgBlip extension, the TRUE source is the SVG part (the r:embed
     /// PNG is just the fallback AddPicture regenerates on replay).
+    ///
+    /// CONSISTENCY(picture-inline-base64): floating-picture bytes ride the same
+    /// inline `data:<contentType>;base64,<bytes>` carrier as the in-cell image
+    /// and the pptx/word picture round-trip (PptxBatchEmitter.Media.cs) — no
+    /// sidecar file, so a dump script stays self-contained.
     /// </summary>
     public string? GetDumpPictureDataUri(string sheetName, int index)
     {
