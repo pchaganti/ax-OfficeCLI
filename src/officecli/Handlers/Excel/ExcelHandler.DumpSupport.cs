@@ -134,6 +134,10 @@ public partial class ExcelHandler
                 var raw = cell.CellValue?.Text;
                 if (!string.IsNullOrEmpty(raw))
                     cellNode.Format["__raw"] = raw;
+                // CONSISTENCY(picture-inline-base64): in-cell image bytes ride
+                // the same inline `data:<contentType>;base64,<bytes>` carrier as
+                // the pptx/word picture round-trip (PptxBatchEmitter.Media.cs) —
+                // no sidecar file, so a dump script stays self-contained.
                 // Image bytes are dump-only: normal Get keeps its compact
                 // metadata surface instead of embedding a large data URI.
                 if (cellNode.Format.TryGetValue("type", out var cellType)
