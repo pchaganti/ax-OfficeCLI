@@ -89,6 +89,17 @@
       ],
       "enforcement": "report"
     },
+    "poster": {
+      "type": "boolean",
+      "description": "When true, grow the PAGE (this section) to the diagram's natural size instead of fitting a long flowchart into the current page as an unreadable sliver. Word caps a page edge at 22in (55.88cm), so a very long chart is still limited — split it past that. Default false — the page size is preserved and the diagram is scaled to fit.",
+      "add": true,
+      "set": false,
+      "get": false,
+      "examples": [
+        "--prop poster=true"
+      ],
+      "enforcement": "report"
+    },
     "theme": {
       "type": "string",
       "description": "mermaid color theme (image render only): default (light), dark, neutral, forest, base. Baked into the source as frontmatter, so it round-trips in alt-text and a regenerate reproduces it. Ignored by render=native. Uses the ESM mermaid build, loaded from the CDN (a styled diagram currently needs network on render; plain diagrams stay offline-cached).",
