@@ -91,12 +91,13 @@
     },
     "poster": {
       "type": "boolean",
-      "description": "When true, grow the PAGE (this section) to the diagram's natural size instead of fitting a long flowchart into the current page as an unreadable sliver. Word caps a page edge at 22in (55.88cm), so a very long chart is still limited — split it past that. Default false — the page size is preserved and the diagram is scaled to fit.",
+      "description": "Controls page growth for a long diagram. UNSET (default) = ADAPTIVE: the diagram fits the current page, but if fitting would shrink it below readability it auto-grows the section's page to the diagram's natural size instead (clamped to Word's 22in/55.88cm max; split a very long chart past that). true = always grow the page. false = always fit the current page even if the result is tiny. Ignored when an explicit width/height is given.",
       "add": true,
       "set": false,
       "get": false,
       "examples": [
-        "--prop poster=true"
+        "--prop poster=true",
+        "--prop poster=false"
       ],
       "enforcement": "report"
     },

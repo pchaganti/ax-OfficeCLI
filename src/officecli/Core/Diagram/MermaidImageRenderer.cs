@@ -86,6 +86,32 @@ public static class MermaidImageRenderer
     public const string SourceTag = "mermaid:";
 
     /// <summary>
+    /// Readability floor for the adaptive one-page default: the smallest fit scale
+    /// at which a diagram shrunk to fit a single page/slide stays legible. Mermaid's
+    /// default node text is ~16px (=12pt at 96 DPI); shrinking it by this factor
+    /// lands near 6.5pt — about the floor for readable print. When one-page fit
+    /// would drop below this, the caller grows the canvas (poster) instead so a long
+    /// flowchart does not become an unreadable sliver.
+    /// </summary>
+    public const double ReadableFitFloor = 0.55;
+
+    /// <summary>
+    /// Adaptive-default decision: would fitting a diagram of natural pixel size
+    /// (<paramref name="wPx"/>×<paramref name="hPx"/>) into a one-page box
+    /// (<paramref name="boxWcm"/>×<paramref name="boxHcm"/>) shrink it below the
+    /// readability floor? The raster px are read as 96-DPI CSS pixels. True → the
+    /// caller should grow the canvas rather than fit. False (incl. degenerate
+    /// inputs) → fit to one page is fine.
+    /// </summary>
+    public static bool ExceedsOnePageReadably(double wPx, double hPx, double boxWcm, double boxHcm)
+    {
+        if (wPx <= 0 || hPx <= 0 || boxWcm <= 0 || boxHcm <= 0) return false;
+        double natWcm = wPx / 96.0 * 2.54, natHcm = hPx / 96.0 * 2.54;
+        double s = Math.Min(boxWcm / natWcm, boxHcm / natHcm);
+        return s < ReadableFitFloor;
+    }
+
+    /// <summary>
     /// Bake the requested style options into the mermaid source as a leading
     /// <c>--- config: … ---</c> frontmatter block, so they render AND round-trip
     /// (the composed source is what gets stamped into alt-text). Returns the

@@ -231,16 +231,34 @@ public partial class PowerPointHandler
             {
                 using var s = System.IO.File.OpenRead(imgPath);
                 var dims = OfficeCli.Core.ImageSource.TryGetDimensions(s);
-                // poster: grow the SLIDE to the whole diagram instead of shrinking a
-                // long flowchart into an unreadable sliver on the fixed slide. Mirrors
-                // the native path's poster branch (which only AddDiagramNative honored
-                // before — on the image path poster was silently dropped). The raster
-                // px are read as 96-DPI CSS pixels; both axes are clamped, aspect
-                // preserved, to PowerPoint's maximum slide edge (56in / 142.24cm) so
-                // an extremely long chart yields a valid — if tall — single slide
-                // rather than a file PowerPoint refuses to open.
-                if (dims is { Width: > 0, Height: > 0 } pd
-                    && OfficeCli.Core.ParseHelpers.IsTruthy(properties.GetValueOrDefault("poster")))
+
+                // poster resolution. Explicit poster=true always grows the slide;
+                // poster=false always fits one slide. When poster is UNSET, the
+                // ADAPTIVE DEFAULT grows the slide only when fitting the diagram to
+                // the slide would shrink it below the readability floor (a long
+                // flowchart otherwise becomes a 1cm sliver) — a normal diagram still
+                // fits the slide unchanged. Auto-poster stands down when the caller
+                // pinned an explicit box (x/y/width/height): that is an explicit
+                // placement request, honor it.
+                bool posterSet = properties.ContainsKey("poster");
+                bool posterOn = OfficeCli.Core.ParseHelpers.IsTruthy(properties.GetValueOrDefault("poster"));
+                bool hasExplicitBox = pic.ContainsKey("width") || pic.ContainsKey("height")
+                                      || pic.ContainsKey("x") || pic.ContainsKey("y");
+                bool grow = posterOn;
+                if (!posterSet && !hasExplicitBox && dims is { Width: > 0, Height: > 0 } ad)
+                {
+                    var (sw0, sh0) = GetSlideSize();
+                    double m0 = 0.6 * CmToEmu;
+                    grow = OfficeCli.Core.Diagram.MermaidImageRenderer.ExceedsOnePageReadably(
+                        ad.Width, ad.Height, (sw0 - 2 * m0) / CmToEmu, (sh0 - 2 * m0) / CmToEmu);
+                }
+
+                // Grow the SLIDE to the whole diagram. The raster px are read as
+                // 96-DPI CSS pixels; both axes are clamped, aspect preserved, to
+                // PowerPoint's maximum slide edge (56in / 142.24cm) so an extremely
+                // long chart yields a valid — if tall — single slide rather than a
+                // file PowerPoint refuses to open.
+                if (grow && dims is { Width: > 0, Height: > 0 } pd)
                 {
                     double wCm = pd.Width / 96.0 * 2.54, hCm = pd.Height / 96.0 * 2.54;
                     double clamp = Math.Min(1.0, MaxSlideEdgeCm / Math.Max(wCm, hCm));

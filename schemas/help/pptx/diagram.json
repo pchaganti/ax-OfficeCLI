@@ -96,12 +96,13 @@
     },
     "poster": {
       "type": "boolean",
-      "description": "When true, grow the SLIDE to the diagram's natural size instead of fitting the diagram into the slide (export-a-diagram-as-a-slide model). Ignores x/y/width/height. Default false — the slide size is preserved.",
+      "description": "Controls slide growth for a long diagram. UNSET (default) = ADAPTIVE: the diagram fits the current slide, but if fitting would shrink it below readability it auto-grows the slide to the diagram's natural size instead (clamped to PowerPoint's 56in/142.24cm max). true = always grow the slide (export-a-diagram-as-a-slide). false = always fit the current slide even if the result is tiny. Ignored when an explicit x/y/width/height box is given.",
       "add": true,
       "set": false,
       "get": false,
       "examples": [
-        "--prop poster=true"
+        "--prop poster=true",
+        "--prop poster=false"
       ],
       "enforcement": "report"
     },

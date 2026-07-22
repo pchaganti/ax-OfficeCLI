@@ -218,22 +218,36 @@ public partial class WordHandler
             // document (the diagram is the content) the whole page becomes the poster;
             // mixed content in the same section shares the grown page (the explicit
             // opt-in's tradeoff, mirroring pptx growing the one slide).
-            if (OfficeCli.Core.ParseHelpers.IsTruthy(properties.GetValueOrDefault("poster")))
+            // poster resolution mirrors the pptx path: explicit poster=true always
+            // grows the page; poster=false always fits the page; UNSET is the
+            // ADAPTIVE DEFAULT — grow the page only when fitting the diagram to the
+            // page would shrink it below the readability floor. Auto-poster stands
+            // down when the caller pinned an explicit width/height.
             {
+                bool posterSet = properties.ContainsKey("poster");
+                bool posterOn = OfficeCli.Core.ParseHelpers.IsTruthy(properties.GetValueOrDefault("poster"));
+                bool hasExplicitBox = pic.ContainsKey("width") || pic.ContainsKey("height");
                 using (var s = System.IO.File.OpenRead(imgPath))
                 {
                     var dims = OfficeCli.Core.ImageSource.TryGetDimensions(s);
                     if (dims is { Width: > 0, Height: > 0 } d)
                     {
-                        const double maxPageEdgeCm = 55.88; // Word's 22in page limit
-                        const double marginCm = 0.5;
-                        double wCm = d.Width / 96.0 * 2.54, hCm = d.Height / 96.0 * 2.54;
-                        double clamp = Math.Min(1.0, (maxPageEdgeCm - 2 * marginCm) / Math.Max(wCm, hCm));
-                        wCm *= clamp; hCm *= clamp;
-                        SetLastSectionPageCm(wCm + 2 * marginCm, hCm + 2 * marginCm, marginCm);
-                        pic["width"] = wCm.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture) + "cm";
-                        pic.Remove("height"); // aspect preserved
-                        return AddPicture(parent, parentPath, index, pic);
+                        bool grow = posterOn
+                            || (!posterSet && !hasExplicitBox
+                                && MermaidImageRenderer.ExceedsOnePageReadably(
+                                    d.Width, d.Height, SectionContentWidthCm(), SectionContentHeightCm()));
+                        if (grow)
+                        {
+                            const double maxPageEdgeCm = 55.88; // Word's 22in page limit
+                            const double marginCm = 0.5;
+                            double wCm = d.Width / 96.0 * 2.54, hCm = d.Height / 96.0 * 2.54;
+                            double clamp = Math.Min(1.0, (maxPageEdgeCm - 2 * marginCm) / Math.Max(wCm, hCm));
+                            wCm *= clamp; hCm *= clamp;
+                            SetLastSectionPageCm(wCm + 2 * marginCm, hCm + 2 * marginCm, marginCm);
+                            pic["width"] = wCm.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture) + "cm";
+                            pic.Remove("height"); // aspect preserved
+                            return AddPicture(parent, parentPath, index, pic);
+                        }
                     }
                 }
             }
