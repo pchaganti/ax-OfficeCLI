@@ -231,6 +231,27 @@ public partial class PowerPointHandler
             {
                 using var s = System.IO.File.OpenRead(imgPath);
                 var dims = OfficeCli.Core.ImageSource.TryGetDimensions(s);
+                // poster: grow the SLIDE to the whole diagram instead of shrinking a
+                // long flowchart into an unreadable sliver on the fixed slide. Mirrors
+                // the native path's poster branch (which only AddDiagramNative honored
+                // before — on the image path poster was silently dropped). The raster
+                // px are read as 96-DPI CSS pixels; both axes are clamped, aspect
+                // preserved, to PowerPoint's maximum slide edge (56in / 142.24cm) so
+                // an extremely long chart yields a valid — if tall — single slide
+                // rather than a file PowerPoint refuses to open.
+                if (dims is { Width: > 0, Height: > 0 } pd
+                    && OfficeCli.Core.ParseHelpers.IsTruthy(properties.GetValueOrDefault("poster")))
+                {
+                    double wCm = pd.Width / 96.0 * 2.54, hCm = pd.Height / 96.0 * 2.54;
+                    double clamp = Math.Min(1.0, MaxSlideEdgeCm / Math.Max(wCm, hCm));
+                    wCm *= clamp; hCm *= clamp;
+                    SetSlideSizeCm(wCm, hCm);
+                    long cxp = (long)(wCm * CmToEmu), cyp = (long)(hCm * CmToEmu);
+                    pic["x"] = "0"; pic["y"] = "0";
+                    pic["width"] = cxp.ToString();
+                    pic["height"] = cyp.ToString();
+                    return AddPicture(parentPath, index, pic);
+                }
                 if (dims is { Width: > 0, Height: > 0 } d)
                 {
                     var (sw, sh) = GetSlideSize();
@@ -341,10 +362,18 @@ public partial class PowerPointHandler
         return Math.Min(w, 5.0) + 0.4;
     }
 
+    // PowerPoint refuses to open a deck whose slide edge exceeds 56 inches
+    // (=142.24cm =51206400 EMU). poster sizing clamps to this.
+    private const double MaxSlideEdgeCm = 142.24;
+
     private void SetSlideSizeCm(double wCm, double hCm)
     {
         var pres = _doc?.PresentationPart?.Presentation;
         if (pres == null) return;
+        // Clamp each edge to PowerPoint's maximum so an oversized poster (a very
+        // long flowchart grown to its natural size) still yields an openable file.
+        wCm = Math.Min(wCm, MaxSlideEdgeCm);
+        hCm = Math.Min(hCm, MaxSlideEdgeCm);
         pres.SlideSize ??= new SlideSize();
         pres.SlideSize.Cx = (int)Math.Round(wCm * CmToEmu);
         pres.SlideSize.Cy = (int)Math.Round(hCm * CmToEmu);
