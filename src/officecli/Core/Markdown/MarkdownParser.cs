@@ -410,9 +410,30 @@ public static class MarkdownParser
     {
         var t = line.Trim();
         if (t.StartsWith("|")) t = t[1..];
-        if (t.EndsWith("|")) t = t[..^1];
-        // NOTE: escaped \| inside cells is not yet handled — MVP scope.
-        foreach (var part in t.Split('|')) yield return part.Trim();
+        // Strip the trailing border pipe only when it is UNESCAPED.
+        if (t.EndsWith("|") && (BackslashRunBefore(t, t.Length - 1) & 1) == 0)
+            t = t[..^1];
+        // Split only on an UNESCAPED '|' (a '|' preceded by an odd number of
+        // backslashes is a GFM-escaped literal cell character, not a column
+        // separator). The backslash escapes themselves are resolved downstream
+        // by ParseInlines (EscapablePunct handling), so cells are returned
+        // verbatim here — no double-unescape.
+        int start = 0;
+        for (int k = 0; k < t.Length; k++)
+        {
+            if (t[k] != '|' || (BackslashRunBefore(t, k) & 1) == 1) continue;
+            yield return t[start..k].Trim();
+            start = k + 1;
+        }
+        yield return t[start..].Trim();
+    }
+
+    /// <summary>Count of consecutive backslashes immediately before index <paramref name="at"/>.</summary>
+    private static int BackslashRunBefore(string s, int at)
+    {
+        int n = 0, j = at - 1;
+        while (j >= 0 && s[j] == '\\') { n++; j--; }
+        return n;
     }
 
     // ─────────────────────────── inline ───────────────────────────
