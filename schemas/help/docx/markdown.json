@@ -22,7 +22,7 @@
   "properties": {
     "markdown": {
       "type": "string",
-      "description": "Markdown source text to expand. Canonical key (mirrors diagram's 'mermaid' / equation's 'formula'). Aliases: text, md.",
+      "description": "Markdown source text to expand. Canonical key (mirrors diagram's 'mermaid' / equation's 'formula'). Aliases: text, md. MULTILINE INPUT: a literal newline is required between blocks — inside plain double quotes '\\n' is the two characters backslash+n (it does NOT become a newline) and the whole thing collapses into one paragraph. Use bash/zsh $'...' ANSI-C quoting (which turns \\n into a real newline) or pass a file with src=.",
       "aliases": [
         "text",
         "md"
@@ -31,8 +31,8 @@
       "set": false,
       "get": false,
       "examples": [
-        "--prop markdown=\"# Title\\n\\n- one\\n- two\"",
-        "--prop text=\"1. First\\n2. Second\""
+        "--prop markdown=$'# Title\\n\\n- one\\n- two'",
+        "--prop text=$'1. First\\n2. Second'"
       ],
       "enforcement": "report"
     },
