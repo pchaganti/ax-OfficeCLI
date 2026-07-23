@@ -544,6 +544,33 @@ public static class MarkdownParser
     /// it. So here the first opener sees the <c>~~~</c> barrier before any clean
     /// closer and stays literal, while the second region pairs on its own.
     /// </summary>
+    /// <summary>
+    /// A backtick run at <paramref name="i"/> opens an inline code span closed
+    /// by a run of EXACTLY the same length (CommonMark §6.1); runs of other
+    /// lengths in between are literal content. Sets <paramref name="openLen"/>
+    /// (the opening run length, always) and, on success, <paramref
+    /// name="closeStart"/> (index of the closing run). Returns false when there
+    /// is no equal-length closer (the opening run is then literal text).
+    /// Single source of truth shared by the main inline scanner and
+    /// <see cref="HasReachableTwoTildeCloser"/> so "where does a code span end"
+    /// is judged identically everywhere.
+    /// </summary>
+    private static bool TryMatchCodeSpan(string s, int i, out int openLen, out int closeStart)
+    {
+        openLen = 1;
+        while (i + openLen < s.Length && s[i + openLen] == '`') openLen++;
+        closeStart = -1;
+        for (int j = i + openLen; j < s.Length; )
+        {
+            if (s[j] != '`') { j++; continue; }
+            int runLen = 1;
+            while (j + runLen < s.Length && s[j + runLen] == '`') runLen++;
+            if (runLen == openLen) { closeStart = j; return true; }
+            j += runLen; // wrong-length run is literal content — skip it
+        }
+        return false;
+    }
+
     private static bool HasReachableTwoTildeCloser(string s, int from)
     {
         int i = from;
@@ -554,13 +581,14 @@ public static class MarkdownParser
             // ever sees it, so a ~~ buried inside a code span is never a real
             // closer — skip the whole span here too, or the opener would be told
             // a closer exists and open a strike that can never close (bleeding
-            // strike into all trailing text). Mirror the main scanner: a
-            // backtick with a later backtick is a span (skip past it); an
-            // unterminated backtick is literal (advance one).
+            // strike into all trailing text). Uses the SAME equal-length-run
+            // matcher as the main scanner (shared TryMatchCodeSpan) so the two
+            // sites can never disagree on where a code span ends.
             if (s[i] == '`')
             {
-                int close = s.IndexOf('`', i + 1);
-                i = close > i ? close + 1 : i + 1;
+                i = TryMatchCodeSpan(s, i, out int openLen, out int closeStart)
+                    ? closeStart + openLen   // skip past the whole span
+                    : i + openLen;           // no equal-length closer: run is literal
                 continue;
             }
             if (s[i] != '~') { i++; continue; }
@@ -655,24 +683,12 @@ public static class MarkdownParser
             // unterminated `` `` `` also stays literal, per CommonMark).
             if (c == '`')
             {
-                int openLen = 1;
-                while (pos + openLen < text.Length && text[pos + openLen] == '`') openLen++;
-                int contentStart = pos + openLen;
-                int closeStart = -1;
-                for (int j = contentStart; j < text.Length; )
-                {
-                    if (text[j] != '`') { j++; continue; }
-                    int runLen = 1;
-                    while (j + runLen < text.Length && text[j + runLen] == '`') runLen++;
-                    if (runLen == openLen) { closeStart = j; break; }
-                    j += runLen; // wrong-length run is literal content — skip it
-                }
-                if (closeStart >= 0)
+                if (TryMatchCodeSpan(text, pos, out int openLen, out int closeStart))
                 {
                     Flush();
                     spans.Add(new MdSpan
                     {
-                        Text = text[contentStart..closeStart],
+                        Text = text[(pos + openLen)..closeStart],
                         Code = true, Bold = bold, Italic = italic, Strike = strike,
                     });
                     pos = closeStart + openLen;
