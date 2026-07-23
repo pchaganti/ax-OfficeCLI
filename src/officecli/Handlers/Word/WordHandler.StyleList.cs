@@ -1492,7 +1492,7 @@ public partial class WordHandler
     /// the body scan, which always missed (body has no list paras when adding to a header)
     /// and a fresh numId was minted per paragraph.
     /// </summary>
-    private int? FindContinuationNumId(bool isBullet, Paragraph? targetPara = null, OpenXmlElement? containerHint = null)
+    private int? FindContinuationNumId(bool isBullet, Paragraph? targetPara = null, OpenXmlElement? containerHint = null, int targetLevel = 0)
     {
         // Resolution order for the scan container:
         //   1. explicit hint from caller (Add path passes the still-detached para's
@@ -1509,29 +1509,45 @@ public partial class WordHandler
         container ??= _doc.MainDocumentPart?.Document?.Body;
         if (container == null) return null;
 
-        // Continue from the paragraph IMMEDIATELY before the target (the
-        // documented "immediately preceding list" rule). When the target is
-        // already in the tree (Set path), that is its previous Paragraph
-        // sibling; when it is still detached (Add path, inserted only after
-        // ApplyListStyle runs), the container's last paragraph IS the
-        // predecessor. The old code always took the container's LAST paragraph,
-        // so `set listStyle=ordered` on a mid-document paragraph compared
-        // against the document's final paragraph instead of the real
-        // predecessor and minted a fresh numId per call (1,1,2 for three
-        // adjacent items set one-by-one, instead of 1,2,3).
-        var lastPara = targetPara?.Parent != null
-            ? targetPara.ElementsBefore().OfType<Paragraph>().LastOrDefault()
-            : container.Elements<Paragraph>().LastOrDefault(p => !ReferenceEquals(p, targetPara));
-        if (lastPara == null) return null;
+        // Continue from the preceding list paragraph at the SAME nesting level
+        // (the documented "immediately preceding list" rule, extended to survive
+        // a nested sub-list of a different type). When the target is already in
+        // the tree (Set path) the predecessors are its earlier siblings; when it
+        // is still detached (Add path, inserted only after ApplyListStyle runs)
+        // every container element is a predecessor.
+        //
+        // Walking strictly the immediately preceding paragraph broke ordered
+        // lists interrupted by a deeper bullet sub-list: after
+        //   1. item1 / (bullet) nested a / 2. item2
+        // the predecessor of "item2" (ilvl 0) is the bullet "nested a" (ilvl 1),
+        // whose type doesn't match, so a fresh numId was minted and Word
+        // restarted numbering at 1. We instead skip deeper-level paragraphs
+        // (ilvl > target) and compare against the nearest paragraph at the
+        // target level or shallower. A non-list paragraph or a same/shallower-
+        // level paragraph of a different list type terminates the scan (no
+        // continuation). Only paragraphs are considered — a trailing body-level
+        // sectPr (Add path, target still detached before the sectPr) or other
+        // non-paragraph siblings are skipped, matching the previous
+        // OfType<Paragraph> predecessor selection.
+        IEnumerable<Paragraph> preceding = targetPara?.Parent != null
+            ? targetPara.ElementsBefore().OfType<Paragraph>()
+            : container.Elements<Paragraph>().Where(p => !ReferenceEquals(p, targetPara));
 
-        var numProps = lastPara.ParagraphProperties?.NumberingProperties;
-        var prevNumId = numProps?.NumberingId?.Val?.Value;
-        if (prevNumId == null || prevNumId == 0) return null;
+        foreach (var prevPara in preceding.Reverse())
+        {
+            var numProps = prevPara.ParagraphProperties?.NumberingProperties;
+            var prevNumId = numProps?.NumberingId?.Val?.Value;
+            if (prevNumId == null || prevNumId == 0)
+                return null; // non-list paragraph terminates the run
 
-        var fmt = GetNumberingFormat(prevNumId.Value, 0);
-        var prevIsBullet = fmt.ToLowerInvariant() == "bullet";
-        if (prevIsBullet == isBullet)
-            return prevNumId.Value;
+            var prevLevel = numProps?.NumberingLevelReference?.Val?.Value ?? 0;
+            if (prevLevel > targetLevel)
+                continue; // deeper nested item — skip and keep looking
+
+            var fmt = GetNumberingFormat(prevNumId.Value, 0);
+            var prevIsBullet = fmt.ToLowerInvariant() == "bullet";
+            return prevIsBullet == isBullet ? prevNumId.Value : (int?)null;
+        }
 
         return null;
     }
@@ -1551,11 +1567,12 @@ public partial class WordHandler
         // paragraph so the scan walks the right container (body / header / footer).
         // The Add path supplies containerHint because the para is still detached
         // when ApplyListStyle runs (insertion happens after).
-        var continuationNumId = FindContinuationNumId(isBullet, para, containerHint);
+        var targetIlvl = listLevel ?? para.ParagraphProperties?.NumberingProperties?.NumberingLevelReference?.Val?.Value ?? 0;
+        var continuationNumId = FindContinuationNumId(isBullet, para, containerHint, targetIlvl);
         if (continuationNumId != null && startValue == null)
         {
             var pProps = para.ParagraphProperties ?? para.PrependChild(new ParagraphProperties());
-            var ilvl = listLevel ?? para.ParagraphProperties?.NumberingProperties?.NumberingLevelReference?.Val?.Value ?? 0;
+            var ilvl = targetIlvl;
             pProps.NumberingProperties = new NumberingProperties
             {
                 NumberingId = new NumberingId { Val = continuationNumId.Value },
