@@ -644,20 +644,44 @@ public static class MarkdownParser
                 continue;
             }
 
-            // inline code `...` (only with a closing backtick AND non-empty
-            // content; else literal). An empty span (`` `` ``, or the adjacent
-            // pair in `a``b`) is not a code span — the backticks must survive as
-            // literal text, never evaporate.
+            // inline code: a backtick RUN is closed by a run of EXACTLY the same
+            // length (CommonMark §6.1) — this is how a literal backtick is
+            // embedded (`` `` a ` b `` `` uses a length-2 fence around a lone
+            // backtick). We used to treat every single backtick as a delimiter,
+            // so the inner literal backtick closed the span early and the tail
+            // leaked. Measure the opening run; scan for an equal-length closing
+            // run (runs of other lengths inside are literal content); if none,
+            // the whole opening run is emitted literally (no char lost — so an
+            // unterminated `` `` `` also stays literal, per CommonMark).
             if (c == '`')
             {
-                int end = text.IndexOf('`', pos + 1);
-                if (end > pos + 1)
+                int openLen = 1;
+                while (pos + openLen < text.Length && text[pos + openLen] == '`') openLen++;
+                int contentStart = pos + openLen;
+                int closeStart = -1;
+                for (int j = contentStart; j < text.Length; )
+                {
+                    if (text[j] != '`') { j++; continue; }
+                    int runLen = 1;
+                    while (j + runLen < text.Length && text[j + runLen] == '`') runLen++;
+                    if (runLen == openLen) { closeStart = j; break; }
+                    j += runLen; // wrong-length run is literal content — skip it
+                }
+                if (closeStart >= 0)
                 {
                     Flush();
-                    spans.Add(new MdSpan { Text = text[(pos + 1)..end], Code = true, Bold = bold, Italic = italic, Strike = strike });
-                    pos = end + 1;
+                    spans.Add(new MdSpan
+                    {
+                        Text = text[contentStart..closeStart],
+                        Code = true, Bold = bold, Italic = italic, Strike = strike,
+                    });
+                    pos = closeStart + openLen;
                     continue;
                 }
+                // No equal-length closer: the opening run is literal text.
+                buf.Append('`', openLen);
+                pos += openLen;
+                continue;
             }
 
             // image ![alt](url) — no picture is embedded (inline markdown is
