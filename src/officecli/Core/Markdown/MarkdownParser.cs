@@ -98,8 +98,17 @@ public static class MarkdownParser
                 continue;
             }
 
-            // table: a pipe row immediately followed by a delimiter row
-            if (LooksLikeTableRow(line) && i + 1 < lines.Length && TableDelimRe.IsMatch(lines[i + 1]))
+            // table: a pipe row immediately followed by a delimiter row. A line
+            // that is itself a list/blockquote marker YIELDS to those blocks —
+            // after LooksLikeTableRow was widened to "any interior pipe", a
+            // common `- cost | benefit` list item (or `> a|b` quote) followed by
+            // a delimiter-shaped line was otherwise swallowed whole into a table
+            // with the marker leaking as literal cell text. A real table row
+            // never starts with a `-`/`*`/`+`/`N.`/`>` marker, so this only
+            // reclaims the misfire.
+            if (LooksLikeTableRow(line)
+                && !UnorderedRe.IsMatch(line) && !OrderedRe.IsMatch(line) && !QuoteRe.IsMatch(line)
+                && i + 1 < lines.Length && TableDelimRe.IsMatch(lines[i + 1]))
             {
                 var table = ParseTable(lines, ref i);
                 doc.Blocks.Add(table);
