@@ -640,11 +640,14 @@ public static class MarkdownParser
                 continue;
             }
 
-            // inline code `...` (only with a closing backtick; else literal)
+            // inline code `...` (only with a closing backtick AND non-empty
+            // content; else literal). An empty span (`` `` ``, or the adjacent
+            // pair in `a``b`) is not a code span — the backticks must survive as
+            // literal text, never evaporate.
             if (c == '`')
             {
                 int end = text.IndexOf('`', pos + 1);
-                if (end > pos)
+                if (end > pos + 1)
                 {
                     Flush();
                     spans.Add(new MdSpan { Text = text[(pos + 1)..end], Code = true, Bold = bold, Italic = italic, Strike = strike });
