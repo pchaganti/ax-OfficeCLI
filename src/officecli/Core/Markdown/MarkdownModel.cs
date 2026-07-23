@@ -42,6 +42,12 @@ public sealed class MdParagraph : MdBlock
 public sealed class MdList : MdBlock
 {
     public bool Ordered { get; init; }
+    /// <summary>
+    /// Starting ordinal for an ordered list (CommonMark: the first item's
+    /// number). 1 for unordered lists and for ordered lists that begin at 1.
+    /// A list beginning "3." renders 3., 4., 5. …
+    /// </summary>
+    public int Start { get; init; } = 1;
     public List<MdListItem> Items { get; init; } = new();
 }
 

@@ -289,6 +289,12 @@ public partial class WordHandler
             {
                 props["liststyle"] = listStyle;
                 props["level"] = level;
+                // CommonMark: an ordered list starts at its first item's ordinal.
+                // Pass start= only for a non-default start so the numId is minted
+                // with the right <w:start>; a start of 1 is left implicit to
+                // preserve cross-block list continuation (start= forces a mint).
+                if (list.Ordered && list.Start != 1)
+                    props["start"] = list.Start.ToString();
             }
             var p = Add(parentPath, "paragraph", posFor(), props);
             harvestDiagnostics(); // this Add() reset diagnostics — capture before the next

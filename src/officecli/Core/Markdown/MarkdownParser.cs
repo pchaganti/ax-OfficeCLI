@@ -37,6 +37,11 @@ public static class MarkdownParser
     // content or end-of-line, so `**x` (no space) never matches.
     private static readonly Regex UnorderedRe = new(@"^(\s*)[-*+](?:\s+(.*))?$");
     private static readonly Regex OrderedRe = new(@"^(\s*)\d+[.)](?:\s+(.*))?$");
+    // Extracts the ordinal of an ordered marker (`3.` -> 3). Kept separate from
+    // OrderedRe so its group layout (1=indent, 2=content, shared with
+    // UnorderedRe) is undisturbed. CommonMark starts an ordered list at its
+    // FIRST item's number, so a list beginning "3." renders 3., 4., 5. …
+    private static readonly Regex OrderedNumRe = new(@"^\s*(\d+)[.)]");
     private static readonly Regex FenceRe = new(@"^\s*```+\s*([\w+-]*)\s*$");
     // A fence opener sharing its line with a leading list marker (`1. ``` `,
     // `- ```python`). Handled inside ParseList so the fence becomes nested code
@@ -205,7 +210,17 @@ public static class MarkdownParser
     private static MdList ParseList(string[] lines, ref int i, int baseIndent)
     {
         bool ordered = OrderedRe.IsMatch(lines[i]);
-        var list = new MdList { Ordered = ordered };
+        // Ordered lists begin at their FIRST item's ordinal (CommonMark). The
+        // ParseList entry line is that first item, so read its number here; a
+        // fresh list opened by `2. next` (after a top-level fence terminated the
+        // previous list) must render from 2, not a hardcoded 1.
+        int start = 1;
+        if (ordered)
+        {
+            var num = OrderedNumRe.Match(lines[i]);
+            if (num.Success && int.TryParse(num.Groups[1].Value, out var s) && s >= 0) start = s;
+        }
+        var list = new MdList { Ordered = ordered, Start = start };
         MdListItem? current = null;
 
         while (i < lines.Length)
