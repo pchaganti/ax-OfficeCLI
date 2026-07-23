@@ -452,9 +452,15 @@ public static class MarkdownParser
         length = 0;
         if (start >= text.Length || text[start] != '[') return false;
 
+        // Bracket/paren depth counting is escape-aware: a bracket or paren
+        // preceded by an ODD backslash run is a literal (escaped) character per
+        // CommonMark, not a depth-affecting delimiter — otherwise an escaped
+        // ')' in a URL (a\)b) prematurely closed the destination and leaked the
+        // tail as unlinked text.
         int depth = 0, labelEnd = -1;
         for (int i = start; i < text.Length; i++)
         {
+            if ((BackslashRunBefore(text, i) & 1) == 1) continue;
             if (text[i] == '[') depth++;
             else if (text[i] == ']') { if (--depth == 0) { labelEnd = i; break; } }
         }
@@ -466,15 +472,39 @@ public static class MarkdownParser
         int pdepth = 0, destEnd = -1;
         for (int i = p; i < text.Length; i++)
         {
+            if ((BackslashRunBefore(text, i) & 1) == 1) continue;
             if (text[i] == '(') pdepth++;
             else if (text[i] == ')') { if (--pdepth == 0) { destEnd = i; break; } }
         }
         if (destEnd < 0) return false;
 
+        // Label is kept RAW — it is re-parsed by ParseInlines, which resolves
+        // its backslash escapes. The dest bypasses ParseInlines, so resolve its
+        // escapes here (once — no double-unescape).
         label = text[(start + 1)..labelEnd];
-        dest = text[(p + 1)..destEnd];
+        dest = UnescapePunct(text[(p + 1)..destEnd]);
         length = destEnd + 1 - start;
         return true;
+    }
+
+    /// <summary>
+    /// Resolve CommonMark backslash escapes in a string that does NOT pass
+    /// through <see cref="ParseInlines"/> (e.g. a link destination): '\' before
+    /// ASCII punctuation becomes that punctuation; '\' before anything else (or
+    /// at end) stays literal.
+    /// </summary>
+    private static string UnescapePunct(string s)
+    {
+        if (s.IndexOf('\\') < 0) return s;
+        var sb = new StringBuilder(s.Length);
+        for (int i = 0; i < s.Length; i++)
+        {
+            if (s[i] == '\\' && i + 1 < s.Length && EscapablePunct.IndexOf(s[i + 1]) >= 0)
+                sb.Append(s[++i]);
+            else
+                sb.Append(s[i]);
+        }
+        return sb.ToString();
     }
 
     /// <summary>
