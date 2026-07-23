@@ -198,7 +198,13 @@ public static class MarkdownParser
 
     // ─────────────────────────── tables ───────────────────────────
 
-    private static bool LooksLikeTableRow(string line) => line.TrimStart().StartsWith("|") || line.Contains(" | ");
+    // A header/body row candidate: a leading pipe, OR any interior pipe. GFM
+    // does NOT require spaces around header pipes ("H1|H2" is a valid header),
+    // so a space-flanked " | " check wrongly rejected unspaced headers. Any
+    // pipe qualifies; the real gate is the caller's requirement that the NEXT
+    // line be a delimiter row (TableDelimRe), which keeps prose that merely
+    // contains a '|' from being misread as a table.
+    private static bool LooksLikeTableRow(string line) => line.Contains('|');
 
     private static MdTable ParseTable(string[] lines, ref int i)
     {
