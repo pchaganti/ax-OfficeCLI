@@ -1616,7 +1616,11 @@ public partial class WordHandler
         for (int lvl = 0; lvl < 9; lvl++)
         {
             var level = new Level { LevelIndex = lvl };
-            level.AppendChild(new StartNumberingValue { Val = (lvl == 0 && startValue.HasValue) ? startValue.Value : 1 });
+            // Apply the caller's start override to the level the paragraph
+            // actually binds to (its ilvl), not hardcoded level 0 — a list bound
+            // to level 1+ (e.g. a nested ordered markdown list, or a plain
+            // `--prop level=1 start=5`) otherwise silently lost its start.
+            level.AppendChild(new StartNumberingValue { Val = (lvl == (listLevel ?? 0) && startValue.HasValue) ? startValue.Value : 1 });
 
             if (isBullet)
             {
