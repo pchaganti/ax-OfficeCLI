@@ -137,8 +137,10 @@ public static class MarkdownParser
                 continue;
             }
 
-            // list (ordered or unordered)
-            if (UnorderedRe.IsMatch(line) || OrderedRe.IsMatch(line))
+            // list (ordered or unordered). A bare marker with no following
+            // indented content is NOT a list opener (see IsListItemStart) — it
+            // falls through to the paragraph gather as literal text.
+            if (IsListItemStart(lines, i))
             {
                 var list = ParseList(lines, ref i, baseIndent: 0);
                 doc.Blocks.Add(list);
@@ -156,7 +158,7 @@ public static class MarkdownParser
             while (i < lines.Length && lines[i].Trim().Length > 0
                    && !HeadingRe.IsMatch(lines[i]) && !FenceRe.IsMatch(lines[i])
                    && !RuleRe.IsMatch(lines[i]) && !QuoteRe.IsMatch(lines[i])
-                   && !UnorderedRe.IsMatch(lines[i]) && !OrderedRe.IsMatch(lines[i])
+                   && !IsListItemStart(lines, i)
                    && !IsTableStart(i))
             {
                 if (para.Length > 0) para.Append(' ');
@@ -171,6 +173,35 @@ public static class MarkdownParser
 
     // ─────────────────────────── lists ───────────────────────────
 
+    /// <summary>
+    /// Does line <paramref name="at"/> genuinely OPEN a list item? A marker with
+    /// inline text always does. A BARE marker (`-`, `1.` with no text) only does
+    /// when the immediately following line is that item's own indented content
+    /// (a fence, a nested marker, or indented text) — otherwise a lone dash /
+    /// number line sitting in prose must degrade to literal paragraph text
+    /// rather than INVENT an empty list item. (A blank line before the content
+    /// is a "loose list" — deliberately left unsupported, a known limitation —
+    /// so the content must be on the very next line.)
+    /// </summary>
+    private static bool IsListItemStart(string[] lines, int at)
+    {
+        var m = UnorderedRe.Match(lines[at]);
+        var o = OrderedRe.Match(lines[at]);
+        if (!m.Success && !o.Success) return false;
+        var match = m.Success ? m : o;
+
+        if (match.Groups[2].Success && match.Groups[2].Value.Trim().Length > 0)
+            return true; // has inline content
+
+        int markerIndent = match.Groups[1].Value.Length;
+        int j = at + 1;
+        if (j >= lines.Length) return false;
+        var next = lines[j];
+        if (next.Trim().Length == 0) return false;               // blank → loose, unsupported
+        int nextIndent = next.Length - next.TrimStart().Length;
+        return nextIndent > markerIndent;                        // next line is the item's content
+    }
+
     private static MdList ParseList(string[] lines, ref int i, int baseIndent)
     {
         bool ordered = OrderedRe.IsMatch(lines[i]);
@@ -182,7 +213,10 @@ public static class MarkdownParser
             var lf = ListFenceRe.Match(lines[i]);
             var m = UnorderedRe.Match(lines[i]);
             var o = OrderedRe.Match(lines[i]);
-            if (!m.Success && !o.Success)
+            // A bare marker with no following indented content is not a list
+            // item (IsListItemStart) — treat it like a non-marker line so it
+            // ends the list and degrades to a paragraph at the caller.
+            if (!IsListItemStart(lines, i))
             {
                 // A next-line indented fence is the current item's code content
                 // (the README "1. Step\n   ```bash\n   …\n   ```" step shape).
