@@ -192,6 +192,15 @@ public partial class WordHandler
         // then surface the merged per-block diagnostics to the caller.
         var result = firstPath ?? Add(parentPath, "paragraph", PosFor(),
             new(StringComparer.OrdinalIgnoreCase) { ["text"] = "" });
+
+        // Advisory: links/images are flattened to plain text in this expander
+        // (no w:hyperlink relationship, no embedded picture — a documented
+        // limitation, real import is a v2 item). Surface a warning instead of
+        // truncating silently (the gap has been re-reported repeatedly).
+        int flattened = CountFlattenedReferences(doc);
+        if (flattened > 0)
+            accWarnings.Add($"{flattened} link/image reference(s) flattened to plain text (hyperlink/image import lands in v2)");
+
         LastAddWarnings = accWarnings;
         LastAddUnsupportedProps = accUnsupported;
         LastUnrecognizedLatex = accLatex;
@@ -359,6 +368,50 @@ public partial class WordHandler
             foreach (var child in item.Children)
                 AddFlowList(parentPath, child, depth + 1, record, posFor, pendingInline, harvestDiagnostics);
         }
+    }
+
+    /// <summary>
+    /// Count link/image references that the expander flattens to plain text
+    /// (every span carries the source Href; the handler drops it — no
+    /// w:hyperlink / picture). Counts maximal runs of consecutive same-Href
+    /// spans, so one construct (even with split inline formatting) counts once.
+    /// </summary>
+    private static int CountFlattenedReferences(MarkdownDocument doc)
+    {
+        int n = 0;
+        void Scan(List<MdSpan> spans)
+        {
+            string? prev = null;
+            foreach (var s in spans)
+            {
+                if (s.Href != null && s.Href != prev) n++;
+                prev = s.Href;
+            }
+        }
+        void ScanList(MdList l)
+        {
+            foreach (var it in l.Items)
+            {
+                Scan(it.Inlines);
+                foreach (var ch in it.Children) ScanList(ch);
+            }
+        }
+        foreach (var b in doc.Blocks)
+        {
+            switch (b)
+            {
+                case MdParagraph p: Scan(p.Inlines); break;
+                case MdHeading h: Scan(h.Inlines); break;
+                case MdBlockQuote q: Scan(q.Inlines); break;
+                case MdList l: ScanList(l); break;
+                case MdTable t:
+                    foreach (var cell in t.Header) Scan(cell);
+                    foreach (var row in t.Rows)
+                        foreach (var cell in row) Scan(cell);
+                    break;
+            }
+        }
+        return n;
     }
 
     private string AddFlowTable(string parentPath, MdTable t, InsertPosition? pos)
