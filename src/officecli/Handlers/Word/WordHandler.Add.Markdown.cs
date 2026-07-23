@@ -167,7 +167,7 @@ public partial class WordHandler
             foreach (var kv in extra) props[kv.Key] = kv.Value;
 
         var path = Add(parentPath, "paragraph", pos, props);
-        if (inlines.Any(s => s.Bold || s.Italic || s.Code))
+        if (inlines.Any(s => s.Bold || s.Italic || s.Code || s.Strike))
             pendingInline.Add((path, inlines)); // formatted in phase 2 (perf)
         return path;
     }
@@ -192,7 +192,7 @@ public partial class WordHandler
 
             var path = Add(parentPath, "paragraph", posFor(), props);
             record(path);
-            if (item.Inlines.Any(s => s.Bold || s.Italic || s.Code))
+            if (item.Inlines.Any(s => s.Bold || s.Italic || s.Code || s.Strike))
                 pendingInline.Add((path, item.Inlines)); // formatted in phase 2 (perf)
 
             // All nested segments, in order — one item can own several
@@ -250,6 +250,7 @@ public partial class WordHandler
             var rPr = baseProps != null ? (RunProperties)baseProps.CloneNode(true) : new RunProperties();
             if (span.Bold) rPr.Bold ??= new Bold();
             if (span.Italic) rPr.Italic ??= new Italic();
+            if (span.Strike) rPr.Strike ??= new Strike();
             if (span.Code) rPr.RunFonts = new RunFonts { Ascii = "Consolas", HighAnsi = "Consolas" };
             if (rPr.HasChildren) run.AppendChild(rPr);
 

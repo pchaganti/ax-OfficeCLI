@@ -90,11 +90,13 @@ public sealed class MdSpan
     public bool Bold { get; init; }
     public bool Italic { get; init; }
     public bool Code { get; init; }
+    /// <summary>GFM strikethrough (<c>~~text~~</c>).</summary>
+    public bool Strike { get; init; }
     /// <summary>Hyperlink target for <c>[text](url)</c>, or null.</summary>
     public string? Href { get; init; }
 
     public MdSpan With(string text) => new()
     {
-        Text = text, Bold = Bold, Italic = Italic, Code = Code, Href = Href,
+        Text = text, Bold = Bold, Italic = Italic, Code = Code, Strike = Strike, Href = Href,
     };
 }
