@@ -265,6 +265,41 @@ public partial class WordHandler
         // Nesting maps to the numbering ilvl via `level` (0-based, capped 0-8).
         var listStyle = list.Ordered ? "ordered" : "unordered";
         var level = Math.Clamp(depth, 0, 8).ToString();
+
+        // Decide THIS list's numId once. The first item's marker paragraph is
+        // created via `liststyle` (which mints — or continues from a preceding
+        // block-level list — a numId); its assigned numId is captured and reused
+        // EXPLICITLY (numId=) for every subsequent item. Otherwise an item whose
+        // content includes code paragraphs (Normal style) would break
+        // FindContinuationNumId's "scan back to the previous list paragraph"
+        // guess — the code paragraph terminates the scan, so the next item minted
+        // a fresh numId and real Word restarted numbering (e.g. "1." then "1.").
+        // Reusing one numId for all siblings keeps a single list. (Nested child
+        // lists recurse and decide their own numId independently.)
+        int? listNumId = null;
+
+        string AddMarkerParagraph(Dictionary<string, string> props)
+        {
+            if (listNumId is int reuse)
+            {
+                props["numId"] = reuse.ToString();
+                props["numlevel"] = level;
+            }
+            else
+            {
+                props["liststyle"] = listStyle;
+                props["level"] = level;
+            }
+            var p = Add(parentPath, "paragraph", posFor(), props);
+            harvestDiagnostics(); // this Add() reset diagnostics — capture before the next
+            record(p);
+            if (listNumId == null
+                && NavigateToElement(ParsePath(p)) is Paragraph para
+                && para.ParagraphProperties?.NumberingProperties?.NumberingId?.Val?.Value is int nid)
+                listNumId = nid;
+            return p;
+        }
+
         foreach (var item in list.Items)
         {
             // markerPlaced tracks whether the list number/bullet has been
@@ -278,13 +313,9 @@ public partial class WordHandler
             {
                 var props = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
                 {
-                    ["liststyle"] = listStyle,
-                    ["level"] = level,
                     ["text"] = string.Concat(item.Inlines.Select(s => s.Text)),
                 };
-                var path = Add(parentPath, "paragraph", posFor(), props);
-                harvestDiagnostics(); // this Add() reset diagnostics — capture before the next
-                record(path);
+                var path = AddMarkerParagraph(props);
                 if (item.Inlines.Any(s => s.Bold || s.Italic || s.Code || s.Strike))
                     pendingInline.Add((path, item.Inlines)); // formatted in phase 2 (perf)
                 markerPlaced = true;
@@ -292,7 +323,8 @@ public partial class WordHandler
 
             // Fenced code content of the item — each line its own Consolas
             // paragraph (monospace, indent already stripped by the parser). The
-            // first line carries the list number when the item had no text.
+            // first line carries the list number when the item had no text; the
+            // rest are plain (no numbering).
             foreach (var cb in item.CodeBlocks)
             {
                 foreach (var codeLine in cb.Code.Split('\n'))
@@ -304,13 +336,15 @@ public partial class WordHandler
                     };
                     if (!markerPlaced)
                     {
-                        props["liststyle"] = listStyle;
-                        props["level"] = level;
+                        AddMarkerParagraph(props);
                         markerPlaced = true;
                     }
-                    var path = Add(parentPath, "paragraph", posFor(), props);
-                    harvestDiagnostics();
-                    record(path);
+                    else
+                    {
+                        var path = Add(parentPath, "paragraph", posFor(), props);
+                        harvestDiagnostics();
+                        record(path);
+                    }
                 }
             }
 
