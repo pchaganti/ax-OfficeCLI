@@ -135,6 +135,22 @@ public partial class WordHandler
         // whole index).
         if (parent is Body) ClearBodyChildIndex();
 
+        // --after/--before poisons the cache mid-Add: ResolveAnchorPosition
+        // navigates to the anchor, which REBUILDS the child-index cache from
+        // the pre-mutation tree; the positional insert then leaves it stale
+        // for the rest of the session (symptom: "No tbl found at /body" while
+        // the same error lists tbl(1) as available — navigation read the
+        // poisoned cache, the error message enumerated the live DOM).
+        // AddParagraph invalidates after its own positional insert, but other
+        // types (table, ...) did not — so arm an exit-invalidate guard, the
+        // same pattern Remove/Move/Swap/CopyFrom use (BodyCacheGuard, "must
+        // invalidate on exit, after the structural change has happened").
+        // Conditional on an anchor position: the append hot path (batch replay
+        // of thousands of paragraphs) must keep its caches or it turns O(n²).
+        using var _anchorCacheGuard = parent is Body && (position?.After != null || position?.Before != null)
+            ? new BodyCacheGuard(this)
+            : default;
+
         // Reject add operations whose parent/child combination would produce
         // schema-invalid OOXML (e.g. /body/sectPr accepting a paragraph child,
         // or /body/p[N] accepting a nested paragraph/table). `position` is

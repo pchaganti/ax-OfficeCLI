@@ -32,7 +32,9 @@ public partial class WordHandler
     {
         private readonly WordHandler _h;
         public BodyCacheGuard(WordHandler h) => _h = h;
-        public void Dispose() => _h.InvalidateBodyParaCache();
+        // Null-safe so `default(BodyCacheGuard)` is a no-op: Add() arms the
+        // guard conditionally (only for --after/--before body-level adds).
+        public void Dispose() => _h?.InvalidateBodyParaCache();
     }
 
     // ==================== Navigation ====================
