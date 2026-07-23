@@ -344,7 +344,16 @@ public static class MarkdownParser
             {
                 Flush();
                 spans.Add(new MdSpan { Text = "!", Bold = bold, Italic = italic });
-                foreach (var inner in ParseInlines(alt))
+                var altSpans = ParseInlines(alt);
+                if (altSpans.Count == 0)
+                {
+                    // Empty alt (`![](url)`): the URL would otherwise vanish
+                    // entirely, leaving no trace of the image. Surface the URL
+                    // itself as the visible text so nothing is silently lost —
+                    // consistent with the "never lose text" degradation.
+                    spans.Add(new MdSpan { Text = imgUrl, Bold = bold, Italic = italic, Href = imgUrl });
+                }
+                foreach (var inner in altSpans)
                     spans.Add(new MdSpan
                     {
                         Text = inner.Text,
