@@ -586,6 +586,11 @@ public static class MarkdownParser
         int pos = 0;
         var buf = new StringBuilder();
         bool bold = false, italic = false, strike = false;
+        // CommonMark never lets '*' and '_' pair with each other. Track which
+        // delimiter char opened each run so a run is only closed by the SAME
+        // char — a stray '*' must not close a '_'-opened run (and vice versa),
+        // which used to break the outer run and leak its real closer as literal.
+        char boldDelim = '\0', italicDelim = '\0';
 
         void Flush()
         {
@@ -723,7 +728,10 @@ public static class MarkdownParser
                 var d = new string(c, 2);
                 if (bold)
                 {
-                    Flush(); bold = false; pos += 2; continue;
+                    // Only the SAME delimiter closes: a '**' must not close a
+                    // '__'-opened bold run. A mismatched double marker is literal.
+                    if (c == boldDelim) { Flush(); bold = false; pos += 2; continue; }
+                    buf.Append(d); pos += 2; continue;
                 }
                 bool canOpen = pos + 2 < text.Length
                                && !char.IsWhiteSpace(text[pos + 2])
@@ -731,15 +739,15 @@ public static class MarkdownParser
                                && !IntrawordUnderscore(c, pos, 2);
                 if (canOpen)
                 {
-                    Flush(); bold = true; pos += 2; continue;
+                    Flush(); bold = true; boldDelim = c; pos += 2; continue;
                 }
-                // Can't open bold here. If a single-char emphasis is open, the
-                // FIRST of these two markers closes it (CommonMark closes the
-                // inner run); the second is reprocessed next iteration. Without
-                // this, `\**bold**` — escaped star + a trailing `**` that has no
-                // bold closer — swallowed the whole `**` into the italic run
-                // instead of closing on one star and leaving a literal `*`.
-                if (italic && pos > 0 && !char.IsWhiteSpace(text[pos - 1]) && !IntrawordUnderscore(c, pos, 1))
+                // Can't open bold here. If a single-char emphasis of the SAME
+                // delimiter is open, the FIRST of these two markers closes it
+                // (CommonMark closes the inner run); the second is reprocessed
+                // next iteration. Without this, `\**bold**` — escaped star + a
+                // trailing `**` with no bold closer — swallowed the whole `**`
+                // into the italic run instead of closing on one star.
+                if (italic && c == italicDelim && pos > 0 && !char.IsWhiteSpace(text[pos - 1]) && !IntrawordUnderscore(c, pos, 1))
                 {
                     Flush(); italic = false; pos++; continue;
                 }
@@ -751,8 +759,11 @@ public static class MarkdownParser
             {
                 if (italic)
                 {
-                    // Closer must hug the text (right-flanking): `a * b` stays literal.
-                    if (pos > 0 && !char.IsWhiteSpace(text[pos - 1]) && !IntrawordUnderscore(c, pos, 1))
+                    // Only the SAME delimiter closes (CommonMark never pairs '*'
+                    // with '_'), and the closer must hug the text (right-flanking:
+                    // `a * b` stays literal). A different-delimiter marker is not
+                    // this run's closer — emit it literally.
+                    if (c == italicDelim && pos > 0 && !char.IsWhiteSpace(text[pos - 1]) && !IntrawordUnderscore(c, pos, 1))
                     {
                         Flush(); italic = false; pos++; continue;
                     }
@@ -764,7 +775,7 @@ public static class MarkdownParser
                                && !IntrawordUnderscore(c, pos, 1);
                 if (canOpen)
                 {
-                    Flush(); italic = true; pos++; continue;
+                    Flush(); italic = true; italicDelim = c; pos++; continue;
                 }
                 buf.Append(c); pos++; continue;
             }
