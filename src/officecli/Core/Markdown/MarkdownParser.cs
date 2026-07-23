@@ -245,6 +245,25 @@ public static class MarkdownParser
                     current.CodeBlocks.Add(ConsumeFence(lines, ref i, cf.Groups[2].Value));
                     continue;
                 }
+
+                // Plain indented continuation line (no marker, no fence): a
+                // wrapped paragraph line belonging to the current item — the
+                // ubiquitous "1. Do X\n   explanation\n2. Do Y" shape. Append it
+                // to the item's text (space-joined, mirroring the top-level
+                // paragraph gather) instead of breaking, which used to split one
+                // list into two and restart numbering. Must be indented PAST the
+                // marker column (so a top-flush fence still terminates the list,
+                // per the ordered-start split) and not itself a block start.
+                int contIndent = lines[i].Length - lines[i].TrimStart().Length;
+                if (current != null && contIndent > baseIndent
+                    && !RuleRe.IsMatch(lines[i]) && !QuoteRe.IsMatch(lines[i]) && !HeadingRe.IsMatch(lines[i]))
+                {
+                    var contText = lines[i].Trim();
+                    if (current.Inlines.Count > 0) current.Inlines.Add(new MdSpan { Text = " " });
+                    current.Inlines.AddRange(ParseInlines(contText));
+                    i++;
+                    continue;
+                }
                 break;
             }
 
