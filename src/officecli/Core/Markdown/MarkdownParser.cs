@@ -191,7 +191,7 @@ public static class MarkdownParser
                 // the fence to the top-level scanner as a standalone block and
                 // orphan the following sibling markers).
                 var cf = ContinuationFenceRe.Match(lines[i]);
-                if (cf.Success && current != null && cf.Groups[1].Value.Length > baseIndent)
+                if (cf.Success && current != null && cf.Groups[1].Value.Length >= baseIndent)
                 {
                     current.CodeBlocks.Add(ConsumeFence(lines, ref i, cf.Groups[2].Value));
                     continue;
