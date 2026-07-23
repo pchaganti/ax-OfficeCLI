@@ -186,7 +186,11 @@ internal partial class FormulaEvaluator
     }
     private static double EvenF(double v) { var c = (int)Math.Ceiling(Math.Abs(v)); return (c % 2 == 0 ? c : c + 1) * Math.Sign(v); }
     private static double OddF(double v) { if (v == 0) return 1; var c = (int)Math.Ceiling(Math.Abs(v)); return (c % 2 == 1 ? c : c + 1) * Math.Sign(v); }
-    private static double Factorial(double n) { double r = 1; for (int i = 2; i <= (int)n; i++) r *= i; return r; }
+    // n! overflows double past 170 and stays +Infinity forever after, so a huge
+    // argument spins the loop billions of times only to return the same Infinity.
+    // Bail the instant the product goes infinite: identical result, bounded work
+    // (a crafted FACT(2e9) otherwise pins a CPU / holds the shared eval lock).
+    private static double Factorial(double n) { double r = 1; for (int i = 2; i <= (int)n; i++) { r *= i; if (double.IsInfinity(r)) return r; } return r; }
     // n! overflows double past 170, so large arguments go through log-gamma:
     // C(n,k) = exp(lnΓ(n+1) − lnΓ(k+1) − lnΓ(n−k+1)); small ones keep the exact
     // factorial ratio (integer-precise, matches Excel digit-for-digit).
@@ -371,7 +375,7 @@ internal partial class FormulaEvaluator
     {
         int n = (int)nd;
         if (n < -1) return FormulaResult.Error("#NUM!");
-        double r = 1; for (int i = n; i > 1; i -= 2) r *= i; return FR(r);
+        double r = 1; for (int i = n; i > 1; i -= 2) { r *= i; if (double.IsInfinity(r)) break; } return FR(r);
     }
 
     // MULTINOMIAL: (Σaᵢ)! / (a₁!·a₂!·…).
