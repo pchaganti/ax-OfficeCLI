@@ -288,6 +288,20 @@ public static class MarkdownParser
         int i = from;
         while (i < s.Length)
         {
+            // Inline-code spans are opaque to tilde pairing. The main scanner's
+            // code branch consumes `...` as literal code BEFORE the tilde branch
+            // ever sees it, so a ~~ buried inside a code span is never a real
+            // closer — skip the whole span here too, or the opener would be told
+            // a closer exists and open a strike that can never close (bleeding
+            // strike into all trailing text). Mirror the main scanner: a
+            // backtick with a later backtick is a span (skip past it); an
+            // unterminated backtick is literal (advance one).
+            if (s[i] == '`')
+            {
+                int close = s.IndexOf('`', i + 1);
+                i = close > i ? close + 1 : i + 1;
+                continue;
+            }
             if (s[i] != '~') { i++; continue; }
             int j = i;
             while (j < s.Length && s[j] == '~') j++;
@@ -427,10 +441,16 @@ public static class MarkdownParser
                     {
                         Flush(); strike = true; pos += 2; continue;
                     }
+                    // Clean 2-run with no reachable closer: keep the two tildes
+                    // literal, but still close the current span at this delimiter
+                    // boundary (as a real opener would), then emit "~~" verbatim
+                    // — no text is lost and nothing is struck.
+                    Flush(); buf.Append("~~"); pos += 2; continue;
                 }
-                // 3+ run, or no closer: emit one tilde literally and re-scan the
-                // rest (the left-boundary check in IsTwoTildeRun keeps the run
-                // from being mis-read as a delimiter on the next character).
+                // 3+ run (or a ~ that isn't a clean 2-run): emit one tilde
+                // literally and re-scan the rest (the left-boundary check in
+                // IsTwoTildeRun keeps the run from being mis-read as a delimiter
+                // on the next character).
                 buf.Append('~'); pos++; continue;
             }
 
