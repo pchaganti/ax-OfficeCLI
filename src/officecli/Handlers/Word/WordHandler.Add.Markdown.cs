@@ -96,6 +96,19 @@ public partial class WordHandler
         // the caller's flag so batch-replay / resident semantics are untouched.
         var _savedDeferSave = DeferSave;
         DeferSave = true;
+
+        // Atomicity: markdown expansion is many block Adds under a single
+        // deferred save. If a later block throws (e.g. a GFM table exceeding the
+        // OOXML column limit) the blocks already appended must NOT survive — the
+        // operation reported failure, so a half-applied document is corruption.
+        // Snapshot the target's direct children up front; on any failure, remove
+        // every child appended since and rethrow. Directed undo (not
+        // DiscardOnDispose) so a long-lived resident session's OTHER unsaved
+        // edits are untouched. KNOWN LIMITATION: list blocks may have minted
+        // numbering abstractNum/num definitions that this DOM-child removal does
+        // not reclaim — those become orphan (unreferenced) numbering entries,
+        // invisible and harmless in Word, not part of the rendered content.
+        var _preExisting = new HashSet<OpenXmlElement>(parent.ChildElements);
         try
         {
         foreach (var block in doc.Blocks)
@@ -148,6 +161,17 @@ public partial class WordHandler
         // Empty markdown still yields at least an anchor so `add` returns a path.
         return firstPath ?? Add(parentPath, "paragraph", PosFor(),
             new(StringComparer.OrdinalIgnoreCase) { ["text"] = "" });
+        }
+        catch
+        {
+            // Directed rollback: drop every block appended during this failed
+            // expansion so nothing partially-applied is left to be persisted by
+            // the outer save / Dispose autosave.
+            foreach (var added in parent.ChildElements.Where(c => !_preExisting.Contains(c)).ToList())
+                added.Remove();
+            // Bulk removal invalidates the append-monotonic body caches.
+            InvalidateBodyParaCache();
+            throw;
         }
         finally
         {
