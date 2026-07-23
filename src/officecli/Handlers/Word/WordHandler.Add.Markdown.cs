@@ -109,6 +109,23 @@ public partial class WordHandler
         // not reclaim — those become orphan (unreferenced) numbering entries,
         // invisible and harmless in Word, not part of the rendered content.
         var _preExisting = new HashSet<OpenXmlElement>(parent.ChildElements);
+
+        // Accumulate per-block diagnostics. Every block expands through the
+        // public Add(), which RESETS LastAddWarnings / LastAddUnsupportedProps /
+        // LastUnrecognizedLatex at its entry (WordHandler.Add.cs) — so left
+        // as-is only the final block's diagnostics survive to the caller (a
+        // heading's "style not found" warning vanished the moment a trailing
+        // list block ran its own Add()). Union each block's diagnostics into
+        // locals as we go, then write the merged set back before returning.
+        var accWarnings = new List<string>();
+        var accUnsupported = new List<string>();
+        var accLatex = new List<string>();
+        void HarvestBlockDiagnostics()
+        {
+            if (LastAddWarnings.Count > 0) accWarnings.AddRange(LastAddWarnings);
+            if (LastAddUnsupportedProps.Count > 0) accUnsupported.AddRange(LastAddUnsupportedProps);
+            if (LastUnrecognizedLatex.Count > 0) accLatex.AddRange(LastUnrecognizedLatex);
+        }
         try
         {
         foreach (var block in doc.Blocks)
@@ -117,9 +134,11 @@ public partial class WordHandler
             {
                 case MdHeading h:
                     Record(AddHeading(parentPath, h, PosFor(), pendingInline));
+                    HarvestBlockDiagnostics();
                     break;
                 case MdParagraph p:
                     Record(AddFlowParagraph(parentPath, p.Inlines, null, pendingInline, pos: PosFor()));
+                    HarvestBlockDiagnostics();
                     break;
                 case MdBlockQuote q:
                     // Blockquote: left-indented + italic direct formatting. The
@@ -129,23 +148,32 @@ public partial class WordHandler
                     Record(AddFlowParagraph(parentPath, q.Inlines, null, pendingInline,
                         extra: new(StringComparer.OrdinalIgnoreCase) { ["indentLeft"] = "720", ["italic"] = "true" },
                         pos: PosFor()));
+                    HarvestBlockDiagnostics();
                     break;
                 case MdList list:
-                    AddFlowList(parentPath, list, depth: 0, Record, PosFor, pendingInline);
+                    // AddFlowList makes one Add() per item, each resetting the
+                    // diagnostics; harvest after every item so no item's warning
+                    // is clobbered by the next.
+                    AddFlowList(parentPath, list, depth: 0, Record, PosFor, pendingInline, HarvestBlockDiagnostics);
                     break;
                 case MdCodeBlock code:
                     // Monospace via direct font; built-in code styles are absent
                     // from a blank docx.
                     foreach (var line in code.Code.Split('\n'))
+                    {
                         Record(Add(parentPath, "paragraph", PosFor(),
                             new(StringComparer.OrdinalIgnoreCase) { ["font"] = "Consolas", ["text"] = line }));
+                        HarvestBlockDiagnostics();
+                    }
                     break;
                 case MdHorizontalRule:
                     Record(Add(parentPath, "paragraph", PosFor(),
                         new(StringComparer.OrdinalIgnoreCase) { ["borderBottom"] = "single" }));
+                    HarvestBlockDiagnostics();
                     break;
                 case MdTable t:
                     Record(AddFlowTable(parentPath, t, PosFor()));
+                    HarvestBlockDiagnostics();
                     break;
             }
         }
@@ -159,8 +187,15 @@ public partial class WordHandler
             ApplyInlineSpans(path, inlines);
 
         // Empty markdown still yields at least an anchor so `add` returns a path.
-        return firstPath ?? Add(parentPath, "paragraph", PosFor(),
+        // Compute the result FIRST (the fallback Add resets diagnostics, but it
+        // only fires when no block was added, so nothing accumulated is lost),
+        // then surface the merged per-block diagnostics to the caller.
+        var result = firstPath ?? Add(parentPath, "paragraph", PosFor(),
             new(StringComparer.OrdinalIgnoreCase) { ["text"] = "" });
+        LastAddWarnings = accWarnings;
+        LastAddUnsupportedProps = accUnsupported;
+        LastUnrecognizedLatex = accLatex;
+        return result;
         }
         catch
         {
@@ -221,7 +256,8 @@ public partial class WordHandler
 
     private void AddFlowList(string parentPath, MdList list, int depth, Action<string> record,
         Func<InsertPosition?> posFor,
-        List<(string Path, List<MdSpan> Inlines)> pendingInline)
+        List<(string Path, List<MdSpan> Inlines)> pendingInline,
+        Action harvestDiagnostics)
     {
         // Use liststyle (real numbering: bullets / 1. 2.) rather than a
         // ListBullet/ListNumber style id — those style ids are absent from a
@@ -238,6 +274,7 @@ public partial class WordHandler
             };
 
             var path = Add(parentPath, "paragraph", posFor(), props);
+            harvestDiagnostics(); // this item's Add() reset diagnostics — capture before the next
             record(path);
             if (item.Inlines.Any(s => s.Bold || s.Italic || s.Code || s.Strike))
                 pendingInline.Add((path, item.Inlines)); // formatted in phase 2 (perf)
@@ -245,7 +282,7 @@ public partial class WordHandler
             // All nested segments, in order — one item can own several
             // (marker switch / partial dedent), see MdListItem.Children.
             foreach (var child in item.Children)
-                AddFlowList(parentPath, child, depth + 1, record, posFor, pendingInline);
+                AddFlowList(parentPath, child, depth + 1, record, posFor, pendingInline, harvestDiagnostics);
         }
     }
 
