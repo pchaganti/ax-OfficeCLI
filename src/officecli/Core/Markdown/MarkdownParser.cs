@@ -33,6 +33,13 @@ public static class MarkdownParser
     private static readonly Regex UnorderedRe = new(@"^(\s*)[-*+]\s+(.*)$");
     private static readonly Regex OrderedRe = new(@"^(\s*)\d+[.)]\s+(.*)$");
     private static readonly Regex FenceRe = new(@"^\s*```+\s*([\w+-]*)\s*$");
+    // A fence opener sharing its line with a leading list marker (`1. ``` `,
+    // `- ```python`). Without this the marker line fell through to the list
+    // branch, whose inline parser mangled the bare ``` into an empty code span
+    // plus a stray backtick, dropped the marker, and left the closing fence to
+    // become a spurious empty code block. Treat the whole construct as a fenced
+    // code block (graceful fallback: no text lost, no stray empty block).
+    private static readonly Regex ListFenceRe = new(@"^\s*(?:\d+[.)]|[-*+])\s+(?:`{3,})\s*([\w+-]*)\s*$");
     private static readonly Regex RuleRe = new(@"^\s*([-*_])(\s*\1){2,}\s*$");
     private static readonly Regex QuoteRe = new(@"^\s*>\s?(.*)$");
     // The lookahead requires at least one pipe so a single-column delimiter
@@ -55,11 +62,13 @@ public static class MarkdownParser
             // blank line — skip
             if (line.Trim().Length == 0) { i++; continue; }
 
-            // fenced code block
+            // fenced code block (standalone ``` opener, or one sharing its line
+            // with a leading list marker — see ListFenceRe).
             var fence = FenceRe.Match(line);
-            if (fence.Success)
+            var listFence = fence.Success ? Match.Empty : ListFenceRe.Match(line);
+            if (fence.Success || listFence.Success)
             {
-                var lang = fence.Groups[1].Value;
+                var lang = fence.Success ? fence.Groups[1].Value : listFence.Groups[1].Value;
                 var sb = new StringBuilder();
                 i++;
                 while (i < lines.Length && !FenceRe.IsMatch(lines[i]))
