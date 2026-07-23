@@ -258,6 +258,28 @@ public static class MarkdownParser
     }
 
     /// <summary>
+    /// True when index <paramref name="i"/> begins a delimiter run of EXACTLY
+    /// two tildes — i.e. <c>~~</c> not flanked by a further <c>~</c> on either
+    /// side. GFM strikethrough uses a length-2 run; a 3+ tilde run
+    /// (<c>~~~ literal ~~~</c>) is not a strikethrough delimiter, and treating
+    /// the <c>~~</c> substring inside it as an open/close pair silently ate two
+    /// tildes per side — a text-loss bug the parser's "text loss is worse than a
+    /// missed emphasis" guard forbids.
+    /// </summary>
+    private static bool IsTwoTildeRun(string s, int i)
+        => i >= 0 && i + 1 < s.Length && s[i] == '~' && s[i + 1] == '~'
+           && (i == 0 || s[i - 1] != '~')
+           && (i + 2 >= s.Length || s[i + 2] != '~');
+
+    /// <summary>Is there a clean length-2 tilde run at or after <paramref name="from"/>?</summary>
+    private static bool HasLaterTwoTildeRun(string s, int from)
+    {
+        for (int j = from; j + 1 < s.Length; j++)
+            if (IsTwoTildeRun(s, j)) return true;
+        return false;
+    }
+
+    /// <summary>
     /// Inline scanner for **bold**, *italic*/_italic_, `code`, [text](url).
     /// Emits a flat list of spans, each carrying cumulative flags. Simple
     /// left-to-right scan; nested emphasis collapses onto the same span.
@@ -357,21 +379,30 @@ public static class MarkdownParser
             }
 
             // GFM strikethrough ~~...~~ (single ~ never toggles; unclosed
-            // opener stays literal — same text-loss-averse guard as **).
+            // opener stays literal — same text-loss-averse guard as **). Only a
+            // CLEAN length-2 tilde run toggles: a 3+ run (`~~~ literal ~~~`) is
+            // not a delimiter, and the closer search likewise ignores `~~`
+            // buried inside a 3+ run, so no literal tildes are ever swallowed.
             if (c == '~' && pos + 1 < text.Length && text[pos + 1] == '~')
             {
-                if (strike)
+                if (IsTwoTildeRun(text, pos))
                 {
-                    Flush(); strike = false; pos += 2; continue;
+                    if (strike)
+                    {
+                        Flush(); strike = false; pos += 2; continue;
+                    }
+                    bool canOpen = pos + 2 < text.Length
+                                   && !char.IsWhiteSpace(text[pos + 2])
+                                   && HasLaterTwoTildeRun(text, pos + 2);
+                    if (canOpen)
+                    {
+                        Flush(); strike = true; pos += 2; continue;
+                    }
                 }
-                bool canOpen = pos + 2 < text.Length
-                               && !char.IsWhiteSpace(text[pos + 2])
-                               && text.IndexOf("~~", pos + 2, StringComparison.Ordinal) >= 0;
-                if (canOpen)
-                {
-                    Flush(); strike = true; pos += 2; continue;
-                }
-                buf.Append("~~"); pos += 2; continue;
+                // 3+ run, or no closer: emit one tilde literally and re-scan the
+                // rest (the left-boundary check in IsTwoTildeRun keeps the run
+                // from being mis-read as a delimiter on the next character).
+                buf.Append('~'); pos++; continue;
             }
 
             // strong **...** or __...__
